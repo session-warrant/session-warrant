@@ -39,10 +39,7 @@ tagprobe: tagprobe.c
 	$(Q)$(CC) $(HOST_CFLAGS) tagprobe.c -o $@ $(HOST_LDLIBS)
 
 # bats 는 root 로 돌아야 한다 — BPF LSM 부착과 su/sudo 케이스 때문이다.
-#
-# 결과는 out/ 에 남기고 커밋한다. bench/overhead 와 같은 이유다 —
-# "§04 표가 이 커널에서 참이었다"는 심사 자료이고, 검증 대상 커널
-# (7.0 · Rocky 9)에서 다시 돌릴 때 지금 결과와 나란히 놓아야 한다.
+# 결과는 out/ 에 커밋한다 — 검증 대상 커널(7.0 · Rocky 9) 결과와 나란히 놓기 위해서다.
 test: all
 	@test "$$(id -u)" = 0 || { echo "ERROR: sudo make test"; exit 1; }
 	@mkdir -p out

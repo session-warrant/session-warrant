@@ -72,7 +72,7 @@ def main():
                       + ("⚠ 허용이 딸려간다" if same else "별개 inode"))
         print()
 
-    # ── 판정. 이 스파이크의 실패 조건은 하나뿐이다.
+    # 이 스파이크의 실패 조건은 하나뿐이다: 바뀌었는데 fanotify 가 못 잡은 케이스.
     missed = [r for r in cases if r["changed"] == "yes" and int(r["fanotify"]) == 0]
     changed = [r for r in cases if r["changed"] == "yes"]
     deny_changed = [r for r in cases if r["kind"] == "deny" and r["changed"] == "yes"]

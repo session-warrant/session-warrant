@@ -5,19 +5,9 @@
 #   sudo ./cases.sh --with-apt      실제 패키지 재설치 포함 (네트워크 필요)
 #   sudo ./cases.sh --out out/xxx
 #
-# §15 가 세운 설계와 그 대가:
-#   "정책에는 /usr/bin/git 이라고 쓰지만 맵에는 inode 번호가 들어간다. …
-#    대가는 패키지 업데이트로 inode가 바뀌면 재컴파일이 필요하다는 것이고,
-#    warrantd가 fanotify 로 감시해 자동 갱신한다."
-#
-# 그래서 재는 건 둘이다.
-#   ① 이 조작이 (dev, ino) 를 바꾸는가        → 재컴파일이 필요한 지점의 목록
-#   ② fanotify 가 그걸 알려주는가             → 자동 갱신이 가능한가
-# ②가 ①보다 중요하다. 바뀌는 건 이미 알고 있고, 놓치는 게 문제다.
-#
-# 케이스는 "허용 목록이 조용히 무효가 되는 경로"와 "금지 목록이 조용히 무효가
-# 되는 경로"를 나눠 본다. §15 가 그 둘을 비대칭으로 다루기 때문이다 —
-# 허용은 파일 inode 로 충분하지만 금지는 반드시 디렉터리 inode 다.
+# 재는 건 둘이다: ① 조작이 (dev, ino) 를 바꾸는가 ② fanotify 가 그걸 알려주는가.
+# ②가 더 중요하다 — 놓치는 게 문제다. 허용(파일 inode)과 금지(디렉터리 inode)를
+# 나눠 본다 (§15).
 
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -54,9 +44,7 @@ echo "case,target,kind,dev_before,ino_before,dev_after,ino_after,changed,fanotif
 } | tee "$OUT/env.txt"
 echo
 
-# ── fanotify 감시 시작 ──────────────────────────────────────────────
-# 랩 디렉터리와 /usr 를 같이 본다. /usr 는 실제 패키지 교체를 잡기 위한 것이고,
-# 랩은 조작을 통제된 조건에서 재현하기 위한 것이다.
+# /usr 는 실제 패키지 교체용, 랩은 조작을 통제된 조건에서 재현하기 위한 것이다.
 ./inowatch "$LAB" /usr >"$WLOG" 2>&1 &
 WPID=$!
 for _ in $(seq 100); do
@@ -88,14 +76,12 @@ run_case() {
     after=$(devino "$target"); read -r a_dev a_ino <<< "$after"
     [[ "$b_dev $b_ino" == "$a_dev $a_ino" ]] && changed=no || changed=yes
 
-    # 이 케이스 구간에 도착한 이벤트만 센다.
     fan=$(tail -n +$((mark + 1)) "$WLOG" | grep -c '^EV ' || true)
 
     printf '  %-28s inode %-8s fanotify %s건\n' "$name" "$changed" "$fan"
     echo "$name,$target,$kind,$b_dev,$b_ino,$a_dev,$a_ino,$changed,$fan" >> "$CSV"
 }
 
-# ── 랩 준비 ────────────────────────────────────────────────────────
 mkdir -p "$LAB/bin" "$LAB/etc" "$LAB/log"
 printf '#!/bin/sh\necho v1\n' > "$LAB/bin/tool"; chmod 755 "$LAB/bin/tool"
 printf 'key=1\n' > "$LAB/etc/conf"
@@ -162,8 +148,7 @@ run_case "디렉터리 자체 교체" "$LAB/etc" deny \
 echo
 echo "── (dev, ino) 가 우회를 막는가 — 문서의 주장 검증 ─────────────"
 
-# §15: "bind mount로 같은 파일을 다른 경로에 노출시키는 우회가 경로 문자열
-#       비교로는 뚫리지만, (dev, ino) 쌍으로는 뚫리지 않는다."
+# §15 주장: bind mount 우회는 경로 비교로는 뚫리지만 (dev, ino) 로는 안 뚫린다.
 mkdir -p "$LAB/bindsrc" "$LAB/binddst"
 printf '#!/bin/sh\necho bind\n' > "$LAB/bindsrc/prog"; chmod 755 "$LAB/bindsrc/prog"
 if mount --bind "$LAB/bindsrc" "$LAB/binddst" 2>/dev/null; then
@@ -199,7 +184,6 @@ if ln "$LAB/bin/tool" "$LAB/bin/hardlink" 2>/dev/null; then
     fi
 fi
 
-# ── 실제 패키지 교체 ───────────────────────────────────────────────
 if [[ $WITH_APT == 1 ]]; then
     echo
     echo "── 실제 패키지 재설치 ($APT_PKG) ──────────────────────────────"

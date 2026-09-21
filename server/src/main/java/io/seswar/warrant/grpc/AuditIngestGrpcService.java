@@ -1,11 +1,6 @@
 package io.seswar.warrant.grpc;
 
-/**
- * warrantd → 중앙. <b>클라이언트 스트리밍</b>.
- *
- * <p>백프레셔가 스트리밍에 이미 있으므로 메시지 큐를 넣지 않는다.
- * 중앙이 잠깐 죽어도 warrantd 의 bbolt 로컬 버퍼가 받아 준다.
- */
+/** warrantd → 중앙 감사 스트림. <b>양방향</b> — ack 를 중간중간 돌려준다. */
 // @Service  // extends AuditIngestServiceGrpc.AuditIngestServiceImplBase
 public class AuditIngestGrpcService {
 

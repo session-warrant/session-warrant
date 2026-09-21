@@ -18,7 +18,6 @@ fi
 
 mkdir -p "$DIR"
 
-# ── 대형 트리 + git 리포 ────────────────────────────────────────────
 echo "트리 생성: $FILES 파일"
 mkdir -p "$DIR/tree"
 for d in $(seq 0 199); do
@@ -39,8 +38,7 @@ git -C "$DIR/tree" -c user.email=bench@local -c user.name=bench commit -qm fixtu
 echo "tar 아카이브"
 tar cf "$DIR/tree.tar" -C "$DIR" tree
 
-# ── 컴파일 대상 ────────────────────────────────────────────────────
-# 쓰기 무거운 워크로드. S0 의 4.7% 가 나오는 쪽이 바로 이런 구간이다.
+# 컴파일 대상 — 쓰기 무거운 워크로드(w_build)용.
 echo "소스 생성: $SRCS 개"
 mkdir -p "$DIR/src"
 i=0

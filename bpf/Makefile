@@ -12,9 +12,7 @@ CLANG   ?= $(shell command -v clang-19 || command -v clang-18 || command -v clan
 BPFTOOL ?= $(shell command -v bpftool || echo /usr/lib/linux-tools/$(shell uname -r)/bpftool)
 ARCH    := $(shell uname -m | sed 's/x86_64/x86/; s/aarch64/arm64/; s/ppc64le/powerpc/')
 
-# BPF 오브젝트 컴파일에만 쓴다. 호스트 컴파일에 -target bpf 헤더 경로를 섞으면 헷갈린다.
 # -I/usr/include/<arch>-linux-gnu 는 asm/types.h 를 못 찾는 배포판을 위한 보험이다.
-# vmlinux.h 를 쓰면 보통 필요 없지만, 있어서 손해 볼 건 없다.
 BPF_CFLAGS  := -g -O2 -Wall -target bpf -D__TARGET_ARCH_$(ARCH) \
                -I. -I/usr/include/$(shell uname -m)-linux-gnu
 HOST_CFLAGS := -g -O2 -Wall
@@ -28,14 +26,11 @@ else
 endif
 
 .PHONY: all clean check
-# make 는 %.bpf.o · %.skel.h 를 중간 산출물로 보고 빌드 끝에 지운다.
-# 매번 재컴파일하게 되고, bpftool prog dump 로 들여다볼 수도 없다.
+# 없으면 make 가 %.bpf.o · %.skel.h 를 중간 산출물로 보고 지운다 (bpftool 로 못 들여다본다).
 .SECONDARY:
 
 all: smoke
 
-# ── BTF ─────────────────────────────────────────────────────────────
-# CO-RE 의 재료. 커널 버전에 묶여 있으므로 .gitignore 에 있다.
 vmlinux.h:
 	@test -r /sys/kernel/btf/vmlinux || { \
 	  echo "ERROR: /sys/kernel/btf/vmlinux 가 없다 — CO-RE 불가."; \
@@ -46,7 +41,6 @@ vmlinux.h:
 	@echo "  BTF   $@  ($(shell uname -r))"
 	$(Q)$(BPFTOOL) btf dump file /sys/kernel/btf/vmlinux format c > $@
 
-# ── BPF 오브젝트 ────────────────────────────────────────────────────
 %.bpf.o: %.bpf.c vmlinux.h
 	@test -n "$(CLANG)" || { echo "ERROR: clang 이 없다. ../deploy/bootstrap.sh --install"; exit 1; }
 	@echo "  BPF   $@"
@@ -56,7 +50,6 @@ vmlinux.h:
 	@echo "  SKEL  $@"
 	$(Q)$(BPFTOOL) gen skeleton $< > $@
 
-# ── 로더 (호스트 바이너리) ──────────────────────────────────────────
 smoke: smoke.c smoke.skel.h
 	@echo "  CC    $@"
 	$(Q)$(CC) $(HOST_CFLAGS) -I. smoke.c -o $@ $(HOST_LDLIBS)

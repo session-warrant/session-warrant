@@ -1,10 +1,7 @@
 package io.seswar.warrant;
 
 /**
- * 통합 테스트 골격.
- *
- * <p>PostgreSQL 을 Testcontainers 로 띄워 돌린다.
- * 심사에서 "테스트는요?"에 답이 되는 지점이다(기술 스택 §06).
+ * 통합 테스트 골격. PostgreSQL 을 Testcontainers 로 띄워 돌린다.
  *
  * <h3>여기서 반드시 다뤄야 할 케이스</h3>
  * <ul>

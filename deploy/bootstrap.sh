@@ -1,12 +1,6 @@
 #!/usr/bin/env bash
-# Session Warrant — 개발 노드 부트스트랩
-#
-# 서브 PC(리눅스)에서 한 번 돌린다. 두 가지를 한다:
-#   1. 이 커널에서 BPF LSM 이 성립하는지 확인하고 표로 찍는다
-#   2. 부족한 툴체인을 설치한다
-#
-# 기준 환경: Ubuntu 24.04 / 커널 6.8 (docs/session-warrant-tech-stack.html §02)
-# 22.04 에서도 돌지만 clang 18 을 apt.llvm.org 에서 가져와야 한다.
+# 개발 노드 부트스트랩 — BPF LSM 성립 여부 확인 + 툴체인 설치.
+# 기준 Ubuntu 24.04 / 커널 6.8. 22.04 는 clang 18 을 apt.llvm.org 에서 가져온다.
 #
 #   ./deploy/bootstrap.sh          # 확인만
 #   ./deploy/bootstrap.sh --install # 확인 + 설치
@@ -23,7 +17,6 @@ warn(){ printf '  %s??  %s %s\n'   "$YEL"   "$OFF" "$1"; }
 hdr(){  printf '\n%s\n%s\n' "$1" "${1//?/─}"; }
 FAIL=0
 
-# ── 0. 배포판 ───────────────────────────────────────────────────────
 . /etc/os-release
 hdr "환경"
 printf '  %-22s %s %s\n' "배포판" "$PRETTY_NAME" ""
@@ -41,7 +34,6 @@ else
   bad "커널 $KVER — BPF LSM 은 5.7+ 필요"
 fi
 
-# ── 1. 커널 설정 ────────────────────────────────────────────────────
 hdr "커널 설정"
 CFG=/boot/config-$(uname -r)
 if [[ -r $CFG ]]; then
@@ -58,7 +50,6 @@ fi
   && ok "/sys/kernel/btf/vmlinux 존재 (CO-RE 가능)" \
   || bad "/sys/kernel/btf/vmlinux 없음 — CO-RE 불가"
 
-# ── 2. lsm=bpf ─────────────────────────────────────────────────────
 hdr "LSM 목록"
 if [[ -r /sys/kernel/security/lsm ]]; then
   LSMS=$(cat /sys/kernel/security/lsm)
@@ -73,7 +64,6 @@ else
   bad "securityfs 가 안 붙어 있다 — sudo mount -t securityfs none /sys/kernel/security"
 fi
 
-# ── 3. 툴체인 ───────────────────────────────────────────────────────
 hdr "툴체인"
 have(){ command -v "$1" >/dev/null 2>&1; }
 
@@ -100,7 +90,6 @@ else
   warn "go 없음 (warrantd 에 필요, 스파이크 단계에는 불필요)"
 fi
 
-# ── 4. 설치 ─────────────────────────────────────────────────────────
 if (( INSTALL )); then
   hdr "설치"
   PKGS=(build-essential pkg-config libelf-dev zlib1g-dev

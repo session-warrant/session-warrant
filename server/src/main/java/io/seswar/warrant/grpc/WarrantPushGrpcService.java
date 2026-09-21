@@ -26,12 +26,8 @@ public class WarrantPushGrpcService {
     }
 
     /**
-     * PAM 질의의 중계 — <b>이 서버가 아니라 warrantd 가 답한다</b>.
-     *
-     * <p>PAM 모듈은 유닉스 소켓으로 warrantd 에만 물어본다(기술 스택 §05).
-     * 중앙이 인증 경로에 끼면 중앙 장애가 곧 로그인 장애가 된다.
-     * 여기 있는 것은 warrantd 의 캐시가 비었을 때의 <b>선택적</b> 조회 경로일 뿐이고,
-     * 타임아웃 시 노드는 fail-open 한다.
+     * warrantd 캐시가 비었을 때의 <b>선택적</b> 조회 경로. PAM 질의에 답하는 것은 warrantd 다 —
+     * 중앙이 인증 경로에 끼면 중앙 장애가 곧 로그인 장애가 된다. 타임아웃 시 노드는 fail-open 한다.
      */
     // public void lookupActiveWarrant(LookupRequest req, StreamObserver<LookupResponse> out)
     public void lookupActiveWarrant() {

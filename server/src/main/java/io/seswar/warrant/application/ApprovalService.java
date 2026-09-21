@@ -2,12 +2,6 @@ package io.seswar.warrant.application;
 
 import java.util.UUID;
 
-/**
- * 승인 워크플로.
- *
- * <p>§09 MVP 에서 "이 흐름이 없으면 아무도 안 쓴다"고 못 박은 부분이다.
- * 커널 쪽이 아무리 잘 돌아도 승인이 불편하면 제품이 아니다.
- */
 // @Service
 public class ApprovalService {
 
@@ -34,8 +28,8 @@ public class ApprovalService {
      * <p>오프라인 검증이 가능한 로컬 서명 영장이며, 정의상 §16 의 자기보호 제한까지 풀 수 있다.
      * 따라서 <b>발급과 사용 모두 최고 등급 경보 대상</b>이고 전 구간이 기록된다.
      *
-     * <p>접근통제 시스템의 제1원칙: <b>자기를 고치러 오는 사람을 잠그면 안 된다.</b>
-     * 이 경로를 승인 절차로 막아 두면 원칙을 어기게 된다 — 사전 승인이 아니라 사후 추적으로 통제한다.
+     * <p>자기를 고치러 오는 사람을 잠그면 안 되므로 승인 절차로 막지 않는다 —
+     * 사전 승인이 아니라 사후 추적으로 통제한다.
      */
     public void issueBreakGlass(UUID subjectId, String reason, String targetHost) {
         throw new UnsupportedOperationException("미구현");

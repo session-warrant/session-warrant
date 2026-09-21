@@ -33,7 +33,6 @@ export function Overview({ filters, onOpenEvent, onOpenSession }: Props) {
   const active = ws.filter((w) => w.expires > NOW || (w.on_expiry === "grace" && w.expires + 120 * MIN > NOW))
   const execs = ev.filter((e) => e.hook === "exec").length
 
-  // 훅별 집계 (집계 행 제외)
   const byHook: Partial<Record<Hook, { ALLOW: number; WOULD_DENY: number; DENY: number; n: number }>> = {}
   ev.forEach((e) => { if (e.hook === "agg") return; const a = (byHook[e.hook] ??= { ALLOW: 0, WOULD_DENY: 0, DENY: 0, n: 0 }); a[e.verdict]++; a.n++ })
   const hookMax = Math.max(1, ...Object.values(byHook).map((a) => a.n))

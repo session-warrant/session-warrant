@@ -1,9 +1,7 @@
 package io.seswar.warrant.repository;
 
 /**
- * 주체 조회.
- *
- * <p>{@code kernelSubjectId}(u32) 할당은 여기서 관리한다.
+ * {@code kernelSubjectId}(u32) 할당은 여기서 관리한다.
  * <b>재사용하면 안 된다</b> — 퇴사자의 id 를 신규 입사자에게 다시 주면
  * 과거 감사 로그의 귀속이 조용히 뒤바뀐다.
  */

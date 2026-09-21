@@ -1,11 +1,8 @@
 package io.seswar.warrant.api;
 
 /**
- * 감사 조회.
- *
- * <p>대시보드는 Grafana 로 붙이는 것이 기본이다 —
- * "영장 없는 접속 현황"은 대시보드 한 장으로 끝나고, 프론트를 직접 만드는 것보다 훨씬 빠르다.
- * 여기 REST 는 Grafana 로 표현하기 어려운 <b>단건 추적</b>(영장 하나의 전체 행적)을 담당한다.
+ * 감사 조회. 대시보드는 Grafana 가 맡고, 여기 REST 는 Grafana 로 표현하기 어려운
+ * <b>단건 추적</b>(영장 하나의 전체 행적)을 담당한다.
  */
 // @RestController @RequestMapping("/api/audit")
 public class AuditQueryController {

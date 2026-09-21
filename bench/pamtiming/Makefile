@@ -59,13 +59,8 @@ test: install
 # ── 1.5단계: 세션 밖에서 pamtester. 여기서 답이 나올 수도 있다 ──────
 #
 # pam_systemd.so 는 호출한 프로세스가 이미 사용자 세션 안에 있으면 세션
-# 생성을 건너뛴다. GNOME 터미널에서 pamtester 나 su 를 돌리면 그 프로세스는
-# user@1000.service 아래라 logind 가 아무것도 안 만든다 — 2026-09-08 측정에서
-# 전 건 xdg_session_id=- 로 나온 이유가 이것이다.
-#
-# system.slice 로 빠져나가면 "이미 세션 안"이 아니게 되므로 logind 가 세션을
-# 만들 여지가 생긴다. 되면 sshd 를 건드리지 않고 §11 T1 의 답이 나온다.
-# TTY 없는 호출에 logind 가 세션을 만들어 주는지는 돌려봐야 안다.
+# 생성을 건너뛴다 (데스크톱 터미널에서 돌리면 xdg_session_id=- 로 나온다).
+# system.slice 로 빠져나가면 logind 가 세션을 만들 여지가 생긴다.
 test-detached: install
 	@test "$$(id -u)" = 0 || { echo "ERROR: sudo make test-detached"; exit 1; }
 	@command -v pamtester >/dev/null || { echo "ERROR: sudo apt install pamtester"; exit 1; }
@@ -88,9 +83,7 @@ test-detached: install
 
 # ── 2단계: /etc/pam.d/su ────────────────────────────────────────────
 # 주의: 기존 세션 안에서 su 를 하면 새 세션이 만들어지지 않는다.
-# 이 단계로는 §11 T1 을 잴 수 없다 — 모듈이 su 경로에서도 안 죽는다는 것만
-# 확인하는 자리다. 2026-09-08 에 이걸 모르고 "여기서 답이 나온다"고
-# 적어 뒀다가 8건 전부 xdg_session_id=- 를 받았다.
+# 이 단계로는 §11 T1 을 잴 수 없다 — 모듈이 su 경로에서도 안 죽는다는 것만 확인한다.
 enable-su:
 	@$(MAKE) --no-print-directory _patch F=/etc/pam.d/su
 

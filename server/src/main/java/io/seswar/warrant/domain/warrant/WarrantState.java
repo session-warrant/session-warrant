@@ -18,7 +18,6 @@ public enum WarrantState {
     /** 만료했으나 유예 잡이 남아 있다 (on_expiry = SESSION_ONLY_GRACE). */
     GRACE,
 
-    /** 만료. */
     EXPIRED,
 
     /** 취소 — revoked 한 바이트로 전 노드에서 즉시 발효된 상태. */

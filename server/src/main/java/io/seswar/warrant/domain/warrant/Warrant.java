@@ -6,14 +6,8 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * 영장 — 접속 승인 시점에 발급되는, 기계가 읽는 문서 한 장(§02).
- *
- * <p>사람 · 사유 · 기간 · 허용 범위가 적혀 있고, <b>집행 주체는 이 서버가 아니라 커널의 LSM 훅</b>이다.
- * 같은 내용을 셸 래퍼나 rbash, sudoers 로 흉내 낼 수는 있지만 전부 세션 안에서 우회된다.
- *
- * <p>필드 구성은 {@code proto/warrant.proto} 와 {@code struct warrant}(§12)에서 그대로 온다.
- * 커널 구조체와 서버 엔티티가 어긋나면 그 순간부터 디버깅이 지옥이 되므로,
- * <b>필드를 여기서만 추가하지 말 것</b> — 항상 .proto 를 먼저 고친다.
+ * 영장(§02). 필드 구성은 {@code proto/warrant.proto} 와 {@code struct warrant}(§12)에서 그대로 온다 —
+ * <b>필드를 여기서만 추가하지 말 것</b>. 항상 .proto 를 먼저 고친다.
  *
  * <pre>
  * struct warrant {
@@ -30,7 +24,6 @@ import java.util.UUID;
 // @Entity @Table(name = "warrant")
 public class Warrant {
 
-    /** 내부 PK. */
     private UUID id;
 
     /** 사람이 읽는 식별자. 예: {@code W-4821-3F}. Slack · 감사 리포트에 나온다. */
@@ -51,11 +44,8 @@ public class Warrant {
     private Instant issuedAt;
 
     /**
-     * 만료 시각 — <b>절대 시각으로 보관한다</b>.
-     *
-     * <p>커널의 {@code expires_ns} 는 {@code bpf_ktime_get_boot_ns()} 기준, 즉 <b>노드마다 다른 부팅 상대 시각</b>이다.
-     * 중앙은 원격 노드의 부팅 시각을 알 수 없으므로 변환은 warrantd 가 노드에서 수행한다.
-     * 여기서 ns 로 변환하려 들지 말 것 — 시계 스큐가 그대로 만료 오차가 된다.
+     * 만료 시각 — <b>절대 시각으로 보관한다</b>. 커널의 boot 기준 {@code expires_ns} 로의 변환은
+     * warrantd 가 한다. 여기서 ns 로 변환하려 들지 말 것 — 시계 스큐가 그대로 만료 오차가 된다.
      */
     private Instant expiresAt;
 
@@ -110,9 +100,6 @@ public class Warrant {
         throw new UnsupportedOperationException("미구현");
     }
 
-    /**
-     * 연장 적용. <b>재로그인이 아니다</b> — expiresAt 만 갱신해 push 하면 열려 있는 세션이 그대로 이어진다(§03).
-     */
     public void extend(Duration by, UUID approverId, String reason, boolean autoApproved) {
         // 1. 누적 상한 검사는 호출자(WarrantExtensionService)가 이미 했다고 가정하지 말고 여기서도 방어한다
         // 2. expiresAt = expiresAt.plus(by)
@@ -120,9 +107,6 @@ public class Warrant {
         throw new UnsupportedOperationException("미구현");
     }
 
-    /**
-     * 취소. 회수도 연장과 같은 경로라, 진행 중인 세션의 권한을 승인자가 실시간으로 좁힐 수 있다.
-     */
     public void revoke(UUID actorId, String reason) {
         // revoked = true; state = REVOKED; lineage.add(REVOKED)
         // push 는 호출자가 한다. push 가 실패해도 revoked 는 남아야 하므로 순서를 바꾸지 말 것.

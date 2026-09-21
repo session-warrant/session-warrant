@@ -1,11 +1,6 @@
 package io.seswar.warrant.domain.audit;
 
-/**
- * 커널 훅이 남기는 이벤트 종류.
- *
- * <p><b>기록에는 절제가 필요하다</b>(§13). 차단은 전부 남기고, 허용은 exec · connect 처럼
- * 빈도가 낮은 것만 남긴다. 쓰기 허용까지 전부 남기면 ringbuf 가 넘친다.
- */
+/** 감사 이벤트 종류. */
 public enum AuditEventType {
 
     /** bprm_check_security. 실행된 프로세스 — 이것이 <b>1급 증거</b>다. */
@@ -32,6 +27,6 @@ public enum AuditEventType {
     /** 위임 요청 자체 — 막지는 못해도 보이기는 한다(§18). */
     DELEGATION_ATTEMPT,
 
-    /** bash readline uprobe 로 잡은 명령줄. <b>보조 증거일 뿐</b>이다 — 아래 주석 참조. */
+    /** bash readline uprobe 로 잡은 명령줄. <b>보조 증거일 뿐</b>이다(§14). */
     SHELL_COMMAND_LINE
 }

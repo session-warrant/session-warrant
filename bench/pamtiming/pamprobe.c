@@ -1,16 +1,9 @@
-// S3 — PAM 스택에서 session scope 가 확정되는 타이밍
+// S3 — PAM 스택에서 session scope 가 확정되는 타이밍 (§11 T1)
 //
-// 기획서 §11 T1: "session 단계에서 XDG_SESSION_ID 로 확정된 session-N.scope 의
-// cgroup id 를 읽어 cgroup_warrant[cgroup_id] = warrant_id 를 쓴다.
-//  PAM 스택에서 pam_systemd.so 보다 뒤에 놓여야 한다 — 그 전에는 scope 가 아직 없다."
+// "pam_systemd.so 뒤에 놓으면 session-N.scope 가 이미 있다"는 가정을 잰다.
+// 아무것도 안 막고, 아무것도 안 바꾸고, 한 줄 기록하고 PAM_SUCCESS 로 끝난다.
 //
-// "뒤에 놓으면 있다"가 가정이다. 이 모듈은 그걸 잰다. 아무것도 안 막고,
-// 아무것도 안 바꾸고, 한 줄 기록하고 PAM_SUCCESS 로 끝난다.
-//
-// 이 파일은 던져버리는 스파이크다. 남는 건 out/ 의 측정값과, 여기서 확인된
-// "언제 무엇을 읽을 수 있는가" 뿐이다. 제품 모듈은 pam/pam_warrant.so 로 따로 짠다.
-//
-// ── sshd 주소 공간에서 도는 코드의 규칙 (pam/README.md) ──────────────
+// sshd 주소 공간에서 도는 코드의 규칙 (pam/README.md):
 //   - 모든 실패 경로가 PAM_SUCCESS 로 끝난다. 로그인을 막지 않는다.
 //   - malloc 을 쓰지 않는다. 고정 버퍼 + snprintf 만.
 //   - 블로킹 금지. 폴링에 상한을 두고, 넘으면 그냥 통과.
@@ -151,7 +144,7 @@ static void wp_record(pam_handle_t *pamh, const char *phase, int wait_ms)
     wp_emit(line);
 }
 
-// ── PAM 진입점. 전부 PAM_SUCCESS 로 끝난다 ──────────────────────────
+// PAM 진입점. 로그인을 막는 반환은 없다.
 
 int pam_sm_open_session(pam_handle_t *pamh, int flags, int argc, const char **argv)
 {

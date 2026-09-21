@@ -4,13 +4,7 @@ import io.seswar.warrant.domain.warrant.Warrant;
 
 import java.util.UUID;
 
-/**
- * 영장의 T0 · 발급(§11).
- *
- * <p>Slack 승인이 떨어지면 중앙이 warrant_id · 주체 · 대상 호스트 · 만료 시각 · 정책을 담아 서명하고,
- * 해당 호스트의 warrantd 로 push 한다. 그 뒤로는 커널이 혼자 판정한다 —
- * <b>판정 시점에 이 서버로 올라오는 왕복은 하나도 없다</b>(§10).
- */
+/** 영장의 T0 · 발급(§11). 승인 → 서명 → 대상 호스트의 warrantd 로 push. */
 // @Service @Transactional
 public class WarrantIssuanceService {
 

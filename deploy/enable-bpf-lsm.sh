@@ -3,7 +3,7 @@
 #
 # 핵심: lsm=bpf 만 단독으로 넣으면 AppArmor 가 빠지면서 부팅이 깨질 수 있다.
 #       그래서 지금 실제로 떠 있는 목록(/sys/kernel/security/lsm)을 읽어
-#       거기에 ,bpf 만 덧붙인다. 커널이 스스로 알려준 목록이 가장 안전한 원본이다.
+#       거기에 ,bpf 만 덧붙인다.
 #
 #   sudo ./deploy/enable-bpf-lsm.sh          # 무엇을 바꿀지 보여주고 물어본다
 #   sudo ./deploy/enable-bpf-lsm.sh --yes    # 묻지 않는다
@@ -33,7 +33,6 @@ if [[ -f $GRUB ]]; then
   [[ -n $LINE ]] || { echo "GRUB_CMDLINE_LINUX_DEFAULT 를 못 찾았다. 수동으로 편집할 것."; exit 1; }
 
   if [[ $LINE == *lsm=* ]]; then
-    # 이미 lsm= 이 있으면 그 값 뒤에만 ,bpf 를 붙인다
     UPDATED=$(sed -E 's/(lsm=[^ "]*)/\1,bpf/' <<<"$LINE")
   else
     # 없으면 커널이 알려준 현재 목록 전체 + bpf 를 넣는다

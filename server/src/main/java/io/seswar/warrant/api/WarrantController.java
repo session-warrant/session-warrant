@@ -1,11 +1,5 @@
 package io.seswar.warrant.api;
 
-/**
- * 영장 조회 · 요청 · 연장 · 회수 REST.
- *
- * <p>Spring Web MVC + 가상 스레드. WebFlux 는 이 프로젝트에 필요 없다 —
- * Java 25 가상 스레드로 동시성 요구는 충분히 해결된다(기술 스택 §06).
- */
 // @RestController @RequestMapping("/api/warrants")
 public class WarrantController {
 

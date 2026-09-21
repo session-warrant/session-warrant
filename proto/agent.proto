@@ -1,8 +1,4 @@
-// Session Warrant — warrantd ↔ 중앙 gRPC 계약.
-//
-// 경계는 셋뿐이다 (기술 스택 §01): PAM↔warrantd 유닉스 소켓 · warrantd↔중앙 gRPC ·
-// warrantd↔커널 BPF 맵. 이 파일은 그중 둘째다. 첫째는 protobuf 를 쓰지 않는다
-// (PAM 에 암호 연산도 직렬화 라이브러리도 넣지 않는다 — 기술 스택 §05).
+// warrantd ↔ 중앙 gRPC 계약. (PAM ↔ warrantd 소켓은 protobuf 를 쓰지 않는다.)
 //
 // 방향
 //   중앙 → 노드   영장 push          서버 스트리밍. REST 폴링이면 "즉시 발효"가 거짓이 된다

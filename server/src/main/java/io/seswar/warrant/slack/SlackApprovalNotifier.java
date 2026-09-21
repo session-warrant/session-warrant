@@ -3,11 +3,8 @@ package io.seswar.warrant.slack;
 import java.util.UUID;
 
 /**
- * Slack Block Kit 승인 알림.
- *
- * <p>§09 가 "이 흐름이 없으면 아무도 안 쓴다"고 한 부분이다.
- * 승인이 Slack 안에서 버튼 하나로 끝나야 짧은 기본 발급 기간이 현실적으로 굴러간다 —
- * 연장이 비싸면 사람들은 처음부터 넉넉한 영장을 요구하게 되고, 그건 상시 권한의 재발명이다(§03).
+ * Slack Block Kit 승인 알림. 승인이 버튼 하나로 끝나야 짧은 기본 발급 기간이 굴러간다 —
+ * 연장이 비싸면 사람들은 처음부터 넉넉한 영장을 요구한다(§03).
  */
 // @Component
 public class SlackApprovalNotifier {

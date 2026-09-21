@@ -7,19 +7,14 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * 감사 이벤트 수집. warrantd 의 클라이언트 스트리밍을 받아 적재한다.
- *
- * <p>메시지 큐는 넣지 않는다 — gRPC 클라이언트 스트리밍에 백프레셔가 이미 있고,
- * 중앙이 잠깐 죽어도 warrantd 의 로컬 버퍼가 받아 준다.
- * Kafka 를 넣는 순간 운영 대상이 하나 늘고 "왜 필요했나요"에 답해야 한다(기술 스택 §07).
+ * 감사 이벤트 수집. 메시지 큐는 넣지 않는다 — gRPC 스트리밍에 백프레셔가 이미 있고,
+ * 중앙이 잠깐 죽어도 warrantd 의 로컬 버퍼가 받아 준다(기술 스택 §07).
  */
 // @Service
 public class AuditIngestService {
 
     /**
-     * 배치 적재.
-     *
-     * <p>중복 수신을 전제로 설계한다 — warrantd 가 재연결하면 마지막 ack 이후를 다시 보낸다.
+     * 중복 수신을 전제로 설계한다 — warrantd 가 재연결하면 마지막 ack 이후를 다시 보낸다.
      * (node_id, node_seq) 유니크로 멱등하게 받는 편이 재전송 로직보다 단순하다.
      */
     public void ingest(UUID nodeId, List<AuditEvent> batch) {
@@ -30,12 +25,7 @@ public class AuditIngestService {
         throw new UnsupportedOperationException("미구현");
     }
 
-    /**
-     * 유실 구간 기록.
-     *
-     * <p>warrantd 가 "여기부터 여기까지 놓쳤다"고 보고하면 그대로 남긴다.
-     * <b>빈 구간을 숨기지 않는다</b>(§14) — 감춘 구멍은 조사자가 "아무 일도 없었다"로 잘못 읽는다.
-     */
+    /** warrantd 가 보고한 유실 구간을 그대로 남긴다 ({@link io.seswar.warrant.domain.audit.EventGap}). */
     public void recordGap(UUID nodeId, Instant from, Instant to, Long droppedCount, String cause) {
         throw new UnsupportedOperationException("미구현");
     }

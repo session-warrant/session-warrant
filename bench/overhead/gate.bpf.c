@@ -34,8 +34,6 @@ char LICENSE[] SEC("license") = "GPL";
 #define PROBE 0
 #endif
 
-// 타입 접두사 oh_* — vmlinux.h 는 커널의 모든 타입을 통째로 들여온다.
-// 제품 코드는 warrant_*, 이 벤치는 oh_*.
 struct oh_warrant {
     __u64 expires_ns;      // boot 기준. 유저 공간 시각이 아니다
     __u8  revoked;
@@ -57,10 +55,8 @@ enum {
 #define OH_C_TOTAL OH_R_MAX
 #define OH_CNT_MAX (OH_R_MAX + 1)
 
-// ── 맵 ─────────────────────────────────────────────────────────────
-// 전부 PERCPU 다. S0 의 smoke 는 평범한 ARRAY + __sync_fetch_and_add 를 썼는데,
-// 그건 한 캐시라인을 모든 CPU 가 두들기는 구조다. -P8 병렬 워크로드에서는
-// 그 경합 자체가 측정값이 되어버린다. 세는 게 목적이면 PERCPU 여야 한다.
+// 카운터는 전부 PERCPU 다. ARRAY + __sync_fetch_and_add 는 한 캐시라인을 모든 CPU 가
+// 두들기는 구조라, -P8 병렬 워크로드에서는 그 경합 자체가 측정값이 되어버린다.
 struct {
     __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
     __uint(max_entries, OH_CNT_MAX);
@@ -102,7 +98,6 @@ struct {
     __type(value, struct oh_warrant);
 } oh_warrants SEC(".maps");
 
-// ── 계측 보조 ──────────────────────────────────────────────────────
 #if PROBE
 static __always_inline void oh_bump(__u32 k)
 {
@@ -133,15 +128,11 @@ static __always_inline void oh_record(__u64 ns)
 }
 #endif /* PROBE */
 
-// ── 판정 함수 ──────────────────────────────────────────────────────
-// 감사 모드와 강제 모드가 공유하게 될 함수의 자리다 (§15).
-// 스파이크 전 구간에서 반환값은 언제나 0 이다. 여기를 -EPERM 으로 바꾸지 말 것 —
-// 자기보호 6종 전에 켜면 verifier 를 통과한 버그 하나로 자기 박스에서 잠긴다.
+// 감사 모드와 강제 모드가 공유하게 될 판정 함수의 자리다 (§15).
 static __always_inline int oh_decide(struct file *file)
 {
 #if TIER >= 2
-    // 앞문. S0 에서 쓰기 의도는 전체 file_open 의 4.7% 였다(123/2,598).
-    // 비트 테스트 하나가 95% 를 여기서 끝낸다. 맵 조회까지 가는 건 5% 다.
+    // 앞문. 쓰기 의도는 전체 file_open 의 5% 남짓이라(S0) 대부분 여기서 끝난다.
     __u32 mode = BPF_CORE_READ(file, f_mode);
     if (!(mode & FMODE_WRITE))
         return OH_R_READ;
@@ -157,10 +148,9 @@ static __always_inline int oh_decide(struct file *file)
     if (!w)
         return OH_R_TAG_MISS;
     if (w->revoked)
-        return OH_R_REVOKED;               // 강제 모드였다면 -EPERM
-    // 만료가 세션 안에서 발효된다 (§05·§12). 유저 공간 왕복도 타이머도 없다.
+        return OH_R_REVOKED;
     if (bpf_ktime_get_boot_ns() > w->expires_ns)
-        return OH_R_EXPIRED;               // 강제 모드였다면 -EPERM
+        return OH_R_EXPIRED;
     return OH_R_TAG_HIT;
 #endif /* TIER >= 3 */
 
@@ -168,7 +158,6 @@ static __always_inline int oh_decide(struct file *file)
     return OH_R_PASS;
 }
 
-// ── 훅 ─────────────────────────────────────────────────────────────
 SEC("lsm/file_open")
 int BPF_PROG(oh_file_open, struct file *file)
 {
@@ -179,7 +168,7 @@ int BPF_PROG(oh_file_open, struct file *file)
     int code = oh_decide(file);
 
 #if PROBE
-    // ── 여기부터는 계측이다. 타이머를 먼저 닫는다 ──────────────────
+    // 여기부터는 계측이다. 타이머를 먼저 닫는다.
     oh_record(bpf_ktime_get_ns() - t0);
     oh_bump(OH_C_TOTAL);
     if (code >= 0 && code < OH_R_MAX)

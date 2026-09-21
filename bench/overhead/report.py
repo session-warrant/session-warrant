@@ -16,8 +16,7 @@ import sys
 from collections import defaultdict
 from glob import glob
 
-# 표시 순서. E 는 D 와 같은 프로그램을 태그 없이 돌린 것이라 D 앞에 놓는다 —
-# 기술스택 문서 §검증하네스의 비교군 셋이 A · E · D 다.
+# 표시 순서. E 는 D 와 같은 프로그램을 태그 없이 돌린 것이라 D 앞에 놓는다.
 TIERS = ["a", "b", "c", "e", "d"]
 MICRO_TIERS = ["b", "c", "e", "d"]
 TIER_DESC = {
@@ -62,9 +61,8 @@ def macro_table(d):
         base = t.get("a")
         n = len(base) if base else 0
 
-        # 훅은 기계를 빠르게 만들 수 없다. 어떤 티어가 A 보다 유의하게
-        # 빠르면 그 슬롯 동안 기계 상태가 변한 것이고, 그 워크로드의 Δ 는
-        # 전부 인공물이다. 조용히 "-35.6%" 를 찍게 두면 안 된다.
+        # 훅은 기계를 빠르게 만들 수 없다. A 보다 유의하게 빠른 티어가 있으면
+        # 그 워크로드의 Δ 는 전부 인공물이다.
         bogus = []
         if base:
             bm = st.mean(base)
@@ -104,8 +102,7 @@ def macro_table(d):
             print(f"    {tier.upper():<4} {TIER_DESC[tier]:<22} "
                   f"{m:8.3f}s {sd:6.3f}s {pct(v, 0.95):8.3f}s {dms:>8} {sig:>12}")
 
-        # §13 의 핵심 주장: "영장 없는 프로세스는 조회 한 번으로 빠져나간다".
-        # E 와 D 는 같은 프로그램이므로 차이는 영장 유무 하나뿐이다.
+        # E 와 D 는 같은 프로그램이므로 차이는 영장 유무 하나뿐이다 (§13).
         e, dd = t.get("e"), t.get("d")
         if e and dd:
             em, dm2 = st.mean(e), st.mean(dd)
@@ -213,11 +210,7 @@ def crosscheck(d):
 
     훅이 커널 안에서 쓴 시간은 마이크로가 직접 잰다. 거기에 호출수를 곱하면
     그 워크로드가 느려질 수 있는 최대치가 나온다 — 훅은 그보다 더 느리게
-    만들 수 없다. 매크로가 그 몇 배를 보고하면 그건 훅이 아니라 기계다.
-
-    2차 실행에서 w_untar D 를 +2.0% 로 보고했는데, 그건 1회당 539ns 에
-    해당한다. 커널 안 실측은 77ns 였다 — 7배 어긋난 값을 사람이 눈으로
-    잡아내야 했다. 그 대조를 여기서 자동으로 한다."""
+    만들 수 없다. 매크로가 그 몇 배를 보고하면 그건 훅이 아니라 기계다."""
     probes = _probe_files(d)
     macro = load_macro(d)
     if not probes or not macro:
@@ -257,8 +250,7 @@ def crosscheck(d):
             got = (st.mean(v) / st.mean(base) - 1) * 100
             ratio = abs(got) / exp if exp > 0.001 else float("inf")
             # 훅이 낼 수 있는 값의 3배를 넘으면 그건 훅이 아니다.
-            # (배수를 3 으로 둔 건 LSM 부착 비용과 버킷 근사 오차를 넉넉히
-            #  덮기 위해서다. 2 차의 7배는 이 문턱을 크게 넘는다.)
+            # (3 은 LSM 부착 비용과 버킷 근사 오차를 넉넉히 덮는 값이다.)
             if abs(got) < floor:
                 verdict = "노이즈 이하"
             elif ratio > 3:

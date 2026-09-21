@@ -1,23 +1,13 @@
-// Session Warrant — 감사 이벤트 스키마.
+// 감사 이벤트 스키마 — 커널 ringbuf 레코드가 warrantd 를 거쳐 중앙에 도착하는 형태.
+// 필드 출처는 docs/session-warrant-ebpf-fields.html.
 //
-// 커널 ringbuf 레코드가 warrantd 를 거쳐 중앙에 도착하는 형태다. 필드 목록의
-// 출처는 docs/session-warrant-ebpf-fields.html (§01 여덟 갈래, §03 공통 메타,
-// §11 ringbuf 레코드) 이고, 서버 쪽 대응은 domain/audit/AuditEvent 다.
-//
-// 세 가지 원칙
-//   1. 신뢰의 근거는 (dev, ino) 쌍 하나다. 경로 · argv · comm 은 호출자가 통제하므로
-//      참고 정보이며, 리포트는 inode 를 앞세우고 문자열은 뒤에 붙인다 (§14).
-//   2. pid 는 식별자가 아니다. (pid, start_time) 쌍이라야 유일하다.
-//   3. 유실을 숨기지 않는다. GapReport 가 "빈 구간"을 명시적으로 남긴다 (§14).
-//
-// 기록의 절제 (§13): 차단은 전건, 허용은 exec · connect 처럼 빈도 낮은 것만.
-// 허용된 쓰기는 WriteAggregate 로 집계해서 올린다.
+// 신뢰의 근거는 (dev, ino) 쌍이다. 경로 · argv · comm 은 호출자가 통제하므로 참고 정보다 (§14).
+// 차단은 전건, 허용은 exec · connect 처럼 빈도 낮은 것만 싣는다. 허용된 쓰기는 WriteAggregate 로 집계한다 (§13).
 
 syntax = "proto3";
 
 package seswar.warrant.v1;
 
-// Mode 를 쓴다 (AuditEvent.mode).
 import "warrant.proto";
 
 option java_package = "io.seswar.warrant.proto";
@@ -183,7 +173,7 @@ message ProcessIdentity {
 
 // 커널이 실제로 만진 파일. 신뢰의 근거는 이 쌍이다.
 message FileRef {
-  // i_sb->s_dev — dev_t 는 u32 다. fixed64 로 넓히지 말 것(파일 머리 규칙 3).
+  // i_sb->s_dev — dev_t 는 u32 다. fixed64 로 넓히지 말 것 (커널 폭과 같아야 한다).
   // 컨테이너 overlayfs 에서는 호스트와 다른 값이 나온다.
   fixed32 dev = 1;
 

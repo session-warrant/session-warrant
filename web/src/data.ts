@@ -38,7 +38,6 @@ export interface WarrantlessSession {
 }
 export interface Gap { node: string; from: number; to: number; seq_from: number; seq_to: number; dropped: number; cause: string }
 
-// ── 시드 난수 (mulberry32) ─────────────────────────────────────────────
 function rng(seed: number) {
   let a = seed >>> 0
   return () => {
@@ -161,7 +160,6 @@ export const HOOKS: Record<Hook, string> = {
   agg: "집계(write allow)",
 }
 
-// ── 이벤트 생성 ─────────────────────────────────────────────────────────
 export const events: AuditEvent[] = []
 const seqByNode: Record<string, number> = Object.fromEntries(Object.keys(nodes).map((n) => [n, 40000 + between(0, 900)]))
 let pidCounter = 4000

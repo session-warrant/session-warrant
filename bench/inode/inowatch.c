@@ -1,18 +1,11 @@
-// S4 — fanotify 가 inode 교체를 실제로 알려주는가
+// S4 — fanotify 가 inode 교체를 실제로 알려주는가 (§15)
 //
-// 기획서 §15: "정책에는 /usr/bin/git 이라고 쓰지만 맵에는 inode 번호가 들어간다.
-//  대가는 패키지 업데이트로 inode가 바뀌면 재컴파일이 필요하다는 것이고,
-//  warrantd가 fanotify 로 감시해 자동 갱신한다."
-//
-// 이 프로그램은 그 "감시해 자동 갱신"의 앞쪽 절반만 한다 — 알려주는지, 언제
-// 알려주는지. 갱신은 안 한다. warrantd 가 할 일이다.
+// 알려주는지, 언제 알려주는지만 본다. 맵 갱신은 warrantd 가 할 일이다.
 //
 // 왜 inotify 가 아니라 fanotify 인가: inotify 는 디렉터리마다 watch 를 걸어야
 // 하고 재귀도 직접 해야 한다. fanotify 는 FAN_MARK_FILESYSTEM 으로 파일시스템
 // 하나를 통째로 볼 수 있고, 이게 /usr 전체를 감시해야 하는 이 용도에 맞는다.
 // 대신 CAP_SYS_ADMIN 이 필요하다 — warrantd 는 어차피 root 다.
-//
-// 이 파일은 던져버리는 스파이크다. 남는 건 out/ 의 카탈로그다.
 
 #define _GNU_SOURCE
 #include <errno.h>
@@ -37,7 +30,7 @@ static unsigned long long iw_now_us(void)
     return (unsigned long long)ts.tv_sec * 1000000ULL + ts.tv_nsec / 1000;
 }
 
-// 마스크를 사람이 읽는 이름으로. 한 이벤트에 여러 비트가 켜질 수 있다.
+// 한 이벤트에 여러 비트가 켜질 수 있다.
 static void iw_mask(unsigned long long m, char *out, size_t n)
 {
     struct { unsigned long long bit; const char *name; } tbl[] = {
@@ -97,8 +90,7 @@ int main(int argc, char **argv)
                               FAN_DELETE_SELF | FAN_MOVE_SELF | FAN_ONDIR;
 
     for (int i = 1; i < argc; i++) {
-        // 마운트포인트면 파일시스템 전체를 잡는다. /usr 전체를 디렉터리마다
-        // 거는 건 현실적이지 않다 — 그게 fanotify 를 고른 이유다.
+        // 마운트포인트면 파일시스템 전체를 잡는다.
         struct stat st, pst;
         char parent[PATH_MAX];
         snprintf(parent, sizeof(parent), "%s/..", argv[i]);

@@ -6,7 +6,6 @@
 //   sudo ./tagprobe dump                       기록된 전부
 //
 // 맵을 pin 하는 이유는 bats 케이스가 별도 프로세스이기 때문이다.
-// 제품에서도 warrantd 재시작 중 태깅 공백을 막으려고 pin 한다 (CLAUDE.md).
 
 #include <stdio.h>
 #include <stdlib.h>

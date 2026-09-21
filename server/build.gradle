@@ -1,5 +1,4 @@
-// 버전은 docs/session-warrant-tech-stack.html §02 「버전 고정표」 기준.
-// 커널 프로젝트에서 "최신"은 위험한 단어다 — 팀 전원이 같은 숫자를 쓰는지부터 맞추고 시작한다.
+// 버전은 docs/session-warrant-tech-stack.html §02 「버전 고정표」 기준. 임의로 올리지 않는다.
 //
 // 주의: Spring Boot 4 에서 스타터 이름이 대거 바뀌었다 (web → webmvc, oauth2-client →
 // security-oauth2-client, flyway 전용 스타터 신설). Boot 3 시절 예제를 그대로 옮기면
@@ -42,9 +41,7 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-security-oauth2-resource-server'
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
 
-    // 영장 push (서버 스트리밍) · 감사 이벤트 (클라이언트 스트리밍).
-    // Spring Boot 4 가 spring-grpc 를 흡수했다 — org.springframework.grpc 스타터를
-    // 따로 붙이지 않는다. 자세한 경위는 README 참조.
+    // Spring Boot 4 가 spring-grpc 를 흡수했다 — org.springframework.grpc 스타터를 따로 붙이지 않는다.
     implementation 'org.springframework.boot:spring-boot-starter-grpc-server'
 
     implementation 'org.springframework.boot:spring-boot-starter-flyway'
@@ -64,8 +61,7 @@ dependencies {
     testRuntimeOnly    'org.junit.platform:junit-platform-launcher'
 }
 
-// proto/ 는 팀 간 계약이다. 커널(struct warrant) · 서버 엔티티 · 테스트 픽스처가
-// 전부 이 한 파일에서 나와야 하며, 여기가 어긋나면 그 순간부터 디버깅이 지옥이 된다.
+// proto/ 가 단일 원본이다. 서버는 여기서 생성된 코드를 쓴다.
 sourceSets {
     main {
         proto { srcDir '../proto' }
@@ -85,10 +81,8 @@ protobuf {
 tasks.named('test') {
     useJUnitPlatform()
 
-    // Gradle 9 는 "테스트 소스는 있는데 발견된 테스트가 0개" 를 빌드 실패로 다룬다.
-    // 지금은 WarrantServerApplicationTests 가 통째로 주석이라 실제로 0개다.
-    // 가짜 통과 테스트를 하나 넣어 초록을 만드는 것보다, 없다는 사실을 그대로
-    // 두는 편이 낫다 — 그 클래스의 주석에 반드시 다뤄야 할 케이스 8개가 적혀 있고,
-    // 그게 채워지는 순간 이 줄을 지운다.
+    // Gradle 9 는 "발견된 테스트 0개" 를 빌드 실패로 다룬다. 지금은 실제로 0개다.
+    // 가짜 통과 테스트로 초록을 만들지 않는다 — WarrantServerApplicationTests 주석의
+    // 케이스 8개가 채워지는 순간 이 줄을 지운다.
     failOnNoDiscoveredTests = false
 }

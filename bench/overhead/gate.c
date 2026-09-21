@@ -2,9 +2,8 @@
 //
 //   sudo ./gate --obj gate_c.bpf.o [--tag-cgroup N] [--out stats.json]
 //
-// 스켈레톤을 안 쓴다. 티어 3개 × PROBE 2개 = 오브젝트 6개를 바이너리 하나가
-// 다뤄야 하는데, 스켈레톤은 오브젝트마다 헤더가 생겨서 6개를 다 링크하게 된다.
-// 제품의 warrantd 는 cilium/ebpf + bpf2go 로 간다 — 이건 던져버리는 스파이크 코드다.
+// 스켈레톤을 안 쓴다. 티어 × PROBE 조합의 오브젝트 여럿을 바이너리 하나가
+// 다뤄야 하는데, 스켈레톤은 오브젝트마다 헤더가 생겨서 전부 링크하게 된다.
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -45,7 +44,6 @@ static int quiet_libbpf(enum libbpf_print_level lvl, const char *fmt, va_list ap
 
 static int ncpu;
 
-// PERCPU 맵 한 칸을 읽어 모든 CPU 값을 더한다.
 static __u64 sum_percpu(int fd, __u32 key)
 {
     __u64 vals[1024];

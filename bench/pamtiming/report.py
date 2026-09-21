@@ -152,9 +152,7 @@ def main():
         if waited:
             print(f"    나머지는 {min(waited)/1000:.1f}~{max(waited)/1000:.1f}ms 뒤에 나타났다.")
 
-    # XDG_SESSION_ID 는 재사용된다. cgroup id(inode)는 안 된다.
-    # 영장을 세션 번호에 걸면 다음 세션이 남의 영장을 물려받는다 —
-    # §11 T1 이 cgroup id 를 키로 쓰는 이유가 여기서 실물로 확인된다.
+    # XDG_SESSION_ID 는 재사용되고 cgroup id 는 안 된다 — 키가 cgroup id 인 이유.
     by_sid = defaultdict(set)
     for r in target:
         sid_v = r.get("xdg_session_id", "-")

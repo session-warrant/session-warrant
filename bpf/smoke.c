@@ -1,8 +1,4 @@
-// smoke.bpf.c 로더. libbpf 스켈레톤을 쓴다.
-//
-// 이건 던져버릴 스파이크 코드다. 제품의 로더는 Go(cilium/ebpf)로 간다 —
-// agent/internal/loader/. 여기서 C 를 쓰는 이유는 Go 툴체인 없이
-// 커널·clang·libbpf 삼자가 맞는지만 먼저 보고 싶기 때문이다.
+// smoke.bpf.c 로더 (libbpf 스켈레톤). 스파이크 코드 — 제품 로더는 Go(agent/internal/loader).
 
 #include <stdio.h>
 #include <stdlib.h>

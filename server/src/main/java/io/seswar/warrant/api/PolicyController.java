@@ -1,8 +1,5 @@
 package io.seswar.warrant.api;
 
-/**
- * 정책 CRUD 와 lint.
- */
 // @RestController @RequestMapping("/api/policies")
 public class PolicyController {
 

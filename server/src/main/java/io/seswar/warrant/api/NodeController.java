@@ -1,8 +1,5 @@
 package io.seswar.warrant.api;
 
-/**
- * 노드 현황.
- */
 // @RestController @RequestMapping("/api/nodes")
 public class NodeController {
 

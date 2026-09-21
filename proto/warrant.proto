@@ -1,22 +1,10 @@
-// Session Warrant — 영장 스키마. 단일 진실 원본.
+// 영장 스키마. struct warrant · 서버 Warrant 엔티티 · warrantd 맵 값의 단일 원본 — 필드는 여기부터 고친다.
 //
-// struct warrant(bpf/warrant.bpf.h) · Warrant 엔티티(server/) · warrantd 의 맵 값이
-// 전부 이 파일에서 나온다. 필드를 추가할 때는 예외 없이 여기부터 고친다.
+// 커널 구조체로 내려가는 필드는 C 폭과 같은 타입만 쓴다
+// (fixed64 ↔ __u64 · uint32 ↔ __u32 · enum ↔ __u8). 필드 번호는 재사용하지 않고,
+// 지운 번호는 reserved 로 남긴다.
 //
-// 세 가지 규칙 (proto/README.md)
-//   1. 서명은 이 메시지의 직렬화 바이트에 한다. 서명한 바이트를 그대로 저장하고
-//      그대로 전송한다 — 역직렬화 후 재직렬화하면 서명이 깨진다 (SignedWarrant 참조).
-//   2. 시각은 절대시각(Unix ns)만 싣는다. 커널의 expires_ns 는 노드별 boot 기준이라
-//      중앙이 계산할 수 없다. 변환은 warrantd 가 한다.
-//   3. 커널 구조체에 그대로 내려가는 필드는 C 폭과 같은 타입만 쓴다
-//      (fixed64 ↔ __u64 · uint32 ↔ __u32 · enum ↔ __u8). 필드 번호는 재사용하지
-//      않고, 지운 번호는 reserved 로 박제한다.
-//
-// 스파이크가 확정한 것 (docs/experiments.md)
-//   · 영장 키는 cgroup id 다. 세션 번호가 아니다 — S3 에서 같은 session-4.scope 가
-//     cgroup id 세 개를 가졌다. 그래서 이 파일에는 XDG_SESSION_ID 가 없다.
-//   · 커널 판정에 필요한 값은 expires_ns · revoked · (dev, ino) 목록으로 충분하다
-//     (bench/overhead/gate.bpf.c 의 oh_decide 가 초안).
+// 영장 키는 cgroup id 다. XDG_SESSION_ID 는 재사용되므로(S3) 이 파일에 없다.
 
 syntax = "proto3";
 
@@ -40,7 +28,8 @@ option go_package = "github.com/jhukkim/ebSW/agent/internal/pb;pb";
 // 경로가 하나라야 "취소만 서명 검증을 안 한다" 같은 구멍이 안 생긴다.
 message SignedWarrant {
   // Warrant 메시지의 직렬화 바이트. 서명 대상이며, 서버는 이 바이트를 그대로
-  // 보관한다(warrant.signed_payload). 검증하는 쪽도 이 바이트를 그대로 검증한다.
+  // 보관한다(warrant.signed_payload). 검증하는 쪽도 이 바이트를 그대로 검증한다 —
+  // 역직렬화 후 재직렬화하면 서명이 깨진다.
   bytes warrant = 1;
 
   // Ed25519 서명 (64 바이트). 서버는 JDK 내장 구현, warrantd 는 crypto/ed25519.
@@ -176,25 +165,12 @@ message Policy {
   // lsm/socket_sendmsg 까지 붙일 것인가 (§18 UDP 구멍). 비용이 오르므로 기본 false.
   bool inspect_udp = 5;
 
-  // ── 읽기 감시 — 기본 꺼짐. 켜면 앞문이 무력화된다 ──────────────────
+  // 읽기 감시 — 기본 꺼짐. 켜면 `f_mode & FMODE_WRITE` 앞문이 무력화된다
+  // (S1 w_find 기준 12 → ~63ns/call, 0.31% → 1.7%).
+  // 이 목록이 비어 있으면 BPF 프로그램은 읽기 경로를 아예 보지 않는다.
+  // 비어 있지 않은 영장이 하나라도 있는 노드에서만 읽기 조회가 켜진다.
   //
-  // 판정 함수의 앞문은 `f_mode & FMODE_WRITE` 한 줄이고, S0 에서 호출의 95%가
-  // 여기서 끝난다. 읽기 경로를 감시하려면 읽기도 이 문을 통과해 맵 조회를
-  // 타야 한다 — 앞문이 무력화된다.
-  //
-  // S1 실측으로 비용이 계산된다 (docs/experiments.md):
-  //   w_find  168,881 opens, 쓰기 0%
-  //     현재            12ns/call →  2.0ms → 0.31%
-  //     읽기도 조회하면 ~63ns/call → 10.6ms → 1.7%   (5배)
-  // 그리고 S1 의 핵심 증거("읽기 지배 워크로드에서 C·E·D 가 같다")가 거짓이 된다.
-  //
-  // 그래서 inspect_udp 와 같은 취급이다 — **이 목록이 비어 있으면 BPF 프로그램은
-  // 읽기 경로를 아예 보지 않는다.** 비어 있지 않은 영장이 하나라도 있는 노드에서만
-  // 읽기 조회가 켜지고, 그 노드는 위 비용을 낸다.
-  //
-  // TODO(미검증): bench/overhead 에 읽기 감시 티어를 추가해 실측한 뒤에
-  // 이 기능을 제품에 넣는다. 지금은 "소수의 경로니까 싸겠지"라는 추측이고,
-  // 이 프로젝트는 같은 종류의 추측을 두 번 틀렸다(S1 1차 · 2차).
+  // TODO(미검증): bench/overhead 에 읽기 감시 티어를 추가해 실측한 뒤에 제품에 넣는다.
   repeated string read_watch_paths = 6;
 }
 
@@ -211,9 +187,8 @@ message ExecRule {
 //   3. 어느 규칙에도 안 걸리면 금지 (화이트리스트가 기본값이다)
 //
 // 규칙 1 이 없으면 §15 가 요구하는 "디렉터리 금지 + 그 안의 파일 허용"을
-// 표현할 수 없다. 커널에서는 조상 inode 체인을 훑으며 가장 먼저 만나는
-// 규칙이 최장 일치이므로, 순회를 자기 자신에서 시작해 위로 올라가면 된다
-// (필드 문서 §07 "조상 체인 — 여기가 비용의 전부다").
+// 표현할 수 없다. 커널에서는 자기 자신에서 시작해 조상 inode 체인을 위로
+// 훑으면 가장 먼저 만나는 규칙이 최장 일치다.
 message WriteRule {
   enum Effect {
     EFFECT_ALLOW = 0;

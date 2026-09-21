@@ -3,10 +3,8 @@ package io.seswar.warrant.application;
 import java.util.UUID;
 
 /**
- * 회수. 연장과 <b>같은 경로</b>라, 진행 중인 세션의 권한을 승인자가 실시간으로 좁힐 수 있다(§03).
- *
- * <p>커널에서는 {@code warrants[id].revoked = 1} 한 바이트다.
- * 맵의 바이트 하나를 뒤집으면 전 노드에서 즉시 발효된다 — 프로세스 순회도, 신호도 없다(§05).
+ * 회수. 연장과 같은 경로(새 revision push)이고, 커널에서는 {@code warrants[id].revoked = 1}
+ * 한 바이트로 즉시 발효된다(§03, §05).
  */
 // @Service @Transactional
 public class WarrantRevocationService {

@@ -7,9 +7,7 @@ package io.seswar.warrant.slack;
 public class SlackInteractionController {
 
     /**
-     * 상호작용 payload 처리.
-     *
-     * <p>반드시 먼저 할 일: <b>Slack 요청 서명 검증</b>({@code X-Slack-Signature}).
+     * 반드시 먼저 할 일: <b>Slack 요청 서명 검증</b>({@code X-Slack-Signature}).
      * 이걸 빼면 아무나 승인 버튼을 눌러 영장을 발급시킬 수 있다 —
      * 승인 절차 전체가 장식이 된다.
      *

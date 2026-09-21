@@ -3,13 +3,8 @@ package io.seswar.warrant.domain.subject;
 import java.util.UUID;
 
 /**
- * 영장의 주체 — 사람.
- *
- * <p>이 제품의 값어치가 여기에 있다. 전부 {@code ec2-user} 로 들어와 {@code sudo} 를 치면
- * 그 다음부터 커널이 보는 건 uid 0 뿐이고 귀속이 무너진다(§01).
- * 영장은 uid 가 아니라 <b>사람</b>에 걸리므로 sudo 뒤로 숨는 것이 불가능해진다.
- *
- * <p>자체 회원가입을 만들지 않는다. OIDC 공급자(Keycloak)의 {@code sub} 가 신원의 출처다.
+ * 영장의 주체 — 사람. 영장은 uid 가 아니라 사람에 걸리므로 sudo 뒤로 숨지 못한다(§01).
+ * 신원의 출처는 OIDC {@code sub} 다.
  */
 // @Entity @Table(name = "subject")
 public class Subject {

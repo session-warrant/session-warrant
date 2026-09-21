@@ -10,10 +10,8 @@
 #   at · crontab            atd · crond              바뀜    끊김  끊김
 #   docker exec             containerd-shim          바뀜    끊김  끊김
 #
-# 앞 3줄이 초록이어야 제품이 성립한다. 뒤 4줄은 문서가 인정한 위임 경로이고,
-# "끊긴다"는 것 자체가 검증 대상이다 — 실패가 아니라 예상된 결과다.
-# 그 경로들은 실행 화이트리스트 · 소켓 차단 · spool 쓰기 차단의 3중 방어로
-# 막는데, 셋 다 아직 구현 전이라 아래에 skip 으로 명시해 뒀다.
+# 앞 3줄이 초록이어야 제품이 성립한다. 뒤 4줄은 "끊긴다" 자체가 검증 대상이다.
+# 그 경로의 진짜 방어선(3중 방어)은 미구현이라 맨 아래에 skip 으로 둔다.
 
 load helpers
 
@@ -47,8 +45,7 @@ teardown_file() { stop_probe; }
 }
 
 @test "§04-2 sudo 로 uid 가 바뀌어도 태그가 유지된다" {
-    # 1차 태그가 cgroup 에 걸려 있으므로 uid 변경과 완전히 무관해야 한다.
-    # 이게 깨지면 sudoers 로 흉내 낼 수 있는 물건과 다를 게 없다.
+    # 1차 태그가 cgroup 에 걸려 있으므로 uid 변경과 무관해야 한다.
     sudo -n -u nobody sleep 814 >/dev/null 2>&1 &
     run pid_of "sleep 814"
     [ "$status" -eq 0 ]
@@ -65,8 +62,7 @@ teardown_file() { stop_probe; }
 }
 
 @test "§04-3 systemd-run --scope 는 cgroup 이 바뀌어도 2차 방어선에 걸린다" {
-    # 이 케이스 하나가 2차 방어선(fork 전파)의 존재 이유다.
-    # cgroup 은 바뀌지만 호출자가 자기가 fork 한 뒤 이관하므로 fork 체인이 산다.
+    # 2차 방어선의 존재 이유. 호출자가 fork 한 뒤 이관하므로 fork 체인이 산다.
     command -v systemd-run >/dev/null || skip "systemd-run 없음"
     systemd-run --scope --quiet sleep 816 >/dev/null 2>&1 &
     run pid_of "sleep 816"
@@ -112,9 +108,7 @@ teardown_file() { stop_probe; }
 }
 
 # ── 위임 경로의 진짜 방어선 — 아직 구현 전 ──────────────────────────
-# §04: "실행 허용 목록이 화이트리스트다. systemd-run·systemctl·at·crontab·
-#       docker 가 영장에 없으면 실행 자체가 bprm_check_security 에서 막힌다.
-#       기본값이 이미 차단이라는 게 핵심이다."
+# 실행 허용 목록이 화이트리스트라, 영장에 없는 위임 도구는 bprm_check_security 에서 막힌다 (§04).
 
 @test "§04 위임-1 화이트리스트에 없는 systemd-run 은 exec 에서 막힌다" {
     skip "실행 화이트리스트 미구현. lsm/bprm_check_security 는 지금 기록만 한다 (감사 모드)"

@@ -1,8 +1,4 @@
-// S2 — 태그 두 겹이 프로세스 트리를 따라가는가 (§04)
-//
-// 이 제품이 성립하는지는 딱 하나에 달려 있다:
-// sudo · su · nohup · 백그라운드를 거쳐도 표식이 떨어지지 않는가.
-// 떨어지면 그냥 또 하나의 셸 래퍼다.
+// S2 — 태그 두 겹이 sudo · su · nohup · 백그라운드를 거쳐도 떨어지지 않는가 (§04)
 //
 // 두 겹을 각각 따로 기록한다. "태그가 붙었다"만 보면
 // systemd-run --scope(cgroup 은 바뀌었지만 fork 체인이 살아 2차 방어선에
@@ -16,7 +12,6 @@
 
 char LICENSE[] SEC("license") = "GPL";
 
-// 타입 접두사 wb_* — vmlinux.h 는 커널의 모든 타입을 통째로 들여온다.
 struct wb_rec {
     __u64 cgroup_id;
     __u64 warrant_cg;      // 1차(cgroup)로 찾은 영장. 0 이면 cgroup 이 바뀐 것
@@ -74,7 +69,7 @@ static __always_inline __u64 wb_tag_by_task(struct task_struct *t)
     return w ? *w : 0;
 }
 
-// ── 2차 방어선: fork 전파 ───────────────────────────────────────────
+// 2차 방어선: fork 전파
 SEC("tp_btf/sched_process_fork")
 int BPF_PROG(wb_fork, struct task_struct *parent, struct task_struct *child)
 {
@@ -94,7 +89,6 @@ int BPF_PROG(wb_fork, struct task_struct *parent, struct task_struct *child)
     return 0;
 }
 
-// ── exec 시점 기록 ─────────────────────────────────────────────────
 // §04 의 첫 겹(실행 화이트리스트)이 놓이는 자리이기도 하다.
 // 스파이크 전 구간 감사 모드 — 여기는 언제나 return 0 이다.
 SEC("lsm/bprm_check_security")
