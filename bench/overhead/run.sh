@@ -63,6 +63,10 @@ grep -qw bpf /sys/kernel/security/lsm 2>/dev/null || \
     die "/sys/kernel/security/lsm 에 bpf 가 없다. sudo ../../deploy/enable-bpf-lsm.sh 후 재부팅."
 [[ -x ./gate ]] || die "빌드가 안 돼 있다. make"
 [[ -d fixtures/.done ]] || die "픽스처가 없다. ./fixture.sh"
+if grep -qv '^performance$' /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null; then
+    echo "경고: 거버너가 performance 가 아니다 — 매크로가 주파수 두 모드로 갈린다(3 · 4 · 5차)." >&2
+    echo "      sudo cpupower frequency-set -g performance" >&2
+fi
 
 mkdir -p "$OUT"
 
@@ -76,6 +80,9 @@ CGID=$(stat -c %i "/sys/fs/cgroup${CG}" 2>/dev/null || echo 0)
     echo "kernel   $(uname -r)"
     echo "lsm      $(cat /sys/kernel/security/lsm)"
     echo "cpu      $(nproc) x $(awk -F: '/model name/{print $2; exit}' /proc/cpuinfo | xargs)"
+    # 4 · 5차는 고정했는지 기록이 없어 매크로 무효의 원인을 추정으로만 적었다.
+    GOV=$(cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null | sort | uniq -c | xargs || true)
+    echo "governor ${GOV:-읽을 수 없음}"
     echo "cgroup   $CG (id=$CGID)"
     echo "runs     $RUNS x $PASSES 패스 (warmup $WARMUP)"
     echo "tiers    $TIERS"

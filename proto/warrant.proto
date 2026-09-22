@@ -67,7 +67,7 @@ message Policy {
   repeated NetRule net_rules = 4;      // 비어 있으면 아웃바운드 전면 차단
   bool inspect_udp = 5;                // socket_sendmsg 부착. 기본 false
 
-  // 미검증 — 비어 있으면 BPF 가 읽기 경로를 보지 않는다. README 미해결 2.
+  // 비어 있으면 BPF 가 읽기 경로를 보지 않는다. 구현은 inode 먼저 + 직접 load (README 2)
   repeated string read_watch_paths = 6;
 }
 
