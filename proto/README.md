@@ -53,8 +53,8 @@
 - **`NetRule.proto` 추가** (`PROTO_ANY`/`TCP`/`UDP`). `cidr`+`port` 만으로는
   "TCP 443 허용, UDP 443 금지"를 못 쓴다. §18 의 UDP 구멍이 있는데 그 축이 없었다.
   `inspect_udp` 는 "볼 것인가"고 이건 "허용할 것인가"라 다른 축이다.
-- **`read_watch_paths` 를 `inspect_udp` 와 같은 취급으로 가뒀다.** 문서에 근거가
-  없는 필드였고, S1 실측과 부딪친다 — 읽기 경로를 감시하면 `f_mode & FMODE_WRITE`
+- **`read_watch_paths` 를 `inspect_udp` 와 같은 취급으로 가뒀다.** 근거는 기획서 §15
+  (소수 inode 감시 목록)지만 S1 실측과 부딪친다 — 읽기 경로를 감시하면 `f_mode & FMODE_WRITE`
   앞문이 무력화되고 `w_find` 기준 0.31% → 1.7%(5배)가 된다. **목록이 비어 있으면
   BPF 프로그램이 읽기 경로를 아예 보지 않는다**는 규칙을 주석에 박았고,
   실제 구현 전에 `bench/overhead` 에 티어를 추가해 재기로 했다.
