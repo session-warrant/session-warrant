@@ -1,0 +1,18 @@
+{
+  "object": "gate_b.bpf.o",
+  "seconds": 48.597,
+  "counters": {
+    "pass": 0,
+    "read": 0,
+    "tag_miss": 0,
+    "tag_hit": 0,
+    "revoked": 0,
+    "expired": 0,
+    "watch_hit": 0,
+    "total": 0
+  },
+  "lat_log2_ns": {
+  },
+  "dev_major": {
+  }
+}

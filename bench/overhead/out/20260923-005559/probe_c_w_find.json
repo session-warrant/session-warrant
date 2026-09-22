@@ -1,0 +1,30 @@
+{
+  "object": "gate_c_probe.bpf.o",
+  "seconds": 0.755,
+  "counters": {
+    "pass": 23,
+    "read": 214328,
+    "tag_miss": 0,
+    "tag_hit": 0,
+    "revoked": 0,
+    "expired": 0,
+    "watch_hit": 0,
+    "total": 214351
+  },
+  "lat_log2_ns": {
+    "4": 182208,
+    "5": 28793,
+    "6": 3278,
+    "7": 50,
+    "8": 10,
+    "10": 2,
+    "11": 1,
+    "12": 5,
+    "13": 1,
+    "14": 3
+  },
+  "dev_major": {
+    "0": {"read": 2765, "write": 20},
+    "259": {"read": 211563, "write": 3}
+  }
+}
