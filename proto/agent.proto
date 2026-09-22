@@ -11,7 +11,7 @@ import "audit.proto";
 option java_package = "io.seswar.warrant.proto";
 option java_outer_classname = "AgentProtos";
 option java_multiple_files = false;
-option go_package = "github.com/jhukkim/ebSW/agent/internal/pb;pb";
+option go_package = "github.com/session-warrant/session-warrant/agent/internal/pb;pb";
 
 service WarrantPushService {
   // 활성 집합 전체 → ResyncComplete → 이후 변경분.

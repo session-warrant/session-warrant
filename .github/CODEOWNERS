@@ -1,0 +1,25 @@
+# 3인 분담표(CLAUDE.md 「3인 분담」)를 그대로 옮긴 것. 경계는 언어가 아니라 계약이다.
+# 뒤에 오는 줄이 이긴다 — 넓은 경로를 위에, 좁은 경로를 아래에 둔다.
+# TODO: 장지은(A) · 김강민(C) 의 GitHub 아이디를 받으면 주석을 풀고 @jhukkim 자리를 바꾼다.
+
+*                             @jhukkim
+
+# A · 장지은 — 커널
+# /bpf/                       @<A>
+# /agent/internal/loader/     @<A>
+# /agent/internal/bpfmap/     @<A>
+# /agent/internal/ringbuf/    @<A>
+# /agent/internal/policy/     @<A>
+
+# B · 김종혁 — 서버 · 계약
+/proto/                       @jhukkim
+/server/                      @jhukkim
+/agent/internal/upstream/     @jhukkim
+/agent/internal/store/        @jhukkim
+
+# C · 김강민 — 노드 통합 · 검증 · 운영
+# /pam/                       @<C>
+# /agent/internal/pamsock/    @<C>
+# /agent/cmd/warrantd/        @<C>
+# /bench/                     @<C>
+# /deploy/                    @<C>

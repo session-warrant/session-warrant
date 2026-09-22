@@ -10,7 +10,7 @@ import "warrant.proto";
 option java_package = "io.seswar.warrant.proto";
 option java_outer_classname = "AuditProtos";
 option java_multiple_files = false;
-option go_package = "github.com/jhukkim/ebSW/agent/internal/pb;pb";
+option go_package = "github.com/session-warrant/session-warrant/agent/internal/pb;pb";
 
 // bpf/warrant.bpf.h 의 hook_id 와 1:1. 훅 부착 순서대로.
 enum Hook {

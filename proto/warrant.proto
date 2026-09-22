@@ -8,7 +8,7 @@ package seswar.warrant.v1;
 option java_package = "io.seswar.warrant.proto";
 option java_outer_classname = "WarrantProtos";
 option java_multiple_files = false;  // 도메인 클래스와 이름이 겹친다 → WarrantProtos.Warrant
-option go_package = "github.com/jhukkim/ebSW/agent/internal/pb;pb";
+option go_package = "github.com/session-warrant/session-warrant/agent/internal/pb;pb";
 
 // 발급 · 연장 · 취소가 전부 이 봉투 하나로 내려간다. 취소 = revoked=true 인 새 revision.
 message SignedWarrant {

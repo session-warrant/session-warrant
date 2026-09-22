@@ -263,7 +263,7 @@ spring-security-oauth2 7.1.1 · hibernate 7.4.5. **Boot 버전을 올릴 때 이
 | 서브 PC | Ubuntu 24.04.4 LTS · 커널 6.8.0 — 기획서 §02의 개발 기준과 일치 |
 | 편집 | macOS (이 리포) |
 | 빌드·실행·측정 | 서브 PC |
-| 동기화 | GitHub `jhukkim/ebSW` · 브랜치 `main` |
+| 동기화 | GitHub `session-warrant/session-warrant` · 브랜치 `main` |
 
 검증 대상: 커널 7.0(Ubuntu 26.04) · Rocky 9 호환. 3노드 구성은 중앙 서버가 붙는 시점에 꺼낸다.
 
