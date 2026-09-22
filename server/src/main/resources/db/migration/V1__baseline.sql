@@ -10,6 +10,8 @@
 --
 -- subject(id, oidc_subject UNIQUE, principal, display_name,
 --         kernel_subject_id INT UNIQUE, login_account)
+-- subject_ssh_key(subject_id, fingerprint UNIQUE, registered_at, revoked_at)
+--         -- fingerprint UNIQUE: 한 키가 두 사람에게 등록되면 바인딩이 다시 모호해진다
 --
 -- policy(id, name, inspect_udp BOOL)
 -- policy_exec_rule(policy_id, path)
@@ -40,5 +42,5 @@
 -- audit_gap(id, node_id, from_at, to_at, dropped_count, cause)
 --         -- 빈 구간을 숨기지 않는다
 --
--- unwarranted_session(id, node_id, observed_at, login_account, source_address,
+-- unwarranted_session(id, node_id, observed_at, login_account, ssh_key_fingerprint, source_address,
 --                     cgroup_id, reason, observed_event_count)

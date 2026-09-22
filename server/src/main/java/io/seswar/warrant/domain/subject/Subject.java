@@ -1,5 +1,6 @@
 package io.seswar.warrant.domain.subject;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -29,4 +30,11 @@ public class Subject {
 
     /** 로그인 계정. 예: {@code ec2-user}. 여러 사람이 공유하므로 신원이 아니라 참고 정보다. */
     private String loginAccount;
+
+    /**
+     * 등록된 SSH 공개키 지문({@code SHA256:...}). 발급 시 {@code Warrant.ssh_key_fingerprints} 로
+     * 복사돼 함께 서명된다. 공유 계정에서 사람을 가르는 유일한 키다 — 비어 있으면 영장이 어떤
+     * 세션에도 붙지 않는다.
+     */
+    private List<String> sshKeyFingerprints;
 }

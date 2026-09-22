@@ -202,6 +202,8 @@ message UnwarrantedSessionEvent {
     REASON_AGENT_UNREACHED = 2;  // PAM fail-open
     REASON_CENTRAL_STALE   = 3;  // 중앙 단절 중 캐시 수명 초과
     REASON_PAM_ABSENT      = 4;  // pam_warrant.so 없이 생긴 scope
+    REASON_NO_KEY          = 5;  // 공개키 인증이 아님(password 등) · SSH_AUTH_INFO_0 없음
+    REASON_KEY_MISMATCH    = 6;  // 계정엔 영장이 있으나 이 키의 것이 아님 — 남의 영장에 편승 시도
   }
 
   string login_account = 1;
@@ -209,6 +211,7 @@ message UnwarrantedSessionEvent {
   fixed64 cgroup_id = 3;
   string session_id = 4;      // XDG_SESSION_ID. 재사용되므로 참고용
   Reason reason = 5;
+  string ssh_key_fingerprint = 6;  // 비어 있으면 REASON_NO_KEY. 이 값으로 사람을 역추적한다
 }
 
 message DelegationAttemptEvent {

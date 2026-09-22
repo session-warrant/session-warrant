@@ -26,6 +26,7 @@ message Warrant {
   uint32 subject_id = 10;     // = Subject.kernelSubjectId. 신원은 이것
   string principal = 11;      // 예: paul@seswar.io
   string login_account = 12;  // 예: ec2-user. PAM 바인딩 키일 뿐 신원이 아니다
+  repeated string ssh_key_fingerprints = 13;  // "SHA256:..." 공유 계정에서 사람을 가르는 키. 빈 목록 = 바인딩 안 됨
 
   repeated string target_hosts = 20;  // 노드는 자기 hostname 이 없으면 거부
   string reason = 21;

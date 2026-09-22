@@ -7,8 +7,9 @@ C · `pam_warrant.so`. sshd 주소 공간에 dlopen 되므로 **Go 런타임을 
 
 1. `pam_sm_open_session` 에서 `XDG_SESSION_ID` 를 읽는다.
 2. `session-N.scope` cgroup 경로를 stat 해서 cgroup id 를 얻는다.
-3. warrantd 에 유닉스 소켓으로 `(subject, cgroup_id, host)` 를 넘긴다.
-4. 응답을 기다리지 않는다 — 태그를 맵에 박는 건 warrantd 의 몫이다.
+3. `pam_getenv("SSH_AUTH_INFO_0")` 원문을 읽는다. **지문 계산은 하지 않는다** — warrantd 가 한다 (`proto/README.md` 미해결 1).
+4. warrantd 에 유닉스 소켓으로 `(login_account, cgroup_id, host, auth_info 원문)` 을 넘긴다.
+5. 응답을 기다리지 않는다 — 태그를 맵에 박는 건 warrantd 의 몫이다.
 
 ## 규칙
 

@@ -91,10 +91,11 @@ message ExtensionAck {
 message LookupRequest {
   string hostname = 1;
   string login_account = 2;
+  string ssh_key_fingerprint = 3;  // Warrant.ssh_key_fingerprints 와 같은 형식. 비어 있으면 서버는 빈 응답
 }
 
 message LookupResponse {
-  repeated SignedWarrant warrants = 1;  // 비어 있으면 무영장
+  repeated SignedWarrant warrants = 1;  // 비어 있으면 무영장. 셋 다 일치한 것만
 }
 
 service AuditIngestService {

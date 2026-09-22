@@ -61,25 +61,44 @@
 
 ## 미해결 — 확정 전에 답해야 한다
 
-### 1. 공유 계정에서 사람을 어떻게 가르나 ★
+### 1. 공유 계정에서 사람을 어떻게 가르나 — ✅ 공개키 지문으로 정함 (2026-09-22)
 
-`LookupRequest{hostname, login_account}` → `repeated SignedWarrant`.
-**`ec2-user` 로 두 사람이 동시에 영장을 받으면 PAM 이 어느 쪽인지 모른다.**
+문제: `LookupRequest{hostname, login_account}` 만으로는 **`ec2-user` 로 두 사람이
+동시에 영장을 받으면 PAM 이 어느 쪽인지 모른다.** 기획서 §01 "귀속이 무너진다"와
+정면으로 부딪치는 구멍이었다.
 
-이건 제품의 출발점과 직접 부딪친다. 기획서 §01:
+**바인딩 키 = (hostname, login_account, SSH 공개키 지문).** 셋 다 일치해야 한다.
 
-> **귀속이 무너진다** — 전부 `ec2-user` 로 들어와 `sudo` 를 친다.
+| 필드 | 역할 |
+|---|---|
+| `Warrant.ssh_key_fingerprints` (13) | 발급 시 서버가 그 사람의 등록 키 지문을 채운다. **영장과 함께 서명**되므로 노드가 바꿔치기할 수 없다 |
+| `LookupRequest.ssh_key_fingerprint` (3) | 이번 세션이 실제로 쓴 키 |
+| `UnwarrantedSessionEvent.ssh_key_fingerprint` (6) | 무영장이어도 **누가** 들어왔는지 남는다 |
+| `REASON_NO_KEY` · `REASON_KEY_MISMATCH` | 공개키 인증이 아닌 세션 / 같은 계정에 남의 영장만 있는 세션 |
 
-그 문제를 풀겠다는 제품인데 지금 스키마로는 동시 접속을 못 가른다.
-`login_account` 주석 스스로도 "신원이 아니라 참고 정보"라고 적어놓고 바인딩
-키로 쓰고 있다. 기획서에도 답이 없다.
+- **형식은 `SHA256:<base64, 패딩 없음>`** — `ssh-keygen -lf` 와 sshd 로그가 찍는 그대로.
+  사람이 눈으로 대조할 수 있어야 한다.
+- **지문 계산은 warrantd(Go)가 한다. PAM 은 원문만 넘긴다.** 200줄 제한에 libcrypto 를
+  들일 수 없다. Go 는 `x/crypto/ssh` 의 `FingerprintSHA256` 한 줄이다.
+- **원문 출처는 PAM 환경변수 `SSH_AUTH_INFO_0`** (OpenSSH 7.6+). 값은
+  `publickey ssh-ed25519 AAAA…` 줄이고, `AuthenticationMethods` 로 여러 방식을
+  거쳤으면 여러 줄이다 — `publickey` 줄을 쓴다. (이전 초안의 `PAM_AUTHTOK` 는 틀렸다.
+  그건 비밀번호 자리다.)
+- **인증서(`*-cert-v01@openssh.com`)면 인증서 안의 공개키 지문**을 쓴다. 인증서는
+  재발급마다 바이트가 바뀌지만 안의 키는 그대로다. principal 기반 바인딩은 나중 일이다.
+- **지문이 비어 있으면 매칭하지 않는다 — 와일드카드가 아니다.** 비어 있음을 "누구든"으로
+  읽으면 이 필드를 넣은 이유가 사라진다. password 로 들어온 세션은 fail-open 으로
+  로그인은 되고 `REASON_NO_KEY` 무영장으로 기록된다 (§17 비대칭 그대로).
+- **`KEY_MISMATCH` 는 `NO_WARRANT` 와 따로 센다.** "동료 영장이 떠 있는 동안 공유 계정으로
+  들어온 무영장 세션"은 편승 시도라 경보 등급이 다르다.
 
-현실적 해법은 SSH 공개키 지문이나 인증서 principal 을 PAM 이 읽어 넘기는 것인데
-(`sshd` 의 `AuthorizedKeysCommand` · `PAM_AUTHTOK` 경로), **그러려면
-`LookupRequest` 에 그 필드가 있어야 한다.** 지금은 자리가 아예 없다.
+**⚠ 미실측.** `SSH_AUTH_INFO_0` 가 **`pam_sm_open_session` 시점에** PAM 환경에 있는지는
+서브 PC 의 OpenSSH 9.6p1 에서 아직 안 봤다. `bench/pamtiming` 3단계와 같은 사다리로
+`pam_getenv` 덤프 한 줄을 추가해 확인한다. 없으면 대안은 `ExposeAuthInfo yes` →
+`SSH_USER_AUTH` 파일이다(세션 환경으로만 나오므로 PAM 에서 읽을 수 있는지 다시 재야 한다).
 
-**나중에 넣으면 세 계층이 다 그 위에 붙은 뒤가 된다.** `.proto` 확정을 스파이크
-뒤로 미룬 것과 같은 이유로, 이건 확정 전에 정한다.
+**남은 것:** 한 사람이 같은 호스트·계정에 활성 영장을 둘 이상 가지면 `LookupResponse` 가
+여럿을 준다. 귀속은 무너지지 않지만(같은 사람) warrantd 가 어느 걸 세션에 붙일지 규칙이 없다.
 
 ### 2. `read_watch_paths` 를 실제로 넣을 것인가
 
@@ -111,6 +130,7 @@ S1 이 잰 것은 조상 순회 **없는** 판정이다 — 순회를 넣으면 
 - **C 폭 대응**: `fixed64` ↔ `__u64` · `uint32`/`fixed32` ↔ `__u32` · enum ↔ `__u8`.
   `FileRef.dev` 는 `s_dev`(u32), `ino` 는 `unsigned long`(x86_64 에서 u64), ns inum 은 `unsigned int`.
 - **`warrant_id` 재사용 금지**: 재사용하면 과거 감사 로그의 귀속이 조용히 뒤바뀐다. `AuditEvent.warrant_id = 0` 은 "없음"의 자리라 서버는 0 을 발급하지 않는다.
+- **`ssh_key_fingerprints`**: 형식은 `SHA256:<base64, 패딩 없음>` = `ssh-keygen -lf` 출력. 커널로 안 내려간다 — 바인딩은 warrantd 가 PAM 시점에 끝낸다. 빈 목록은 와일드카드가 아니다(미해결 1).
 - **`target_hosts`**: 서버는 목록의 노드에만 push 하고, 노드는 자기 hostname 이 없으면 봉투를 거부한다(잘못 배달된 영장 방어).
 - **`break_glass`**: warrantd 는 이 플래그가 켜진 봉투를 받는 즉시 최고 등급 경보를 올린다.
 - **`WriteRule` 최장 일치의 커널 구현**: 자기 inode 에서 조상 체인을 위로 훑어 가장 먼저 만나는 규칙. 깊이 상한은 미해결 3.
