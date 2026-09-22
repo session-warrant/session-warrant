@@ -1,8 +1,5 @@
-// 감사 이벤트 스키마 — 커널 ringbuf 레코드가 warrantd 를 거쳐 중앙에 도착하는 형태.
-// 필드 출처는 docs/session-warrant-ebpf-fields.html.
-//
-// 신뢰의 근거는 (dev, ino) 쌍이다. 경로 · argv · comm 은 호출자가 통제하므로 참고 정보다 (§14).
-// 차단은 전건, 허용은 exec · connect 처럼 빈도 낮은 것만 싣는다. 허용된 쓰기는 WriteAggregate 로 집계한다 (§13).
+// 감사 이벤트 — 커널 ringbuf 레코드가 warrantd 를 거쳐 중앙에 도착하는 형태.
+// 필드 출처는 docs/session-warrant-ebpf-fields.html. 증거는 (dev, ino) 이고 경로 · argv · comm 은 참고다.
 
 syntax = "proto3";
 
@@ -15,16 +12,9 @@ option java_outer_classname = "AuditProtos";
 option java_multiple_files = false;
 option go_package = "github.com/jhukkim/ebSW/agent/internal/pb;pb";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 공통 enum — 값이 커널 상수와 같아야 한다
-// ─────────────────────────────────────────────────────────────────────────────
-
-// ringbuf 레코드의 hook_id. bpf/warrant.bpf.h 의 상수와 1:1 이고,
-// bpftool prog profile 과 대조해 비싼 훅을 짚는 데도 쓴다.
+// bpf/warrant.bpf.h 의 hook_id 와 1:1. 훅 부착 순서대로.
 enum Hook {
   HOOK_UNSPECIFIED = 0;
-
-  // 훅 부착 순서 (CLAUDE.md) 그대로.
   HOOK_SCHED_PROCESS_FORK    = 1;
   HOOK_BPRM_CHECK_SECURITY   = 2;
   HOOK_SOCKET_CONNECT        = 3;
@@ -34,191 +24,110 @@ enum Hook {
   HOOK_INODE_RENAME          = 7;
   HOOK_INODE_LINK            = 8;
   HOOK_INODE_SYMLINK         = 9;
-  // 자기보호 6종 (§16). 여섯째(warrantd 자기 파일)는 FILE_OPEN · INODE_UNLINK 가 낸다.
-  HOOK_BPF                   = 10;
+  HOOK_BPF                   = 10;  // 10~14 자기보호
   HOOK_TASK_KILL             = 11;
   HOOK_SB_UMOUNT             = 12;
   HOOK_PTRACE_ACCESS_CHECK   = 13;
   HOOK_KERNEL_MODULE_REQUEST = 14;
   HOOK_SOCKET_SENDMSG        = 15;
-
-  // 커널이 아니라 warrantd 유저 공간이 만든 이벤트 (무영장 세션 · 유예 진입 등).
-  HOOK_AGENT = 100;
+  HOOK_AGENT                 = 100;  // warrantd 유저 공간 발
 }
 
-// 판정 결과. 감사 모드와 강제 모드가 같은 판정 함수를 쓰므로 세 값이 한 스키마에 있다.
 enum Verdict {
   VERDICT_ALLOW      = 0;
-  VERDICT_DENY       = 1;  // 실제로 -EPERM 을 돌려줬다
-  VERDICT_WOULD_DENY = 2;  // DRYRUN · OBSERVE 라 기록만 했다. 최소 권한 초안 검증의 핵심 데이터
+  VERDICT_DENY       = 1;  // 실제로 -EPERM
+  VERDICT_WOULD_DENY = 2;  // OBSERVE · DRYRUN 이라 기록만
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 이벤트 한 건
-// ─────────────────────────────────────────────────────────────────────────────
-
+// 필드 번호 ≤15 는 1바이트 태그다. 전건에 실리는 필드와 고빈도 payload 를 거기 둔다.
 message AuditEvent {
-  // ── ⑧ 레코드 메타 — 유실을 증명하는 값 ──────────────────────────────
-
-  // warrantd 가 매기는 노드 단위 단조 증가 번호. 서버의 UNIQUE(node_id, node_seq)
-  // 가 이 값을 받아 재전송을 멱등하게 만든다. ack 도 이 번호로 한다.
-  fixed64 node_seq = 1;
-
-  // 커널 per-CPU 카운터 (cpu, cpu_seq). warrantd 가 번호가 건너뛴 것을 보고
-  // 유실을 감지하는 근거다. 유저 공간 이벤트(HOOK_AGENT)에서는 0.
-  uint32 cpu = 2;
+  fixed64 node_seq = 1;  // 노드 단위 단조 증가. 서버 멱등 키 · ack 기준
+  uint32 cpu = 2;        // (cpu, cpu_seq) 가 건너뛰면 유실. HOOK_AGENT 는 0
   fixed64 cpu_seq = 3;
-
   Hook hook = 4;
-
   Verdict verdict = 5;
+  Mode mode = 6;                 // WOULD_DENY 가 OBSERVE 인지 DRYRUN 인지 가른다
+  fixed64 boot_ts_ns = 7;        // bpf_ktime_get_boot_ns()
+  fixed64 wall_ts_unix_ns = 8;   // warrantd 변환값. 서버 파티션 키
 
-  // 판정 당시 영장의 mode. verdict 만으로는 WOULD_DENY 가 OBSERVE 에서 나온
-  // 것인지 DRYRUN 에서 나온 것인지 알 수 없다. §15 는 감사 모드와 강제 모드가
-  // 판정 함수를 공유할 것을 요구하는데, 그걸 검증하려면 같은 입력에 두 모드가
-  // 같은 verdict 를 냈는지 대조해야 한다 — 이 필드가 없으면 대조가 불가능하다.
-  Mode mode = 6;
-
-  // 커널 타임스탬프. bpf_ktime_get_boot_ns() 기준 — bpf_ktime_get_ns() 가 아니다.
-  fixed64 boot_ts_ns = 7;
-
-  // warrantd 가 boot_ts_ns 를 벽시계로 변환한 값. 서버는 이걸로 파티션을 자른다.
-  fixed64 wall_ts_unix_ns = 8;
-
-  // ── ① 태그 — 누구의 세션인가 ────────────────────────────────────────
-
-  // 0 이면 영장 없는 프로세스. 그 자체가 조사 대상이다 (§07 STEP 2).
-  // 서버는 warrant_id 0 을 발급하지 않는다 — 0 은 "없음"의 자리다.
-  fixed64 warrant_id = 9;
+  fixed64 warrant_id = 9;  // 0 = 무영장
   uint32 subject_id = 10;
   uint32 policy_id = 11;
-
-  // 어느 겹에서 태그를 찾았나. TAG_TASK 가 나오면 cgroup 을 벗어난 프로세스다
-  // (S2 의 systemd-run --scope 케이스) — 2차 방어선이 실제로 일한 흔적이다.
   TagSource tag_source = 12;
 
-  // ── ② 주체 — 누가 (정황이지 신원이 아니다. 신원은 subject_id) ────────
-
-  // 번호 13. 16 이상은 태그가 2바이트인데 이 메시지는 초당 수백~수천 건이
-  // 흐르고 process 는 전건에 실린다. 그룹 경계보다 바이트가 우선이다.
   ProcessIdentity process = 13;
 
-  // ── ③~⑦ 훅별 꼬리 ────────────────────────────────────────────────────
-  //
-  // payload 도 전건에 실리므로 1바이트 태그 구간(≤15)에 둔다. 훅 종류가 12개라
-  // 15 를 넘으므로, 커널 발 이벤트(고빈도)만 ≤15 에 두고 warrantd 발(저빈도)은
-  // 16 이상으로 보낸다.
   oneof payload {
     ExecEvent exec = 14;
     FileWriteEvent file_write = 15;
-    // ↓ 여기부터 2바이트. 커널 발이지만 file_open·exec 보다 훨씬 드물다.
     InodeMutateEvent inode_mutate = 16;
     ConnectEvent connect = 17;
     UdpSendEvent udp_send = 18;
     SelfProtectionEvent self_protection = 19;
     ForkEvent fork = 20;
 
-    // 유저 공간(warrantd) 발
     UnwarrantedSessionEvent unwarranted_session = 30;
     DelegationAttemptEvent delegation_attempt = 31;
     GraceEvent grace = 32;
     ShellCommandLineEvent shell_command_line = 33;
   }
 
-  // 이 이벤트를 낸 프로그램이 lsm/* 인가 kprobe/security_* 미러인가 (§15).
-  // 두 경로가 같은 판정 함수를 부르므로 결과가 같아야 하고, 다르면 그
-  // 사실을 여기서 짚어야 한다. BPF LSM 이 없는 커널에서는 언제나 KPROBE 다.
-  Origin origin = 34;
+  Origin origin = 34;  // lsm 과 kprobe 미러의 판정이 다르면 버그
 }
 
 enum Origin {
   ORIGIN_UNSPECIFIED = 0;
   ORIGIN_LSM    = 1;
-  ORIGIN_KPROBE = 2;  // kprobe/security_* 미러
-  ORIGIN_AGENT  = 3;  // warrantd 유저 공간
+  ORIGIN_KPROBE = 2;
+  ORIGIN_AGENT  = 3;
 }
 
 enum TagSource {
-  TAG_NONE   = 0;  // 태그 없음 — 무영장
-  TAG_CGROUP = 1;  // 1차: cgroup_warrant[cgroup_id]
-  TAG_TASK   = 2;  // 2차: task_warrant[task] (fork 전파)
+  TAG_NONE   = 0;  // 무영장
+  TAG_CGROUP = 1;  // cgroup_warrant
+  TAG_TASK   = 2;  // task_warrant (fork 전파). cgroup 을 벗어난 프로세스
 }
 
-// 모든 레코드에 실리는 프로세스 정보 (필드 문서 §03).
 message ProcessIdentity {
   uint32 pid = 1;
   uint32 tgid = 2;
-
-  // task->start_time (boot ns). 이게 있어야 (pid, start_time) 이 유일하다. 필수.
-  fixed64 start_time_ns = 3;
-
-  // task->real_parent->tgid. parent 가 아니라 real_parent — ptrace 중이면 갈린다.
-  uint32 ppid = 4;
-
+  fixed64 start_time_ns = 3;  // (pid, start_time) 이 유일 키
+  uint32 ppid = 4;            // real_parent->tgid
   uint32 uid = 5;
   uint32 euid = 6;
   uint32 gid = 7;
-
-  // bpf_get_current_comm(). 16 바이트로 잘리고 prctl 로 위조된다. 가독성용.
-  string comm = 8;
-
-  // bpf_get_current_cgroup_id(). 세션 귀속과 컨테이너 상관에 쓴다.
+  string comm = 8;            // 16바이트로 잘리고 위조 가능
   fixed64 cgroup_id = 9;
-
-  // 컨테이너 커버리지 — auditd 가 못 하던 부분 (§07). exit 중이면 0 일 수 있다.
-  // ns_common.inum 은 unsigned int 다 — u64 가 아니다.
-  fixed32 pid_ns_inum = 10;
+  fixed32 pid_ns_inum = 10;   // exit 중이면 0
   fixed32 mnt_ns_inum = 11;
 }
 
-// 커널이 실제로 만진 파일. 신뢰의 근거는 이 쌍이다.
 message FileRef {
-  // i_sb->s_dev — dev_t 는 u32 다. fixed64 로 넓히지 말 것 (커널 폭과 같아야 한다).
-  // 컨테이너 overlayfs 에서는 호스트와 다른 값이 나온다.
-  fixed32 dev = 1;
-
-  // i_ino 는 unsigned long — x86_64 에서 u64 다.
+  fixed32 dev = 1;   // s_dev (u32)
   fixed64 ino = 2;
-
-  // 해석된 경로. 차단 건에만 bpf_d_path 로 채운다 — 허용 경로에서는 비싸서 비운다.
-  // 참고 정보이며 증거가 아니다.
-  string path = 3;
+  string path = 3;   // 차단 건에만 채운다. 증거 아님
 }
 
-// ── lsm/bprm_check_security — 1급 증거 ──────────────────────────────────
+// lsm/bprm_check_security
 message ExecEvent {
   FileRef file = 1;
-
-  // f_inode->i_mode. setuid(S_ISUID) 비트 탐지용.
-  uint32 i_mode = 2;
-
-  // bprm->filename. 참고 정보.
+  uint32 i_mode = 2;      // setuid 탐지
   string filename = 3;
-
-  // bprm->interp. filename 과 다르면 스크립트 실행이다 — 화이트리스트의 구멍 (필드 문서 §05).
-  string interp = 4;
-
-  // 2급 증거. BPF 스택 제약으로 잘리고 exec -a 로 위조된다. 리포트 뒤에 참고로 붙인다.
-  string argv = 5;
+  string interp = 4;      // filename 과 다르면 스크립트 실행
+  string argv = 5;        // 잘리고 위조 가능
   bool argv_truncated = 6;
-
-  // bprm->cred — 권한 상승 순간. sudo 뒤의 uid 0 이 여기서 보인다.
   uint32 new_uid = 7;
   uint32 new_euid = 8;
 }
 
-// ── lsm/file_open (쓰기) — 차단 건만 전건, 허용은 WriteAggregate ─────────
+// lsm/file_open 쓰기 차단. 허용은 WriteAggregate 로.
 message FileWriteEvent {
   FileRef file = 1;
-
-  // 부모 디렉터리. 허용 디렉터리 판정 키.
   FileRef parent = 2;
-
-  // file->f_flags 중 O_TRUNC · O_APPEND · O_CREAT.
-  uint32 f_flags = 3;
+  uint32 f_flags = 3;  // O_TRUNC · O_APPEND · O_CREAT
 }
 
-// ── lsm/inode_{create,unlink,rename,link,symlink} — 디렉터리 단위 금지 ────
+// lsm/inode_{create,unlink,rename,link,symlink}
 message InodeMutateEvent {
   enum Op {
     OP_UNSPECIFIED = 0;
@@ -230,66 +139,48 @@ message InodeMutateEvent {
   }
 
   Op op = 1;
-
-  // 조작이 일어난 디렉터리와 이름.
   FileRef dir = 2;
   string name = 3;
-
-  // rename · link 의 반대편. rename 은 언제나 양방향 판정이다 — 한쪽만 보면 뚫린다.
-  FileRef new_dir = 4;
+  FileRef new_dir = 4;  // rename · link 의 반대편
   string new_name = 5;
-
-  // symlink 의 대상 문자열 (old_name).
   string symlink_target = 6;
 }
 
-// ── lsm/socket_connect — 아웃바운드 + 위임 소켓 ──────────────────────────
+// lsm/socket_connect
 message ConnectEvent {
   enum Family {
     FAMILY_UNSPECIFIED = 0;
-    FAMILY_INET  = 2;   // AF_INET
-    FAMILY_INET6 = 10;  // AF_INET6
-    FAMILY_UNIX  = 1;   // AF_UNIX — 위임 소켓 차단이 여기서 걸린다 (§04)
+    FAMILY_UNIX  = 1;
+    FAMILY_INET  = 2;
+    FAMILY_INET6 = 10;
   }
 
   Family family = 1;
-
-  // AF_INET 4 바이트 · AF_INET6 16 바이트. 네트워크 바이트 오더 그대로.
-  bytes addr = 2;
+  bytes addr = 2;      // 네트워크 바이트 오더, 4 또는 16바이트
   uint32 port = 3;
-
-  // AF_UNIX. abstract 소켓이면 sun_path[0] == 0 이라 abstract=true 로 갈라서 싣는다 —
-  // 문자열로만 읽으면 abstract 소켓이 전부 빈 이름으로 보여 필터를 빠져나간다.
   string sun_path = 4;
-  bool abstract = 5;
-
-  // sk->sk_type. SOCK_STREAM=1 · SOCK_DGRAM=2.
+  bool abstract = 5;   // sun_path[0] == 0. 없으면 abstract 소켓이 빈 이름으로 보인다
   uint32 sock_type = 6;
 }
 
-// ── lsm/socket_sendmsg — connect 없는 UDP. policy.inspect_udp 일 때만 ──────
+// lsm/socket_sendmsg. inspect_udp 일 때만
 message UdpSendEvent {
   ConnectEvent destination = 1;
-
-  // 반출량 집계용.
   fixed64 size = 2;
 }
 
-// ── 자기보호 6종 (§16) — 전건 기록 + 즉시 경보 ────────────────────────────
 message SelfProtectionEvent {
   enum Kind {
     KIND_UNSPECIFIED     = 0;
-    KIND_BPF_SYSCALL     = 1;  // lsm/bpf
-    KIND_KILL_PROTECTED  = 2;  // lsm/task_kill — 대상이 warrantd · sshd
-    KIND_UMOUNT_BPFFS    = 3;  // lsm/sb_umount — BPF_FS_MAGIC
-    KIND_PTRACE_UNTAGGED = 4;  // lsm/ptrace_access_check
-    KIND_MODULE_REQUEST  = 5;  // lsm/kernel_module_request
-    KIND_SELF_FILE_WRITE = 6;  // warrantd 바이너리 · 유닛 파일 쓰기
+    KIND_BPF_SYSCALL     = 1;
+    KIND_KILL_PROTECTED  = 2;  // 대상이 warrantd · sshd
+    KIND_UMOUNT_BPFFS    = 3;
+    KIND_PTRACE_UNTAGGED = 4;
+    KIND_MODULE_REQUEST  = 5;
+    KIND_SELF_FILE_WRITE = 6;  // warrantd 바이너리 · 유닛 파일
   }
 
   Kind kind = 1;
-
-  // kind 별 상세. bpf cmd 번호 · 신호 번호 · 대상 tgid · 모듈 이름 등.
   uint32 bpf_cmd = 2;
   uint32 signal = 3;
   uint32 target_tgid = 4;
@@ -297,99 +188,81 @@ message SelfProtectionEvent {
   FileRef file = 6;
 }
 
-// ── tp_btf/sched_process_fork — 태그 전파. 감사 모드 초기에만 켠다 ─────────
-// 볼륨이 커질 수 있으므로 제품 기본값은 기록하지 않는다. S2 재검증 · 디버깅용.
+// 기본값은 기록하지 않는다. 디버깅용
 message ForkEvent {
   uint32 child_pid = 1;
   fixed64 child_start_time_ns = 2;
 }
 
-// ── warrantd 발: 영장 없이 성공한 세션 (§07 STEP 2) ──────────────────────
-// 차단하지 않는다. 기록 · 경보만. fail-open 의 결과가 여기 쌓인다 (§17).
+// 차단하지 않고 기록 · 경보만
 message UnwarrantedSessionEvent {
-  string login_account = 1;
-
-  // sshd 가 PAM 에 넘긴 PAM_RHOST.
-  string source_address = 2;
-
-  fixed64 cgroup_id = 3;
-
-  // XDG_SESSION_ID. 재사용되므로 키가 아니라 참고 정보다 (S3).
-  string session_id = 4;
-
   enum Reason {
     REASON_UNSPECIFIED     = 0;
-    REASON_NO_WARRANT      = 1;  // 이 계정 · 호스트에 활성 영장이 없다
-    REASON_AGENT_UNREACHED = 2;  // PAM 이 warrantd 에 못 붙어 통과시켰다
+    REASON_NO_WARRANT      = 1;
+    REASON_AGENT_UNREACHED = 2;  // PAM fail-open
     REASON_CENTRAL_STALE   = 3;  // 중앙 단절 중 캐시 수명 초과
-    REASON_PAM_ABSENT      = 4;  // pam_warrant.so 없이 만들어진 scope 를 사후 발견
+    REASON_PAM_ABSENT      = 4;  // pam_warrant.so 없이 생긴 scope
   }
+
+  string login_account = 1;
+  string source_address = 2;  // PAM_RHOST
+  fixed64 cgroup_id = 3;
+  string session_id = 4;      // XDG_SESSION_ID. 재사용되므로 참고용
   Reason reason = 5;
 }
 
-// ── warrantd 발: 위임 요청 (§18). 막지는 못해도 보이기는 한다 ─────────────
 message DelegationAttemptEvent {
   enum Vector {
-    VECTOR_UNSPECIFIED = 0;
+    VECTOR_UNSPECIFIED     = 0;
     VECTOR_SYSTEMD_PRIVATE = 1;  // /run/systemd/private
     VECTOR_DBUS_SYSTEM     = 2;  // /run/dbus/system_bus_socket
-    VECTOR_DOCKER_SOCK     = 3;  // docker.sock
+    VECTOR_DOCKER_SOCK     = 3;
     VECTOR_SPOOL_WRITE     = 4;  // /var/spool (at · cron)
-    VECTOR_EXEC            = 5;  // systemd-run · systemctl · at · crontab · docker 실행
+    VECTOR_EXEC            = 5;  // systemd-run · systemctl · at · crontab · docker
   }
 
   Vector vector = 1;
   string detail = 2;
 }
 
-// ── warrantd 발: 유예 (§03). 진입 자체가 경보 대상이다 ─────────────────────
 message GraceEvent {
   enum Phase {
     PHASE_UNSPECIFIED = 0;
-    PHASE_ENTERED = 1;  // "김개발 로그아웃, 잡 N개 유예 실행 중"
-    PHASE_CLOSED  = 2;  // 유예 잡이 전부 끝나 영장이 완전히 닫힘
-    PHASE_EXPIRED = 3;  // grace_window 를 넘겨 강등 또는 종료
+    PHASE_ENTERED = 1;
+    PHASE_CLOSED  = 2;  // 유예 잡이 전부 끝남
+    PHASE_EXPIRED = 3;  // grace_window 초과
   }
 
   Phase phase = 1;
   uint32 surviving_processes = 2;
 }
 
-// ── bash readline uprobe — 보조 증거일 뿐이다 (§14) ────────────────────────
+// bash readline uprobe. 보조 증거
 message ShellCommandLineEvent {
   string line = 1;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 집계 · 유실
-// ─────────────────────────────────────────────────────────────────────────────
-
-// 허용된 쓰기의 집계 (§13 · §14). 전건 기록하면 ringbuf 가 넘친다.
+// 허용된 쓰기의 집계
 message WriteAggregate {
   fixed64 warrant_id = 1;
-
-  // 집계 창 시작 (벽시계). 창 길이는 warrantd 설정이며 서버는 count 만 더한다.
   fixed64 bucket_start_unix_ns = 2;
   fixed64 bucket_ns = 3;
-
   fixed64 allowed_count = 4;
 }
 
-// 유실 구간. "빈 구간"을 숨기지 않는다 (§14).
+// 유실 구간. 빈 구간을 숨기지 않는다
 message GapReport {
+  enum Cause {
+    CAUSE_UNSPECIFIED      = 0;
+    CAUSE_RINGBUF_OVERFLOW = 1;
+    CAUSE_AGENT_DOWN       = 2;
+    CAUSE_LOCAL_STORE_FULL = 3;  // 중앙 단절 중 bbolt 상한 초과
+    CAUSE_CPU_SEQ_SKIP     = 4;  // 원인 불명
+  }
+
   fixed64 from_unix_ns = 1;
   fixed64 to_unix_ns = 2;
-
-  // bpf_ringbuf_reserve() 가 NULL 을 돌려준 횟수. 알 수 없으면 0 + known=false.
   fixed64 dropped_count = 3;
   bool dropped_count_known = 4;
-
-  enum Cause {
-    CAUSE_UNSPECIFIED       = 0;
-    CAUSE_RINGBUF_OVERFLOW  = 1;  // 커널이 버렸다
-    CAUSE_AGENT_DOWN        = 2;  // warrantd 가 없던 구간
-    CAUSE_LOCAL_STORE_FULL  = 3;  // 중앙 단절 중 bbolt 버퍼 상한 초과
-    CAUSE_CPU_SEQ_SKIP      = 4;  // (cpu, cpu_seq) 가 건너뛰었다 — 원인 불명의 유실
-  }
   Cause cause = 5;
 }

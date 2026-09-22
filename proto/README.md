@@ -35,7 +35,7 @@
 
 - **커널 폭을 맞췄다.** `FileRef.dev` 는 `s_dev`(= `dev_t`, **u32**)라 `fixed32`,
   `pid_ns_inum`·`mnt_ns_inum` 은 `ns_common.inum`(= `unsigned int`)이라 `fixed32`.
-  셋 다 `fixed64` 였다 — 파일 머리 규칙 3 을 스스로 어긴 자리였고, 이게 정확히
+  셋 다 `fixed64` 였다 — 아래 「규칙」의 고정폭 원칙을 스스로 어긴 자리였고, 이게 정확히
   "커널 구조체와 서버 엔티티가 어긋나면 디버깅이 지옥"이라던 그 클래스다.
 - **`AuditEvent.mode` 추가.** `VERDICT_WOULD_DENY` 만으로는 OBSERVE 인지 DRYRUN 인지
   모른다. §15 가 요구하는 "감사·강제가 판정 함수를 공유한다"를 검증하려면 같은
@@ -103,6 +103,25 @@ S1 이 잰 것은 조상 순회 **없는** 판정이다 — 순회를 넣으면 
 - 필드 번호는 재사용하지 않는다. 지운 번호는 `reserved` 로 박제한다.
 - 커널 구조체에 그대로 매핑되는 메시지는 **고정폭 정수만** 쓴다(`fixed64`/`uint32`).
   varint 는 BPF 쪽에서 파싱할 수 없다.
+
+## 필드 메모 — .proto 에서 옮겨 온 것
+
+`.proto` 주석은 필드당 한 줄로 줄였다. 한 줄에 안 들어가는 근거는 여기 둔다.
+
+- **C 폭 대응**: `fixed64` ↔ `__u64` · `uint32`/`fixed32` ↔ `__u32` · enum ↔ `__u8`.
+  `FileRef.dev` 는 `s_dev`(u32), `ino` 는 `unsigned long`(x86_64 에서 u64), ns inum 은 `unsigned int`.
+- **`warrant_id` 재사용 금지**: 재사용하면 과거 감사 로그의 귀속이 조용히 뒤바뀐다. `AuditEvent.warrant_id = 0` 은 "없음"의 자리라 서버는 0 을 발급하지 않는다.
+- **`target_hosts`**: 서버는 목록의 노드에만 push 하고, 노드는 자기 hostname 이 없으면 봉투를 거부한다(잘못 배달된 영장 방어).
+- **`break_glass`**: warrantd 는 이 플래그가 켜진 봉투를 받는 즉시 최고 등급 경보를 올린다.
+- **`WriteRule` 최장 일치의 커널 구현**: 자기 inode 에서 조상 체인을 위로 훑어 가장 먼저 만나는 규칙. 깊이 상한은 미해결 3.
+- **`ProcessIdentity.ppid`**: `parent` 가 아니라 `real_parent` — ptrace 중이면 둘이 갈린다.
+- **`FileRef.dev`**: 컨테이너 overlayfs 에서는 호스트와 다른 값이 나온다. `path` 는 `bpf_d_path` 가 비싸서 차단 건에만 채운다.
+- **`InodeMutateEvent`**: rename 은 언제나 양방향 판정이다 — 한쪽만 보면 뚫린다.
+- **`AuditEvent.tag_source = TAG_TASK`**: cgroup 을 벗어난 프로세스를 2차 방어선이 잡았다는 흔적이다(S2 의 `systemd-run --scope`).
+- **`ForkEvent`**: 볼륨이 커서 제품 기본값은 기록하지 않는다. S2 재검증 · 디버깅용.
+- **`LookupActiveWarrant`**: PAM 질의에 답하는 것은 warrantd 캐시다. 중앙이 인증 경로에 끼면 중앙 장애가 곧 로그인 장애가 되므로 여기에 기대지 않는다.
+- **`AuditBatch.gaps`**: 별도 채널이면 순서가 어긋나 "이벤트가 있었는데 gap 도 있다"가 된다.
+- **`NodeHello.attached_hooks`**: 훅을 하나씩 붙이는 동안 "이 노드는 file_open 을 아직 안 본다"를 서버가 알아야 빈 데이터를 오해하지 않는다.
 
 ## 생성물
 

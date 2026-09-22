@@ -1,10 +1,5 @@
-// 영장 스키마. struct warrant · 서버 Warrant 엔티티 · warrantd 맵 값의 단일 원본 — 필드는 여기부터 고친다.
-//
-// 커널 구조체로 내려가는 필드는 C 폭과 같은 타입만 쓴다
-// (fixed64 ↔ __u64 · uint32 ↔ __u32 · enum ↔ __u8). 필드 번호는 재사용하지 않고,
-// 지운 번호는 reserved 로 남긴다.
-//
-// 영장 키는 cgroup id 다. XDG_SESSION_ID 는 재사용되므로(S3) 이 파일에 없다.
+// 영장 스키마 — struct warrant · 서버 Warrant 엔티티 · warrantd 맵 값의 단일 원본.
+// 규칙과 결정 근거는 proto/README.md.
 
 syntax = "proto3";
 
@@ -12,215 +7,89 @@ package seswar.warrant.v1;
 
 option java_package = "io.seswar.warrant.proto";
 option java_outer_classname = "WarrantProtos";
-// Warrant · AuditEvent 가 도메인 클래스와 이름이 겹치므로 outer class 아래에 둔다.
-// Java 에서는 WarrantProtos.Warrant 로 쓴다.
-option java_multiple_files = false;
-// agent/ 에 go.mod 가 아직 없다. 모듈 경로가 정해지면 이 한 줄만 바꾼다.
+option java_multiple_files = false;  // 도메인 클래스와 이름이 겹친다 → WarrantProtos.Warrant
 option go_package = "github.com/jhukkim/ebSW/agent/internal/pb;pb";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 서명 봉투
-// ─────────────────────────────────────────────────────────────────────────────
-
-// 노드로 내려가고 노드가 캐시하는 단위. 발급 · 연장 · 취소가 전부 이 하나다.
-//
-// 취소도 별도 메시지가 아니다 — revoked=true · revision+1 인 새 봉투를 내린다.
-// 경로가 하나라야 "취소만 서명 검증을 안 한다" 같은 구멍이 안 생긴다.
+// 발급 · 연장 · 취소가 전부 이 봉투 하나로 내려간다. 취소 = revoked=true 인 새 revision.
 message SignedWarrant {
-  // Warrant 메시지의 직렬화 바이트. 서명 대상이며, 서버는 이 바이트를 그대로
-  // 보관한다(warrant.signed_payload). 검증하는 쪽도 이 바이트를 그대로 검증한다 —
-  // 역직렬화 후 재직렬화하면 서명이 깨진다.
-  bytes warrant = 1;
-
-  // Ed25519 서명 (64 바이트). 서버는 JDK 내장 구현, warrantd 는 crypto/ed25519.
-  bytes signature = 2;
-
-  // 서명 키 식별자. 키 교체 중 두 키가 공존하는 구간을 위해 있다.
-  // 노드는 자기가 신뢰하는 키 목록에서 이 id 로 공개키를 고른다.
-  string key_id = 3;
+  bytes warrant = 1;    // Warrant 직렬화 바이트. 재직렬화하지 말고 이 바이트 그대로 검증 · 보관
+  bytes signature = 2;  // Ed25519, 64바이트
+  string key_id = 3;    // 키 교체 중 공존하는 두 키를 가른다
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 영장 본체
-// ─────────────────────────────────────────────────────────────────────────────
-
-// 접속 승인 시점에 발급되는, 기계가 읽는 문서 한 장 (§02).
-// 집행 주체는 이 문서를 만든 서버가 아니라 커널의 LSM 훅이다.
 message Warrant {
-  // ── 식별 ──────────────────────────────────────────────────────────────
+  fixed64 warrant_id = 1;   // 커널 맵 키. 재사용 금지, revision 이 올라도 불변
+  string warrant_uuid = 2;  // 서버 PK. 커널로 안 내려간다
+  string display_id = 3;    // 예: W-4821-3F
+  uint32 revision = 4;      // 발급 1, 연장 · 취소마다 +1. 노드는 더 큰 것만 적용
 
-  // 커널 맵 키. cgroup_warrant · task_warrant 의 값이고 warrants 맵의 키다.
-  // 서버가 발급하며 절대 재사용하지 않는다 — 재사용하면 과거 감사 로그의 귀속이
-  // 조용히 뒤바뀐다. 연장 · 취소로 revision 이 올라가도 이 값은 그대로다.
-  fixed64 warrant_id = 1;
+  uint32 subject_id = 10;     // = Subject.kernelSubjectId. 신원은 이것
+  string principal = 11;      // 예: paul@seswar.io
+  string login_account = 12;  // 예: ec2-user. PAM 바인딩 키일 뿐 신원이 아니다
 
-  // 서버 내부 PK (UUID 문자열). 커널로 내려가지 않는다.
-  string warrant_uuid = 2;
-
-  // 사람이 읽는 식별자. 예: W-4821-3F. Slack · wall 경고 · 리포트에 나온다.
-  string display_id = 3;
-
-  // 같은 warrant_id 에 대한 몇 번째 서명본인가. 발급이 1, 연장 · 취소마다 +1.
-  // 노드는 자기가 가진 것보다 큰 revision 만 적용한다 — 취소 뒤에 옛 봉투를
-  // 다시 밀어 넣어 권한을 되살리는 재생 공격을 막는 값이다.
-  uint32 revision = 4;
-
-  // ── 주체 (§01 귀속) ───────────────────────────────────────────────────
-
-  // struct warrant.subject_id (__u32). 감사 레코드에 실려 조회 시점에 사람으로
-  // 조인된다. Subject.kernelSubjectId 와 같은 값이고, 재사용 금지.
-  uint32 subject_id = 10;
-
-  // 예: paul@seswar.io. 노드에서 wall 경고 · 로컬 로그의 이름표로 쓴다.
-  string principal = 11;
-
-  // 로그인 계정. 예: ec2-user. T1 바인딩의 매칭 키다 — PAM 이 넘긴
-  // (login_account, cgroup_id) 를 warrantd 가 이 값으로 활성 영장에 붙인다.
-  // 여러 사람이 공유하는 계정이라 신원이 아니라 참고 정보다(신원은 subject_id).
-  string login_account = 12;
-
-  // ── 대상 · 사유 ──────────────────────────────────────────────────────
-
-  // 이 영장이 유효한 호스트. 서버는 이 목록의 노드에만 push 하고,
-  // 노드는 자기 hostname 이 없으면 봉투를 거부한다(잘못 배달된 영장 방어).
-  repeated string target_hosts = 20;
-
-  // 예: "INC-4821 결제 지연 장애 대응". 감사에서 "왜"에 답하는 유일한 필드.
+  repeated string target_hosts = 20;  // 노드는 자기 hostname 이 없으면 거부
   string reason = 21;
 
-  // ── 기간 (§03 · §05) — 전부 절대시각 또는 기간. boot 기준 값은 없다 ──
-
+  // 시각은 전부 절대시각(Unix ns). boot 기준 변환은 warrantd 가 한다.
   fixed64 issued_at_unix_ns = 30;
-
-  // 만료 시각. warrantd 가 expires_ns = expires_at - node_boot_wall_time 으로
-  // 변환해 맵에 넣는다. 연장은 이 값만 바뀐 새 revision 이다.
   fixed64 expires_at_unix_ns = 31;
+  fixed64 grace_window_ns = 32;  // 기간. SESSION_ONLY_GRACE 에서만, 0 = 유예 없음
 
-  // struct warrant.grace_ns. on_expiry = SESSION_ONLY_GRACE 일 때 만료 뒤 추가로
-  // 주는 시간. 기간(duration)으로 싣는 이유: 연장으로 expires_at 이 밀려도 유예
-  // 창이 따라가야 하기 때문이다. 0 이면 유예 없음. 무기한은 존재하지 않는다 —
-  // 서버가 warrant.grace.max-window 로 상한을 건다.
-  fixed64 grace_window_ns = 32;
-
-  // ── 상태 플래그 (struct warrant 의 __u8 세 개) ──────────────────────
-
-  // struct warrant.revoked. 한 바이트로 전 노드 즉시 취소 (§05).
   bool revoked = 40;
-
   Mode mode = 41;
-
   OnExpiry on_expiry = 42;
 
-  // ── 정책 (§04 · §15) ─────────────────────────────────────────────────
+  uint32 policy_id = 50;  // rule_* 맵 키의 앞부분
+  Policy policy = 51;     // 영장과 함께 서명된다
 
-  // struct warrant.policy_id (__u32). rule_exec · rule_write · rule_net 맵 키의
-  // 앞부분. 같은 정책을 쓰는 영장들이 맵 엔트리를 공유한다.
-  uint32 policy_id = 50;
-
-  // 정책 본문. 영장과 함께 서명된다 — 노드가 정책만 따로 바꿔치기할 수 없다.
-  // 사람이 읽는 표현(경로 · CIDR)이고 (dev, ino) 컴파일은 warrantd 가 한다.
-  Policy policy = 51;
-
-  // break-glass 영장 (§16 · §17). 자기보호 6종을 풀 수 있는 유일한 영장이며,
-  // warrantd 는 이 플래그가 켜진 봉투를 받는 즉시 최고 등급 경보 이벤트를 올린다.
-  // 일반 발급 경로(WarrantIssuanceService)는 이 값을 켤 수 없다.
-  bool break_glass = 60;
+  bool break_glass = 60;  // 자기보호를 풀 수 있는 유일한 영장. 일반 발급 경로로는 못 켠다
 }
 
-// struct warrant.mode. 값이 커널 상수와 반드시 같아야 한다 (§12).
-// 노드 전체가 아니라 영장마다 붙는다 — 새 정책을 쓰는 팀만 DRYRUN 으로 둘 수 있다.
+// 값이 커널 상수와 같아야 한다.
 enum Mode {
-  MODE_OBSERVE = 0;  // 판정하고 기록만. 재부팅 없이 도는 도입 1단계
-  MODE_DRYRUN  = 1;  // 정책을 얹되 차단은 로그만 (verdict = WOULD_DENY)
-  MODE_ENFORCE = 2;  // -EPERM. BPF LSM 이 켜진 노드에서만 의미가 있다
+  MODE_OBSERVE = 0;
+  MODE_DRYRUN  = 1;  // verdict = WOULD_DENY
+  MODE_ENFORCE = 2;  // -EPERM. BPF LSM 이 켜진 노드에서만
 }
 
-// struct warrant.on_expiry. 만료 순간의 동작 (§03).
 enum OnExpiry {
-  ON_EXPIRY_DEMOTE             = 0;  // 기본. 세션은 살고 쓰기 · 아웃바운드만 죽는다
-  ON_EXPIRY_KILL               = 1;  // warrantd 가 scope 를 일괄 종료
+  ON_EXPIRY_DEMOTE             = 0;  // 세션은 살고 쓰기 · 아웃바운드만 죽는다
+  ON_EXPIRY_KILL               = 1;  // scope 일괄 종료
   ON_EXPIRY_SESSION_ONLY_GRACE = 2;  // 셸만 끊고 nohup 잡은 grace_window 동안 유지
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 정책
-// ─────────────────────────────────────────────────────────────────────────────
-
-// 영장이 허용하는 범위. 여기 적힌 것은 전부 경로 · CIDR 문자열이다.
-// 읽기 규칙은 없다 — 읽기는 통제하지 않는다 (§15).
-// 자기보호 6종은 여기 없다 — 정책이 아니라 warrantd 가 강제 삽입하는 기본 규칙이다 (§16).
+// 읽기 규칙과 자기보호 6종은 여기 없다.
 message Policy {
   string name = 1;
-
-  // 실행 허용 — 화이트리스트. 여기 없으면 bprm_check_security 에서 막힌다.
-  repeated ExecRule exec_rules = 2;
-
-  // 쓰기 허용 · 금지. 허용은 파일이어도 되지만 금지는 반드시 디렉터리다.
-  // 우선순위는 WriteRule 주석에 못 박혀 있다 — 세 계층이 같게 구현해야 한다.
+  repeated ExecRule exec_rules = 2;    // 화이트리스트
   repeated WriteRule write_rules = 3;
+  repeated NetRule net_rules = 4;      // 비어 있으면 아웃바운드 전면 차단
+  bool inspect_udp = 5;                // socket_sendmsg 부착. 기본 false
 
-  // 아웃바운드 허용 대역. 비어 있으면 전면 차단이다.
-  repeated NetRule net_rules = 4;
-
-  // lsm/socket_sendmsg 까지 붙일 것인가 (§18 UDP 구멍). 비용이 오르므로 기본 false.
-  bool inspect_udp = 5;
-
-  // 읽기 감시 — 기본 꺼짐. 켜면 `f_mode & FMODE_WRITE` 앞문이 무력화된다
-  // (S1 w_find 기준 12 → ~63ns/call, 0.31% → 1.7%).
-  // 이 목록이 비어 있으면 BPF 프로그램은 읽기 경로를 아예 보지 않는다.
-  // 비어 있지 않은 영장이 하나라도 있는 노드에서만 읽기 조회가 켜진다.
-  //
-  // TODO(미검증): bench/overhead 에 읽기 감시 티어를 추가해 실측한 뒤에 제품에 넣는다.
+  // 미검증 — 비어 있으면 BPF 가 읽기 경로를 보지 않는다. README 미해결 2.
   repeated string read_watch_paths = 6;
 }
 
 message ExecRule {
-  // 절대 경로. 예: /usr/bin/git. warrantd 가 stat 해서 (dev, ino) 로 컴파일하고
-  // fanotify 로 교체를 감시한다.
-  string path = 1;
+  string path = 1;  // 절대 경로 → warrantd 가 (dev, ino) 로 컴파일
 }
 
-// 판정 우선순위 — 순서가 아니라 이 규칙으로 정해진다. 목록의 순서는 무의미하다.
-//
-//   1. 가장 긴 경로가 이긴다 (최장 일치). /app DENY + /app/tmp ALLOW → /app/tmp 는 쓰기 가능
-//   2. 같은 길이면 DENY 가 이긴다
-//   3. 어느 규칙에도 안 걸리면 금지 (화이트리스트가 기본값이다)
-//
-// 규칙 1 이 없으면 §15 가 요구하는 "디렉터리 금지 + 그 안의 파일 허용"을
-// 표현할 수 없다. 커널에서는 자기 자신에서 시작해 조상 inode 체인을 위로
-// 훑으면 가장 먼저 만나는 규칙이 최장 일치다.
+// 최장 일치 → 길이가 같으면 DENY → 안 걸리면 금지. 목록 순서는 무의미하다.
 message WriteRule {
   enum Effect {
     EFFECT_ALLOW = 0;
     EFFECT_DENY  = 1;
   }
 
-  // 절대 경로. DENY 이면서 파일을 가리키면 warrantd 가 컴파일을 거부한다 —
-  // 파일 inode 금지는 mv 후 재생성으로 뚫린다 (§15). 서버 lint 도 같은 것을 잡는다.
-  string path = 1;
-
-  // 이 디렉터리 이하 전체인가.
+  string path = 1;  // DENY 는 반드시 디렉터리
   bool recursive = 2;
-
   Effect effect = 3;
 }
 
 message NetRule {
-  // 예: 10.0.0.0/8 · 2001:db8::/32. IPv6 를 빼먹으면 그대로 우회 경로다.
-  string cidr = 1;
-
-  // 0 이면 모든 포트.
-  uint32 port = 2;
-
-  // 프로토콜. cidr + port 만으로는 "TCP 443 은 허용, UDP 443 은 금지"를
-  // 표현할 수 없다 — §18 의 UDP 구멍(DNS 터널링)이 있는데 그 축이 없으면
-  // 정책으로 좁힐 방법이 사라진다. inspect_udp 는 "볼 것인가"고
-  // 이건 "허용할 것인가"라 다른 축이다.
-  //
-  // socket_connect 는 SOCK_STREAM 만 타므로 UDP 규칙은 socket_sendmsg 가
-  // 붙었을 때만(= inspect_udp) 실제로 강제된다. 그전에는 기록도 안 된다 —
-  // 정책 컴파일러가 PROTO_UDP 규칙 + inspect_udp=false 조합에 경고해야 한다.
-  Proto proto = 3;
+  string cidr = 1;  // IPv4 · IPv6
+  uint32 port = 2;  // 0 = 모든 포트
+  Proto proto = 3;  // UDP 규칙은 inspect_udp=true 일 때만 강제된다
 }
 
 enum Proto {

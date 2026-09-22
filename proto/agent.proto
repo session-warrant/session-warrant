@@ -1,14 +1,5 @@
-// warrantd ↔ 중앙 gRPC 계약. (PAM ↔ warrantd 소켓은 protobuf 를 쓰지 않는다.)
-//
-// 방향
-//   중앙 → 노드   영장 push          서버 스트리밍. REST 폴링이면 "즉시 발효"가 거짓이 된다
-//   노드 → 중앙   감사 이벤트        양방향 스트리밍 — ack 를 중간중간 돌려줘야 하므로
-//                                    클라이언트 스트리밍(응답 1회)으로는 안 된다
-//   노드 → 중앙   하트비트 · 연장 요청 · (선택) 영장 조회   단항
-//
-// 실패 방향 (§17): 이 채널이 끊겨도 노드의 집행은 계속된다. 서버가 재연결을
-// 유도하려 들지 말 것 — warrantd 의 grpc.WithConnectParams 백오프가 알아서 붙는다.
-// 인증은 mTLS. 영장 스트림에는 정책 전체가 흐르므로 아무나 열면 안 된다.
+// warrantd ↔ 중앙 gRPC 계약. mTLS. 채널이 끊겨도 노드의 집행은 계속된다.
+// PAM ↔ warrantd 소켓은 protobuf 를 쓰지 않는다.
 
 syntax = "proto3";
 
@@ -22,78 +13,43 @@ option java_outer_classname = "AgentProtos";
 option java_multiple_files = false;
 option go_package = "github.com/jhukkim/ebSW/agent/internal/pb;pb";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 중앙 → 노드: 영장 push
-// ─────────────────────────────────────────────────────────────────────────────
-
-// 서버 skeleton: grpc/WarrantPushGrpcService — WarrantPushServiceGrpc.WarrantPushServiceImplBase
 service WarrantPushService {
-  // 노드가 스트림을 열고 끝까지 잡고 있는다. 서버는 이 스트림으로 발급 · 연장 · 취소를 민다.
-  //
-  // 순서: (1) 노드 등록 · hello 기록 → (2) 현재 활성 집합 전체(resync) →
-  // (3) ResyncComplete → (4) 이후 변경분. 노드는 (3) 을 받은 시점에 자기 캐시에서
-  // 집합 밖의 영장을 지운다 — 단절 중 만료 · 취소된 것이 거기 있다.
+  // 활성 집합 전체 → ResyncComplete → 이후 변경분.
+  // 노드는 ResyncComplete 에서 집합 밖의 캐시 영장을 지운다.
   rpc Subscribe(SubscribeRequest) returns (stream PushMessage);
 
-  // 하트비트. 스트림 생존과 별개로 기록한다 (Node.lastSeenAt).
-  // 노드 상태(bpf_lsm_enabled · 부팅 시각)가 바뀌면 여기로 갱신된다.
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
 
-  // T-5분 자동 연장 요청 (§03). warrantd 가 진행 중 작업을 감지해 올린다.
-  // 요청일 뿐 권한이 늘지 않으므로 전자동이어도 안전하다. 승인은 사람(또는
-  // read-only 한정 정책 자동 승인)이고, 결과는 새 revision 의 push 로 돌아온다.
+  // T-5분 자동 연장 요청. 결과는 새 revision push 로 온다.
   rpc RequestExtension(ExtensionRequest) returns (ExtensionAck);
 
-  // 선택 경로. PAM 질의에 답하는 것은 warrantd 의 캐시이고, 이 RPC 는 캐시가
-  // 비었을 때만 부른다. 타임아웃이면 노드는 fail-open 한다 (§17).
-  // 중앙이 인증 경로에 끼면 중앙 장애가 곧 로그인 장애가 된다 — 여기에 기대지 말 것.
+  // warrantd 캐시가 비었을 때만. 타임아웃이면 노드는 fail-open.
   rpc LookupActiveWarrant(LookupRequest) returns (LookupResponse);
 }
 
 message SubscribeRequest {
   NodeHello node = 1;
-
-  // 노드 캐시에 있는 (warrant_id → revision). 서버는 이보다 새 것만 보내도 되지만,
-  // 단순함을 위해 활성 집합 전체를 보내고 노드가 revision 으로 거른다.
-  // 진단용으로 남긴다 — 서버 로그에 "노드가 얼마나 뒤처져 있었나"가 찍힌다.
-  map<fixed64, uint32> cached_revisions = 2;
+  map<fixed64, uint32> cached_revisions = 2;  // warrant_id → revision. 진단용
 }
 
-// 노드 자기소개. Node 엔티티의 원천.
 message NodeHello {
   string hostname = 1;
   string kernel_version = 2;
-
-  // /sys/kernel/security/lsm 에 bpf 가 있는가. false 면 ENFORCE 영장이 강제되지
-  // 않는다 — 서버는 발급 시점에 승인자에게 이 사실을 보여야 한다 (Node 주석).
-  bool bpf_lsm_enabled = 3;
-
-  // clock_gettime(CLOCK_REALTIME) - clock_gettime(CLOCK_BOOTTIME). 시계 스큐 진단용.
-  // 변환 자체는 노드가 한다 — 서버는 이 값으로 계산하지 않는다.
-  fixed64 booted_at_unix_ns = 4;
-
+  bool bpf_lsm_enabled = 3;       // false 면 ENFORCE 가 강제되지 않는다
+  fixed64 booted_at_unix_ns = 4;  // 스큐 진단용. 서버는 이걸로 계산하지 않는다
   string agent_version = 5;
-
-  // 어느 훅이 실제로 attach 됐나. 훅을 하나씩 붙이는 개발 단계에서 서버 리포트가
-  // "이 노드는 file_open 을 아직 안 본다"를 알아야 빈 데이터를 오해하지 않는다.
   repeated Hook attached_hooks = 6;
 }
 
 message PushMessage {
   oneof body {
     SignedWarrant warrant = 1;
-
-    // resync 끝. 이 뒤로 오는 것은 변경분이다.
     ResyncComplete resync_complete = 2;
-
-    // 서버 측 킬스위치 지시 (§17 "BPF 프로그램 오작동"). 맵 플래그 하나로 모든
-    // 훅이 즉시 통과한다. 노드 로컬에서도 켤 수 있다 — 이건 원격 경로일 뿐이다.
-    KillSwitch kill_switch = 3;
+    KillSwitch kill_switch = 3;  // 모든 훅 즉시 통과
   }
 }
 
 message ResyncComplete {
-  // 방금 내려간 활성 영장 수. 노드가 자기 캐시와 대조한다.
   uint32 active_count = 1;
 }
 
@@ -104,38 +60,30 @@ message KillSwitch {
 
 message HeartbeatRequest {
   NodeHello node = 1;
-
-  // 커널 맵에 실제로 들어 있는 활성 영장 수. 서버가 아는 수와 다르면 진단 대상.
-  uint32 active_warrants = 2;
-
-  // 부팅 이후 누적 ringbuf 드롭. GapReport 와 별개로 추세를 본다.
-  fixed64 ringbuf_dropped_total = 3;
+  uint32 active_warrants = 2;        // 커널 맵 기준
+  fixed64 ringbuf_dropped_total = 3; // 부팅 이후 누적
 }
 
 message HeartbeatResponse {
-  // 서버가 아는 이 노드의 활성 영장 수. 노드는 어긋나면 재구독한다.
-  uint32 expected_active_warrants = 1;
+  uint32 expected_active_warrants = 1;  // 어긋나면 노드가 재구독
 }
 
 message ExtensionRequest {
   fixed64 warrant_id = 1;
-
-  // "무슨 작업이 돌고 있어서" 요청인지. 승인자에게 그대로 보여준다.
-  // 예: "deploy.sh (pid 4821) 실행 중, 쓰기 12건/분".
-  string detected_workload = 2;
-
+  string detected_workload = 2;  // 예: "deploy.sh (pid 4821) 실행 중, 쓰기 12건/분"
   fixed64 requested_extension_ns = 3;
 }
 
 message ExtensionAck {
   enum Outcome {
-    OUTCOME_UNSPECIFIED = 0;
-    OUTCOME_PENDING_APPROVAL = 1;  // 승인자에게 갔다. 결과는 push 로 온다
-    OUTCOME_AUTO_APPROVED    = 2;  // read-only 정책 자동 승인. 이미 push 됐다
-    OUTCOME_DUPLICATE        = 3;  // 열린 연장 요청이 이미 있다
-    OUTCOME_CAP_EXCEEDED     = 4;  // 누적 상한 — 연장이 아니라 재발급이다 (§03)
+    OUTCOME_UNSPECIFIED      = 0;
+    OUTCOME_PENDING_APPROVAL = 1;
+    OUTCOME_AUTO_APPROVED    = 2;
+    OUTCOME_DUPLICATE        = 3;
+    OUTCOME_CAP_EXCEEDED     = 4;  // 연장이 아니라 재발급 대상
     OUTCOME_REJECTED         = 5;
   }
+
   Outcome outcome = 1;
   string message = 2;
 }
@@ -146,41 +94,23 @@ message LookupRequest {
 }
 
 message LookupResponse {
-  // 이 (hostname, login_account) 에 지금 유효한 영장. 비어 있으면 무영장이다.
-  repeated SignedWarrant warrants = 1;
+  repeated SignedWarrant warrants = 1;  // 비어 있으면 무영장
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 노드 → 중앙: 감사 이벤트
-// ─────────────────────────────────────────────────────────────────────────────
-
-// 서버 skeleton: grpc/AuditIngestGrpcService — AuditIngestServiceGrpc.AuditIngestServiceImplBase
 service AuditIngestService {
-  // 노드가 배치를 올리고, 서버는 적재한 지점까지 ack 한다. 노드는 ack 된 node_seq
-  // 이하를 bbolt 에서 지운다. 재연결 시 ack 이후부터 다시 보내므로 서버는 중복
-  // 수신을 전제로 (node_id, node_seq) 로 멱등하게 받는다.
-  //
-  // 메시지 큐는 없다. 스트리밍의 백프레셔와 노드의 로컬 버퍼로 충분하다 (기술 스택 §07).
+  // 서버는 적재한 지점까지 ack, 노드는 그 이하를 bbolt 에서 지운다.
+  // 재전송이 전제이므로 서버는 (node_id, node_seq) 로 멱등하게 받는다.
   rpc Stream(stream AuditBatch) returns (stream AuditAck);
 }
 
 message AuditBatch {
-  // 첫 배치에만 채운다. 서버가 어느 노드의 스트림인지 여기서 안다 (mTLS 신원과 대조).
-  NodeHello node = 1;
-
+  NodeHello node = 1;  // 첫 배치에만
   repeated AuditEvent events = 2;
-
   repeated WriteAggregate write_aggregates = 3;
-
-  // 유실 구간. 이벤트와 같은 스트림으로 온다 — 별도 채널이면 순서가 어긋나
-  // "이 구간에 이벤트가 있었는데 gap 도 있다"가 된다.
-  repeated GapReport gaps = 4;
-
-  // 이 배치의 마지막 node_seq. 서버는 이 값으로 ack 한다.
+  repeated GapReport gaps = 4;  // 이벤트와 같은 스트림이어야 순서가 맞는다
   fixed64 last_node_seq = 5;
 }
 
 message AuditAck {
-  // 여기까지 적재됐다. 노드는 이 번호 이하를 지운다.
   fixed64 acked_through_node_seq = 1;
 }
