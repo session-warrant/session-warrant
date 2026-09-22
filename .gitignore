@@ -54,3 +54,8 @@ bench/pamtiming/*.so
 
 # ── S4 (bench/inode) ───────────────────────────────────────────────
 bench/inode/inowatch
+
+# ── docs 로컬 전용 ─────────────────────────────────────────────────
+# 위의 !docs/** 보다 뒤에 와야 이긴다
+docs/session-warrant-pitch.html
+docs/*.docx
