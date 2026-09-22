@@ -10,6 +10,7 @@ import java.util.UUID;
 /** {@code duration} 기본값(warrant.default-duration)을 크게 잡지 말 것 — 넉넉한 영장은 상시 권한의 재발명이다(§03). */
 public record IssueWarrantCommand(
         UUID subjectId,
+        String loginAccount,
         String reason,
         List<String> targetHosts,
         UUID policyId,

@@ -21,6 +21,6 @@ public class EventGap {
     /** 커널 ringbuf 가 보고한 드롭 카운트. 알 수 없으면 null. */
     private Long droppedCount;
 
-    /** RINGBUF_OVERFLOW · AGENT_DOWN · CENTRAL_UNREACHABLE 등. */
+    /** proto {@code GapReport.Cause}: RINGBUF_OVERFLOW · AGENT_DOWN · LOCAL_STORE_FULL · CPU_SEQ_SKIP. */
     private String cause;
 }

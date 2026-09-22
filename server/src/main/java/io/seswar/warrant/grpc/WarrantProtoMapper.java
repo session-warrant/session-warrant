@@ -14,16 +14,18 @@ public class WarrantProtoMapper {
 
     /** @return 서명 대상이 될 직렬화 바이트 */
     public byte[] toSignedBytes(Warrant warrant) {
-        // WarrantProto.newBuilder()
-        //     .setWarrantId(...)      // display id 와 내부 UUID 를 둘 다 싣는다
-        //     .setSubjectId(...)      // u32 — Subject.kernelSubjectId
-        //     .setPolicyId(...)       // u32
-        //     .setExpiresAtEpochMillis(...)   // 절대 시각. ns 변환은 노드에서
-        //     .setGraceUntilEpochMillis(...)
-        //     .setRevoked(...)
-        //     .setMode(mode.wireValue())
-        //     .setOnExpiry(onExpiry.wireValue())
-        //     .addAllExecRules(...) .addAllWriteRules(...) .addAllNetRules(...)
+        // WarrantProtos.Warrant.newBuilder()
+        //     .setWarrantId(warrantId)             // u64 커널 맵 키
+        //     .setWarrantUuid(id) .setDisplayId(displayId) .setRevision(revision)
+        //     .setSubjectId(...)                   // u32 — Subject.kernelSubjectId
+        //     .setPrincipal(...) .setLoginAccount(loginAccount) .addAllSshKeyFingerprints(...)
+        //     .addAllTargetHosts(...) .setReason(reason)
+        //     .setIssuedAtUnixNs(...) .setExpiresAtUnixNs(...)   // 절대 시각. boot 기준 변환은 노드에서
+        //     .setGraceWindowNs(graceWindow.toNanos())           // 기간이다. graceUntil 아님
+        //     .setRevoked(revoked) .setModeValue(mode.wireValue()) .setOnExpiryValue(onExpiry.wireValue())
+        //     .setPolicyId(policy.kernelPolicyId)  // u32 버전 id
+        //     .setPolicy(...)                      // Effect 는 wireValue() — 0(UNSPECIFIED)을 만들지 말 것
+        //     .setBreakGlass(breakGlass)
         //     .build().toByteArray()
         throw new UnsupportedOperationException("미구현");
     }

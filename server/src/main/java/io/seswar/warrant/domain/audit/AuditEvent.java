@@ -1,5 +1,6 @@
 package io.seswar.warrant.domain.audit;
 
+import io.seswar.warrant.domain.warrant.WarrantMode;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -16,10 +17,22 @@ public class AuditEvent {
 
     private Instant occurredAt;
 
+    /** mTLS 인증서로 찾은 노드. 노드가 신고한 hostname 이 아니다. */
     private UUID nodeId;
 
-    /** null 이면 영장 없는 프로세스. 그 자체가 조사 대상이다. */
-    private UUID warrantId;
+    /**
+     * 멱등 키는 {@code (nodeId, seqEpoch, nodeSeq)} — 재전송은 ON CONFLICT DO NOTHING.
+     * seqEpoch 가 없으면 bbolt 초기화 뒤 nodeSeq 가 1 로 돌아가 새 이벤트가 중복으로 버려진다.
+     */
+    private long seqEpoch;
+
+    private long nodeSeq;
+
+    /**
+     * 커널이 들고 있던 u64 (proto {@code warrant_id}) — {@code Warrant.warrantId} 와 조인한다.
+     * 0 이면 영장 없는 프로세스. 그 자체가 조사 대상이다.
+     */
+    private long warrantId;
 
     /** 커널이 들고 있던 u32. 조회 시점에 사람 이름으로 조인된다. */
     private Integer kernelSubjectId;
@@ -27,6 +40,15 @@ public class AuditEvent {
     private AuditEventType type;
 
     private Verdict verdict;
+
+    /** WOULD_DENY 가 OBSERVE 인지 DRYRUN 인지 가른다. */
+    private WarrantMode mode;
+
+    /** TASK 면 cgroup 을 벗어난 프로세스를 2차 방어선(fork 전파)이 잡은 것이다. */
+    private TagSource tagSource;
+
+    /** lsm 과 kprobe 미러가 같은 입력에 다른 verdict 를 내면 버그다(§15). */
+    private Origin origin;
 
     private long pid;
 
@@ -51,4 +73,8 @@ public class AuditEvent {
 
     /** CONNECT · UDP_SEND 일 때의 목적지. AF_UNIX 면 sun_path. */
     private String destination;
+
+    public enum TagSource { NONE, CGROUP, TASK }
+
+    public enum Origin { LSM, KPROBE, AGENT }
 }

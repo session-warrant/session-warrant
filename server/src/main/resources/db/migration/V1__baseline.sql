@@ -13,30 +13,43 @@
 -- subject_ssh_key(subject_id, fingerprint UNIQUE, registered_at, revoked_at)
 --         -- fingerprint UNIQUE: 한 키가 두 사람에게 등록되면 바인딩이 다시 모호해진다
 --
--- policy(id, name, inspect_udp BOOL)
+-- policy(id, kernel_policy_id INT UNIQUE, supersedes_id, name, inspect_udp BOOL, created_at)
+--         -- 한 행 = 한 버전, 불변. 수정은 새 행. kernel_policy_id 재사용 금지 (rule_* 맵 키)
 -- policy_exec_rule(policy_id, path)
--- policy_write_rule(policy_id, path, recursive, effect)     -- effect=DENY 는 디렉터리만 허용
--- policy_net_rule(policy_id, cidr, port)
+-- policy_write_rule(policy_id, path, recursive, effect SMALLINT CHECK (effect IN (1, 2)))
+--         -- effect=DENY 는 디렉터리만 허용. 0(UNSPECIFIED)은 저장 불가
+-- policy_net_rule(policy_id, cidr, port, proto SMALLINT)
 -- policy_read_watch(policy_id, path)
 --
--- node(id, hostname UNIQUE, kernel_version, bpf_lsm_enabled, last_seen_at, booted_at)
+-- node(id, client_cert_fingerprint UNIQUE, hostname, kernel_version, bpf_lsm_enabled,
+--      agent_version, attached_hooks TEXT[], current_seq_epoch, last_seen_at, booted_at)
+--         -- 노드 신원은 mTLS 인증서. hostname 은 자기 신고라 UNIQUE 키로 쓰지 않는다
 --
--- warrant(id, display_id UNIQUE, subject_id, policy_id, reason,
---         issued_at, expires_at, grace_until,
---         mode SMALLINT, on_expiry SMALLINT, state, revoked BOOL,
---         signed_payload BYTEA, signature BYTEA)
+-- warrant(id, warrant_id BIGINT UNIQUE CHECK (warrant_id > 0), revision INT,
+--         display_id UNIQUE, subject_id, login_account, policy_id, reason,
+--         issued_at, expires_at, grace_window INTERVAL,
+--         mode SMALLINT, on_expiry SMALLINT, state, revoked BOOL, break_glass BOOL,
+--         signed_payload BYTEA, signature BYTEA, signing_key_id)
+--         -- warrant_id = 커널 맵 키. 전용 시퀀스, 재사용 금지. 0 은 "무영장" 자리
 --         -- expires_at 는 절대 시각. bpf_ktime_get_boot_ns 변환은 warrantd 가 한다
+--         -- grace_until 은 저장하지 않는다 — expires_at + grace_window 파생
+-- warrant_ssh_key(warrant_id, fingerprint)       -- 발급 시점 스냅샷. 서명된 봉투와 같아야 한다
 -- warrant_target_host(warrant_id, hostname)
+--         -- 활성 1개 불변식 (subject, hostname, login_account): 발급 서비스가 subject 행
+--         -- FOR UPDATE 로 직렬화해 지킨다. 대상 호스트가 자식 테이블이라 부분 UNIQUE 로는 못 건다
 --
 -- warrant_lineage(id, warrant_id, type, occurred_at, actor_id, reason, basis,
 --                 delta_seconds, expires_at_after)
 --         -- append-only. UPDATE/DELETE 를 막는 트리거를 걸어 두는 편이 안전하다
 --
--- audit_event(id, occurred_at, node_id, node_seq, warrant_id, kernel_subject_id,
---             type, verdict, pid, cgroup_id, uid,
+-- audit_event(id, occurred_at, node_id, seq_epoch, node_seq, warrant_id BIGINT, kernel_subject_id,
+--             type, verdict, mode, tag_source, origin, pid, cgroup_id, uid,
 --             device_id, inode, resolved_path, argv_truncated, destination)
 --         PARTITION BY RANGE (occurred_at)
---         UNIQUE (node_id, node_seq)   -- 재전송 멱등
+--         UNIQUE (node_id, seq_epoch, node_seq, occurred_at)   -- 재전송 멱등
+--         -- 파티션 테이블의 UNIQUE 는 파티션 키를 포함해야 한다(PostgreSQL 제약).
+--         -- occurred_at 은 warrantd 가 bbolt 에 담아 두는 값이라 재전송에도 같으므로 멱등이 유지된다
+--         -- warrant_id 는 커널 u64 (warrant.warrant_id 와 조인). 0 = 무영장
 --         -- 신뢰의 근거는 (device_id, inode) 다. resolved_path 와 argv 는 참고 정보
 --
 -- audit_gap(id, node_id, from_at, to_at, dropped_count, cause)
