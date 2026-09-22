@@ -105,9 +105,11 @@
 넣는다면 `bench/overhead` 에 읽기 감시 티어를 추가해 재고 나서다.
 안 넣는다면 필드를 지우고 번호를 `reserved` 로 박제한다.
 
-**티어는 추가했다 (2026-09-22, 미실행).** R(cgroup 먼저) · I(inode 먼저) 두 순서를
-D 와 비교한다 — `bench/overhead/README.md` 「읽기 감시 티어」. 서브 PC 에서
-`sudo ./run.sh --tiers a,d,r,i` 결과가 나오면 이 절을 닫는다.
+**1회 측정했다 (2026-09-22, `bench/overhead/out/20260922-232054`).** 읽기 지배
+`w_find` 에서 D 대비 R +4.5% · I +3.9% — 한 자릿수 % 는 지키지만 D 전체 비용의
+10배가 넘고, **"inode 먼저면 공짜"는 반증됐다.** 원인은 순서가 아니라 첫 구현이
+`BPF_CORE_READ`(헬퍼) 로 `(dev, ino)` 를 읽은 데 있다는 가설이다. 직접 load 로 바꾼
+I2 를 재고 나서 이 절을 닫는다. 경위는 `docs/experiments.md` S1 4차.
 
 ### 3. `WriteRule` 최장 일치를 커널에서 어떻게 구현하나
 
