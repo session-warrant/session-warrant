@@ -18,9 +18,10 @@ from glob import glob
 
 # 표시 순서. E 는 D 와 같은 프로그램을 태그 없이 돌린 것이라 D 앞에 놓는다.
 # R · I 는 D 위에 읽기 감시를 얹은 것이라 D 뒤에 놓는다.
-TIERS = ["a", "b", "c", "e", "d", "r", "i"]
-MICRO_TIERS = ["b", "c", "e", "d", "r", "i"]
-CHECK_TIERS = ("c", "e", "d", "r", "i")
+TIERS = ["a", "b", "c", "e", "d", "r", "i", "i2"]
+MICRO_TIERS = ["b", "c", "e", "d", "r", "i", "i2"]
+CHECK_TIERS = ("c", "e", "d", "r", "i", "i2")
+WATCH_TIERS = ("r", "i", "i2")
 TIER_DESC = {
     "a": "훅 없음",
     "b": "return 0 만",
@@ -29,6 +30,7 @@ TIER_DESC = {
     "d": "+ cgroup·맵2회·시간",
     "r": "D + 읽기감시, cgroup 먼저",
     "i": "D + 읽기감시, inode 먼저",
+    "i2": "I + 직접 load",
 }
 PASS_RE = re.compile(r"_p\d+$")
 
@@ -190,7 +192,7 @@ def micro_table(d):
                 print("      경고: tag_hit=0 — 태그가 안 심겼다. 이 D 숫자는 버릴 것")
             if tier == "e" and c.get("tag_hit"):
                 print("      경고: E 인데 tag_hit>0 — 태그가 남아 있다. E·D 비교 무효")
-        for tier in ("r", "i"):
+        for tier in WATCH_TIERS:
             f = probes.get(tier, {}).get(wl)
             if not f:
                 continue
@@ -231,6 +233,14 @@ def crosscheck(d):
         return
     print("── 검산: 마이크로 → 매크로 ─────────────────────────────────")
     print()
+    # 4차: B 없이 돌렸더니 머리말만 찍히고 본문이 조용히 비었다. 그 사이 매크로의
+    # 인공물(w_untar I "+4.0% 유의")이 판정 없이 표에 남았다. 비었으면 비었다고 말한다.
+    if not probes.get("b"):
+        print("  ⚠ 검산 불가 — 티어 B 가 없다. PROBE 빌드의 계측 비용을 뺄 기준이 없어")
+        print("    예상 Δ 를 낼 수 없다. 이 실행의 매크로 '유의' 판정은 검증되지 않은 값이다.")
+        print("    다음 실행은 --tiers 에 b 를 넣을 것.")
+        print()
+        return
     print("  예상 Δ = (훅 1회당 판정 비용 × 호출수) / 기준선 시간.")
     print("  훅 1회당 비용은 B(계측 비용) 를 차감한 값이다 — PROBE 빌드가")
     print("  ktime 을 두 번 부르므로 B 의 절대값은 훅이 아니라 계측이다.")
@@ -240,7 +250,11 @@ def crosscheck(d):
         base = macro[wl].get("a")
         bref, _ = (hook_ns(probes["b"][wl]) if probes.get("b", {}).get(wl)
                    else (None, 0))
-        if not base or bref is None:
+        if not base:
+            continue
+        if bref is None:
+            print(f"  {wl}   ⚠ 검산 불가 — 이 워크로드의 B 마이크로가 없다")
+            print()
             continue
         base_ns = st.mean(base) * 1e9
         # 매크로 노이즈 바닥. 이보다 작은 효과는 이 표본으로 못 잡는다.
@@ -297,12 +311,13 @@ def read_watch_table(d):
     D 와 R · I 는 쓰기 경로가 같고 읽기 경로만 다르다. 그래서 차이가 곧 읽기 감시의
     값이다. 기준선 시간은 매크로 A 가 있으면 그걸로 예상 Δ 를 낸다."""
     probes = _probe_files(d)
-    if not probes.get("d") or not (probes.get("r") or probes.get("i")):
+    if not probes.get("d") or not any(probes.get(t) for t in WATCH_TIERS):
         return
     macro = load_macro(d)
     print("── 읽기 감시: D 대비 추가 비용 (Policy.read_watch_paths, §15) ──────")
     print()
     print("  R 은 읽기 열기마다 cgroup 을 조회하고, I 는 감시 목록(dev, ino)을 먼저 본다.")
+    print("  I2 는 I 와 같은 순서에 (dev, ino) 를 헬퍼 없이 직접 읽는다 — I−I2 가 헬퍼 몫이다.")
     print("  읽기 지배 워크로드(w_find)가 판정 워크로드다 — 쓰기 지배에서는 둘 다 D 와 같아야 한다.")
     print()
     print(f"    {'워크로드':<9} {'티어':<4} {'1회 +ns':>8} {'호출':>10} {'추가 ms':>9} {'추가 Δ':>8}")
@@ -311,7 +326,7 @@ def read_watch_table(d):
         if dm is None:
             continue
         base = macro.get(wl, {}).get("a")
-        for tier in ("r", "i"):
+        for tier in WATCH_TIERS:
             f = probes.get(tier, {}).get(wl)
             if not f:
                 continue
@@ -374,8 +389,9 @@ def main():
     print("        조회 한 번으로 빠져나간다'가 참이면 E 는 C 에 가깝고 D 만 더 낸다.")
     print("        E 가 D 만큼 비싸면 그 주장은 거짓이고, 무영장 세션이 많은")
     print("        현실 서버에서 오버헤드 추정이 통째로 틀어진다.")
-    print("판정 3: 읽기 감시 — R·I 가 D 위에 얹는 추가 Δ. 판정 워크로드는 w_find 다.")
-    print("        I 가 D 와 구분되지 않으면 read_watch_paths 는 inode 먼저 순서로 넣는다.")
+    print("판정 3: 읽기 감시 — R·I·I2 가 D 위에 얹는 추가 Δ. 판정 워크로드는 w_find 다.")
+    print("        I2 가 D 와 구분되지 않으면 read_watch_paths 는 inode 먼저 + 직접 load 로 넣는다.")
+    print("        I2 ≈ I 면 헬퍼가 원인이 아니다 — 다음 후보는 INODE_STORAGE(해시 제거).")
     print("        R 만 싸다는 결과는 나올 수 없다 — 나오면 측정을 의심할 것.")
 
 

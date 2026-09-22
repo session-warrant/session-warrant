@@ -11,6 +11,7 @@
 //
 //   READ_WATCH=1  (R) D + 읽기 감시, cgroup 먼저 — 읽기 열기마다 태그·영장을 본 뒤 감시 목록
 //   READ_WATCH=2  (I) D + 읽기 감시, inode 먼저 — 감시 목록에 있을 때만 cgroup 을 본다
+//   READ_WATCH=3  (I2) I 와 같은 순서, (dev, ino) 를 BPF_CORE_READ 가 아니라 직접 load
 //   Policy.read_watch_paths(§15) 를 넣을 수 있는가를 잰다. 앞문을 지나는 읽기가
 //   cgroup 조회(S1 에서 비용의 대부분)까지 가느냐 마느냐가 R 과 I 의 차이다.
 //
@@ -128,8 +129,18 @@ struct {
 static __always_inline int oh_watched(struct file *file)
 {
     struct oh_ino_key k = {};   // 패딩까지 0 이어야 해시가 맞는다
+#if READ_WATCH == 3
+    // I2. BPF_CORE_READ 는 포인터 한 단계마다 bpf_probe_read_kernel 헬퍼를 부른다
+    // (아래 두 줄이면 5회). lsm 인자는 BTF 포인터라 직접 따라갈 수 있다 — 헬퍼가
+    // 아니라 예외 테이블 달린 load 다. f_inode 도 한 번만 읽는다.
+    // 4차에서 I 가 읽기 열기마다 ~150ns 를 낸 원인이 이것인지를 가른다.
+    struct inode *inode = file->f_inode;
+    k.dev = inode->i_sb->s_dev;
+    k.ino = inode->i_ino;
+#else
     k.dev = BPF_CORE_READ(file, f_inode, i_sb, s_dev);
     k.ino = BPF_CORE_READ(file, f_inode, i_ino);
+#endif
     return bpf_map_lookup_elem(&oh_watch, &k) != NULL;
 }
 
@@ -183,8 +194,8 @@ static __always_inline int oh_decide(struct file *file)
         // R: 읽기 열기 전부가 cgroup 조회까지 간다. 앞문이 읽기에는 없는 것과 같다.
         if (oh_in_warrant() && oh_watched(file))
             return OH_R_WATCH_HIT;
-#elif READ_WATCH == 2
-        // I: 해시 1회로 대부분 끝난다. 감시 대상일 때만 cgroup 을 탄다.
+#elif READ_WATCH >= 2
+        // I · I2: 해시 1회로 대부분 끝난다. 감시 대상일 때만 cgroup 을 탄다.
         if (oh_watched(file) && oh_in_warrant())
             return OH_R_WATCH_HIT;
 #endif

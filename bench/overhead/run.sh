@@ -17,6 +17,7 @@
 #   D  + cgroup 조회 · 맵 2회 · 시간 비교  나머지 5% 가 내는 비용
 #   R  D + 읽기 감시, cgroup 먼저         읽기 열기 전부가 cgroup 조회까지 간다
 #   I  D + 읽기 감시, inode 먼저          감시 대상일 때만 cgroup 을 본다
+#   I2 I 와 같음, (dev, ino) 직접 load     I 의 비용이 BPF_CORE_READ 헬퍼 탓인가
 #
 # E 는 gate_d 를 태그 없이 돌린 것이다 — 프로그램이 같아야 "영장 유무" 하나만 분리된다.
 # R · I 는 Policy.read_watch_paths(§15) 를 넣을 수 있는가를 잰다. 비교 기준은 D 다.
@@ -33,7 +34,7 @@ WARMUP=3
 WITH_APT=0
 OUT="out/$(date +%Y%m%d-%H%M%S)"
 WORKLOADS="w_find,w_git,w_build,w_untar"
-TIERS="a,b,c,e,d,r,i"
+TIERS="a,b,c,e,d,r,i,i2"
 # 감시 목록. 실제로 올릴 법한 비밀 파일 + 카나리아 하나.
 # /usr/bin/env 는 워크로드 스크립트의 shebang 이라 매 실행 열린다 — 여기서
 # watch_hit 이 0 이면 목록이 안 맞은 것이다(dev 인코딩 등). 그 R · I 숫자는 버린다.
@@ -90,8 +91,13 @@ tier_tag() { case $1 in e) echo 0 ;; *) echo "$CGID" ;; esac; }
 
 IFS=, read -ra TIER_LIST <<< "$TIERS"
 for t in "${TIER_LIST[@]}"; do
-    [[ $t =~ ^[abcedri]$ ]] || die "알 수 없는 티어: $t (a b c e d r i)"
+    [[ $t =~ ^(a|b|c|e|d|r|i|i2)$ ]] || die "알 수 없는 티어: $t (a b c e d r i i2)"
 done
+# B 가 없으면 report.py 가 계측 비용을 뺄 기준이 없어 검산 절이 비는다(4차).
+# 멈추지는 않는다 — 읽기 감시 절은 D 대비라 B 없이도 나온다.
+if [[ ",$TIERS," != *,b,* ]]; then
+    echo "경고: 티어 B 가 없다 — 검산 절(마이크로 → 매크로)이 나오지 않는다" >&2
+fi
 WATCH_ARGS=()
 IFS=, read -ra WATCH_LIST <<< "$WATCH"
 for w in "${WATCH_LIST[@]}"; do WATCH_ARGS+=(--watch "$w"); done

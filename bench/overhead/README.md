@@ -20,6 +20,7 @@ S0 에서 쓰기 의도가 전체 `file_open` 의 **4.7%** (123/2,598) 로 나�
 | D | `+ cgroup 조회 · 맵 2회 · 시간 비교` | 나머지 5% 가 내는 비용 |
 | R | D + 읽기 감시, **cgroup 먼저** | 읽기 열기 전부가 cgroup 조회까지 가면 얼마인가 |
 | I | D + 읽기 감시, **inode 먼저** | 감시 목록 해시 1회로 읽기를 거르면 얼마인가 |
+| I2 | I + `(dev, ino)` **직접 load** | I 의 비용이 `BPF_CORE_READ` 헬퍼 탓인가 |
 
 **E 는 새 프로그램이 아니다.** `gate_d.bpf.o` 를 태그 없이 돌린 것이다 —
 프로그램이 같아야 "영장 유무" 하나만 분리된다.
@@ -39,7 +40,7 @@ C 는 B 에 한 줄 더한 것이고 D 는 C 에 조회를 더한 것이라는 �
 소스에 그대로 보여야 한다. 파일 넷으로 쪼개면 티어끼리 슬금슬금
 달라져도 아무도 모른다.
 
-## 읽기 감시 티어 — R · I (2026-09-22 추가, 미실행)
+## 읽기 감시 티어 — R · I · I2 (2026-09-22)
 
 `Policy.read_watch_paths` 를 넣을 수 있는가를 잰다. 기획서 §15 는 열람 사실 자체가
 중요한 소수의 inode 를 "별도 감시 목록"에 올린다고 했는데, 읽기를 보려면 읽기 열기가
@@ -53,7 +54,14 @@ C 는 B 에 한 줄 더한 것이고 D 는 C 에 조회를 더한 것이라는 �
 | R | cgroup → 태그 → 영장 → 감시 목록 | 읽기 열기마다 D 의 쓰기 경로만큼 낸다. `w_find` 에서 큰 폭 |
 | I | 감시 목록 `(dev, ino)` → 걸리면 cgroup → 태그 → 영장 | 해시 miss 1회. D 와 거의 같아야 한다 |
 
-**둘 다 `-DREAD_WATCH=` 상수다** (`gate.bpf.c`). 새 파일이 아니다 — D 와 쓰기 경로가
+**4차 실측에서 I 가 R 만큼 비쌌다** (`w_find` 읽기 열기 1회 +147ns vs +169ns,
+`docs/experiments.md` S1 4차). 순서가 아니라 읽는 방법이 원인이라는 가설로
+**I2** 를 더했다 — 순서는 I 와 같고, `BPF_CORE_READ`(포인터 한 단계마다
+`bpf_probe_read_kernel` 헬퍼, I 에서 5회) 대신 BTF 포인터를 직접 따라가며
+`f_inode` 를 한 번만 읽는다. **I − I2 가 헬퍼 몫이다.** I2 ≈ D 면 그 방식으로 넣고,
+I2 ≈ I 면 헬퍼가 원인이 아니므로 다음 후보(`INODE_STORAGE`, 해시 제거)로 간다.
+
+**셋 다 `-DREAD_WATCH=` 상수다** (`gate.bpf.c`, 1 · 2 · 3). 새 파일이 아니다 — D 와 쓰기 경로가
 같아야 차이가 곧 읽기 감시의 값이 된다. 비교 기준은 A 가 아니라 **D** 다.
 
 **판정 워크로드는 `w_find`** (쓰기 0.0%, 초당 27만 open)다. 쓰기 지배 워크로드에서는
@@ -67,7 +75,8 @@ R · I 모두 D 와 같아야 하고, 아니면 측정을 의심한다. `report.
 `st_dev` 와 커널 `s_dev` 는 인코딩이 달라서 로더가 `(major << 20) | minor` 로 바꿔 넣는다.
 
 ```sh
-sudo ./run.sh --tiers a,d,r,i --workloads w_find,w_untar   # 읽기 감시만 빠르게
+sudo cpupower frequency-set -g performance                  # 먼저. 4차 매크로가 이것 때문에 무효였다
+sudo ./run.sh --tiers a,b,d,r,i,i2 --workloads w_find,w_untar   # 읽기 감시만 빠르게. B 를 빼지 말 것
 sudo ./run.sh --watch /etc/shadow,/usr/bin/env              # 목록 교체
 ```
 
@@ -104,10 +113,10 @@ sudo ./run.sh --watch /etc/shadow,/usr/bin/env              # 목록 교체
 ## 돌리기
 
 ```sh
-make                       # 오브젝트 10개 + 로더
+make                       # 오브젝트 12개 + 로더
 make check                 # 툴체인·lsm·hyperfine 확인
 ./fixture.sh               # 워크로드 픽스처 (네트워크 안 탄다)
-sudo ./run.sh              # 7티어 × 4워크로드 → out/<타임스탬프>/report.txt
+sudo ./run.sh              # 8티어 × 4워크로드 → out/<타임스탬프>/report.txt
 ```
 
 ```sh

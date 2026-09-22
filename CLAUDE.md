@@ -298,12 +298,12 @@ make -C bpf check           # BTF · lsm · clang · bpftool
 ### 벤치 — 훅을 붙일 때마다 돌린다
 
 ```sh
-# S1 오버헤드 (7티어 × 워크로드 4종. R·I 는 읽기 감시)
+# S1 오버헤드 (8티어 × 워크로드 4종. R·I·I2 는 읽기 감시)
 cd bench/overhead && make && ./fixture.sh
 sudo ./run.sh                                  # 기본 5회 × 4패스
 sudo ./run.sh --passes 6 --runs 10             # 정식
 sudo ./run.sh --workloads w_untar,w_find       # 일부만
-sudo ./run.sh --tiers a,d,r,i                  # 읽기 감시 티어만
+sudo ./run.sh --tiers a,b,d,r,i,i2             # 읽기 감시 티어만. B 는 검산 기준이라 빼지 말 것
 python3 report.py out/<타임스탬프>              # 재집계
 
 # S2 §04 우회 표 (bats)
