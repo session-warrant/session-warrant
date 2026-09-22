@@ -9,6 +9,11 @@
 //   TIER=3  (D) + cgroup 조회 · 맵 2회 · 시간 비교
 //   (A 는 훅이 없는 상태 = 로더를 안 띄운다. 오브젝트가 없다)
 //
+//   READ_WATCH=1  (R) D + 읽기 감시, cgroup 먼저 — 읽기 열기마다 태그·영장을 본 뒤 감시 목록
+//   READ_WATCH=2  (I) D + 읽기 감시, inode 먼저 — 감시 목록에 있을 때만 cgroup 을 본다
+//   Policy.read_watch_paths(§15) 를 넣을 수 있는가를 잰다. 앞문을 지나는 읽기가
+//   cgroup 조회(S1 에서 비용의 대부분)까지 가느냐 마느냐가 R 과 I 의 차이다.
+//
 //   PROBE=0  계측 없음. 매크로(워크로드 벽시계) 측정용
 //   PROBE=1  + 지연 히스토그램 · dev major 히스토그램 · 카운터
 //
@@ -33,6 +38,12 @@ char LICENSE[] SEC("license") = "GPL";
 #ifndef PROBE
 #define PROBE 0
 #endif
+#ifndef READ_WATCH
+#define READ_WATCH 0
+#endif
+#if READ_WATCH && TIER < 3
+#error "READ_WATCH 는 TIER=3 (D) 위에 얹는다"
+#endif
 
 struct oh_warrant {
     __u64 expires_ns;      // boot 기준. 유저 공간 시각이 아니다
@@ -50,6 +61,7 @@ enum {
     OH_R_TAG_HIT,          // 유효한 영장
     OH_R_REVOKED,          // 강제 모드였다면 -EPERM
     OH_R_EXPIRED,          // 강제 모드였다면 -EPERM
+    OH_R_WATCH_HIT,        // 영장 세션이 감시 대상 inode 를 읽음 (R · I 만)
     OH_R_MAX
 };
 #define OH_C_TOTAL OH_R_MAX
@@ -98,6 +110,38 @@ struct {
     __type(value, struct oh_warrant);
 } oh_warrants SEC(".maps");
 
+#if READ_WATCH
+// 읽기 감시 목록. 키는 경로가 아니라 (dev, ino) 다 (§15). dev 는 커널 s_dev 인코딩.
+struct oh_ino_key {
+    __u32 dev;
+    __u32 _pad;
+    __u64 ino;
+};
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 1024);
+    __type(key, struct oh_ino_key);
+    __type(value, __u8);
+} oh_watch SEC(".maps");
+
+static __always_inline int oh_watched(struct file *file)
+{
+    struct oh_ino_key k = {};   // 패딩까지 0 이어야 해시가 맞는다
+    k.dev = BPF_CORE_READ(file, f_inode, i_sb, s_dev);
+    k.ino = BPF_CORE_READ(file, f_inode, i_ino);
+    return bpf_map_lookup_elem(&oh_watch, &k) != NULL;
+}
+
+// 영장 세션인가. 감시는 영장에 딸린 정책이라 무영장 세션의 읽기는 기록하지 않는다.
+static __always_inline int oh_in_warrant(void)
+{
+    __u64 cg = bpf_get_current_cgroup_id();
+    __u64 *wid = bpf_map_lookup_elem(&oh_tag, &cg);
+    return wid && bpf_map_lookup_elem(&oh_warrants, wid);
+}
+#endif /* READ_WATCH */
+
 #if PROBE
 static __always_inline void oh_bump(__u32 k)
 {
@@ -134,8 +178,18 @@ static __always_inline int oh_decide(struct file *file)
 #if TIER >= 2
     // 앞문. 쓰기 의도는 전체 file_open 의 5% 남짓이라(S0) 대부분 여기서 끝난다.
     __u32 mode = BPF_CORE_READ(file, f_mode);
-    if (!(mode & FMODE_WRITE))
+    if (!(mode & FMODE_WRITE)) {
+#if READ_WATCH == 1
+        // R: 읽기 열기 전부가 cgroup 조회까지 간다. 앞문이 읽기에는 없는 것과 같다.
+        if (oh_in_warrant() && oh_watched(file))
+            return OH_R_WATCH_HIT;
+#elif READ_WATCH == 2
+        // I: 해시 1회로 대부분 끝난다. 감시 대상일 때만 cgroup 을 탄다.
+        if (oh_watched(file) && oh_in_warrant())
+            return OH_R_WATCH_HIT;
+#endif
         return OH_R_READ;
+    }
 #endif /* TIER >= 2 */
 
 #if TIER >= 3

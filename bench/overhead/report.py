@@ -17,14 +17,18 @@ from collections import defaultdict
 from glob import glob
 
 # 표시 순서. E 는 D 와 같은 프로그램을 태그 없이 돌린 것이라 D 앞에 놓는다.
-TIERS = ["a", "b", "c", "e", "d"]
-MICRO_TIERS = ["b", "c", "e", "d"]
+# R · I 는 D 위에 읽기 감시를 얹은 것이라 D 뒤에 놓는다.
+TIERS = ["a", "b", "c", "e", "d", "r", "i"]
+MICRO_TIERS = ["b", "c", "e", "d", "r", "i"]
+CHECK_TIERS = ("c", "e", "d", "r", "i")
 TIER_DESC = {
     "a": "훅 없음",
     "b": "return 0 만",
     "c": "+ FMODE_WRITE 앞문",
     "e": "D 와 같음, 영장 없음",
     "d": "+ cgroup·맵2회·시간",
+    "r": "D + 읽기감시, cgroup 먼저",
+    "i": "D + 읽기감시, inode 먼저",
 }
 PASS_RE = re.compile(r"_p\d+$")
 
@@ -186,6 +190,16 @@ def micro_table(d):
                 print("      경고: tag_hit=0 — 태그가 안 심겼다. 이 D 숫자는 버릴 것")
             if tier == "e" and c.get("tag_hit"):
                 print("      경고: E 인데 tag_hit>0 — 태그가 남아 있다. E·D 비교 무효")
+        for tier in ("r", "i"):
+            f = probes.get(tier, {}).get(wl)
+            if not f:
+                continue
+            c = json.load(open(f))["counters"]
+            print(f"      {tier.upper()} 판정: watch_hit={c.get('watch_hit',0):,} "
+                  f"read={c.get('read',0):,} tag_hit={c.get('tag_hit',0):,}")
+            if not c.get("watch_hit"):
+                print("      경고: watch_hit=0 — 카나리아(/usr/bin/env)도 안 걸렸다. 감시 목록이")
+                print("      안 맞은 것이다(dev 인코딩 등). 이 R·I 숫자는 miss 경로만 잰 것이라 버릴 것")
         print()
 
 
@@ -236,7 +250,7 @@ def crosscheck(d):
         print(f"  {wl}   (매크로 노이즈 바닥 ±{floor:.2f}%)")
         print(f"    {'':4} {'1회 net':>9} {'호출':>10} {'총비용':>9} "
               f"{'예상Δ':>8} {'실측Δ':>8} {'배':>6}  판정")
-        for tier in ("c", "e", "d"):
+        for tier in CHECK_TIERS:
             f = probes.get(tier, {}).get(wl)
             v = macro[wl].get(tier)
             if not f or not v:
@@ -263,7 +277,7 @@ def crosscheck(d):
         if floor > 0:
             worst = max((hook_ns(probes[t][wl])[0] - bref) * hook_ns(probes[t][wl])[1]
                         / base_ns * 100
-                        for t in ("c", "e", "d") if probes.get(t, {}).get(wl))
+                        for t in CHECK_TIERS if probes.get(t, {}).get(wl))
             if worst < floor:
                 print(f"    → 예상 Δ 최대 {worst:.2f}% 가 노이즈 바닥 {floor:.2f}% "
                       f"아래다. 이 워크로드는 매크로로 분해될 수 없다.")
@@ -274,6 +288,43 @@ def crosscheck(d):
     print("  3배를 넘었다는 뜻이다. 훅은 자기가 쓴 시간보다 더 느리게 만들 수")
     print("  없으므로, 그 Δ 는 기계 상태이지 훅이 아니다. 예상 Δ 쪽을 결론으로")
     print("  적고 매크로는 상한으로만 인용할 것.")
+    print()
+
+
+def read_watch_table(d):
+    """읽기 감시(R · I)가 D 위에 얹는 비용. Policy.read_watch_paths 를 넣을지는 여기서 정한다.
+
+    D 와 R · I 는 쓰기 경로가 같고 읽기 경로만 다르다. 그래서 차이가 곧 읽기 감시의
+    값이다. 기준선 시간은 매크로 A 가 있으면 그걸로 예상 Δ 를 낸다."""
+    probes = _probe_files(d)
+    if not probes.get("d") or not (probes.get("r") or probes.get("i")):
+        return
+    macro = load_macro(d)
+    print("── 읽기 감시: D 대비 추가 비용 (Policy.read_watch_paths, §15) ──────")
+    print()
+    print("  R 은 읽기 열기마다 cgroup 을 조회하고, I 는 감시 목록(dev, ino)을 먼저 본다.")
+    print("  읽기 지배 워크로드(w_find)가 판정 워크로드다 — 쓰기 지배에서는 둘 다 D 와 같아야 한다.")
+    print()
+    print(f"    {'워크로드':<9} {'티어':<4} {'1회 +ns':>8} {'호출':>10} {'추가 ms':>9} {'추가 Δ':>8}")
+    for wl in sorted(probes["d"]):
+        dm, _ = hook_ns(probes["d"][wl])
+        if dm is None:
+            continue
+        base = macro.get(wl, {}).get("a")
+        for tier in ("r", "i"):
+            f = probes.get(tier, {}).get(wl)
+            if not f:
+                continue
+            m, opens = hook_ns(f)
+            if m is None:
+                continue
+            extra = m - dm
+            ms = opens * extra / 1e6
+            exp = (f"{opens * extra / (st.mean(base) * 1e9) * 100:+7.2f}%"
+                   if base else "      —")
+            print(f"    {wl:<9} {tier.upper():<4} {extra:8.0f} {opens:>10,} {ms:9.3f} {exp:>8}")
+    print()
+    print("  1회 +ns 는 log2 버킷 근사라 ±수 ns 는 노이즈다. 자릿수와 R·I 의 순서만 읽는다.")
     print()
 
 
@@ -311,6 +362,7 @@ def main():
     macro_table(d)
     micro_table(d)
     crosscheck(d)
+    read_watch_table(d)
     dev_table(d)
     print("판정 0: '측정 무효' 가 붙은 워크로드는 판정에 쓰지 않는다.")
     print("판정 1: 오버헤드가 한 자릿수 % 여야 한다. 두 자릿수면 쓰기 통제를")
@@ -322,6 +374,9 @@ def main():
     print("        조회 한 번으로 빠져나간다'가 참이면 E 는 C 에 가깝고 D 만 더 낸다.")
     print("        E 가 D 만큼 비싸면 그 주장은 거짓이고, 무영장 세션이 많은")
     print("        현실 서버에서 오버헤드 추정이 통째로 틀어진다.")
+    print("판정 3: 읽기 감시 — R·I 가 D 위에 얹는 추가 Δ. 판정 워크로드는 w_find 다.")
+    print("        I 가 D 와 구분되지 않으면 read_watch_paths 는 inode 먼저 순서로 넣는다.")
+    print("        R 만 싸다는 결과는 나올 수 없다 — 나오면 측정을 의심할 것.")
 
 
 if __name__ == "__main__":

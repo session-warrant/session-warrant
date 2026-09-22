@@ -1,6 +1,6 @@
 // S1 로더 — gate.bpf.o 를 열어 붙이고, SIGINT 에 통계를 JSON 으로 뱉는다.
 //
-//   sudo ./gate --obj gate_c.bpf.o [--tag-cgroup N] [--out stats.json]
+//   sudo ./gate --obj gate_c.bpf.o [--tag-cgroup N] [--watch PATH]... [--out stats.json]
 //
 // 스켈레톤을 안 쓴다. 티어 × PROBE 조합의 오브젝트 여럿을 바이너리 하나가
 // 다뤄야 하는데, 스켈레톤은 오브젝트마다 헤더가 생겨서 전부 링크하게 된다.
@@ -14,16 +14,25 @@
 #include <errno.h>
 #include <getopt.h>
 #include <time.h>
+#include <sys/stat.h>
+#include <sys/sysmacros.h>
 #include <bpf/libbpf.h>
 #include <bpf/bpf.h>
 
-#define OH_CNT_MAX 7
+#define OH_CNT_MAX 8
+#define OH_WATCH_MAX 64
 #define OH_LAT_MAX 64
 #define OH_DEV_MAX 8192
 
 // gate.bpf.c 의 OH_R_* 순서와 같아야 한다. 마지막 칸이 총계다.
 static const char *cnt_name[OH_CNT_MAX] = {
-    "pass", "read", "tag_miss", "tag_hit", "revoked", "expired", "total"
+    "pass", "read", "tag_miss", "tag_hit", "revoked", "expired", "watch_hit", "total"
+};
+
+struct oh_ino_key {
+    __u32 dev;
+    __u32 _pad;
+    __u64 ino;
 };
 
 struct oh_warrant {
@@ -107,23 +116,31 @@ int main(int argc, char **argv)
     const char *objpath = NULL, *outpath = NULL;
     unsigned long long tag_cgroup = 0;
     unsigned ttl_sec = 3600;
+    const char *watch[OH_WATCH_MAX];
+    int nwatch = 0;
 
     static struct option opts[] = {
         {"obj",        required_argument, 0, 'o'},
         {"out",        required_argument, 0, 'w'},
         {"tag-cgroup", required_argument, 0, 'c'},
         {"ttl",        required_argument, 0, 't'},
+        {"watch",      required_argument, 0, 'r'},
         {0, 0, 0, 0}
     };
     int c;
-    while ((c = getopt_long(argc, argv, "o:w:c:t:", opts, NULL)) != -1) {
+    while ((c = getopt_long(argc, argv, "o:w:c:t:r:", opts, NULL)) != -1) {
         switch (c) {
         case 'o': objpath = optarg; break;
         case 'w': outpath = optarg; break;
         case 'c': tag_cgroup = strtoull(optarg, NULL, 10); break;
         case 't': ttl_sec = strtoul(optarg, NULL, 10); break;
+        case 'r':
+            if (nwatch < OH_WATCH_MAX)
+                watch[nwatch++] = optarg;
+            break;
         default:
-            fprintf(stderr, "usage: %s --obj X.bpf.o [--tag-cgroup N] [--ttl S] [--out F]\n", argv[0]);
+            fprintf(stderr, "usage: %s --obj X.bpf.o [--tag-cgroup N] [--ttl S] "
+                            "[--watch PATH]... [--out F]\n", argv[0]);
             return 2;
         }
     }
@@ -175,6 +192,32 @@ int main(int argc, char **argv)
         fprintf(stderr, "tag: cgroup=%llu -> warrant=1, expires=+%us\n", tag_cgroup, ttl_sec);
     } else {
         fprintf(stderr, "tag: 없음 — 티어 D 는 tag_miss 경로만 잰다\n");
+    }
+
+    // 읽기 감시 목록 (티어 R · I). 다른 티어에는 oh_watch 맵이 없으니 조용히 넘어간다.
+    int watch_fd = map_fd(obj, "oh_watch");
+    if (watch_fd >= 0) {
+        int added = 0;
+        for (int i = 0; i < nwatch; i++) {
+            struct stat st;
+            if (stat(watch[i], &st)) {
+                fprintf(stderr, "watch: %s 없음 — 건너뛴다\n", watch[i]);
+                continue;
+            }
+            // st_dev 는 유저 공간 인코딩이다. 커널 s_dev 는 (major << 20) | minor.
+            // 그대로 넣으면 조용히 전건 miss 가 나고 "I 가 싸다"는 틀린 답이 된다.
+            struct oh_ino_key k = {
+                .dev = (__u32)((major(st.st_dev) << 20) | minor(st.st_dev)),
+                .ino = st.st_ino,
+            };
+            __u8 one = 1;
+            if (bpf_map_update_elem(watch_fd, &k, &one, BPF_ANY)) {
+                fprintf(stderr, "ERROR: watch 주입 실패 (%s)\n", watch[i]);
+                return 1;
+            }
+            added++;
+        }
+        fprintf(stderr, "watch: %d / %d 경로\n", added, nwatch);
     }
 
     struct bpf_program *prog;
