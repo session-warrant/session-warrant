@@ -1,0 +1,30 @@
+{
+  "object": "gate_r_probe.bpf.o",
+  "seconds": 0.753,
+  "counters": {
+    "pass": 0,
+    "read": 214317,
+    "tag_miss": 9,
+    "tag_hit": 10,
+    "revoked": 0,
+    "expired": 0,
+    "watch_hit": 2,
+    "total": 214338
+  },
+  "lat_log2_ns": {
+    "5": 29,
+    "6": 28893,
+    "7": 174648,
+    "8": 10624,
+    "9": 72,
+    "10": 11,
+    "11": 21,
+    "12": 26,
+    "13": 5,
+    "14": 9
+  },
+  "dev_major": {
+    "0": {"read": 2772, "write": 16},
+    "259": {"read": 211547, "write": 3}
+  }
+}
