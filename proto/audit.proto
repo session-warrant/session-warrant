@@ -41,7 +41,7 @@ enum Verdict {
 
 // 필드 번호 ≤15 는 1바이트 태그다. 전건에 실리는 필드와 고빈도 payload 를 거기 둔다.
 message AuditEvent {
-  fixed64 node_seq = 1;  // 노드 단위 단조 증가. 서버 멱등 키 · ack 기준
+  fixed64 node_seq = 1;  // 노드 단위 단조 증가. (node_id, seq_epoch, node_seq) 가 서버 멱등 키
   uint32 cpu = 2;        // (cpu, cpu_seq) 가 건너뛰면 유실. HOOK_AGENT 는 0
   fixed64 cpu_seq = 3;
   Hook hook = 4;

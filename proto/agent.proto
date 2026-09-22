@@ -45,17 +45,13 @@ message PushMessage {
   oneof body {
     SignedWarrant warrant = 1;
     ResyncComplete resync_complete = 2;
-    KillSwitch kill_switch = 3;  // 모든 훅 즉시 통과
   }
+  reserved 3;  // kill_switch — 서명 없이 전 훅을 여는 메시지였다. 강제 모드 때 서명 봉투로 다시 설계
+  reserved "kill_switch";
 }
 
 message ResyncComplete {
   uint32 active_count = 1;
-}
-
-message KillSwitch {
-  bool engaged = 1;
-  string reason = 2;
 }
 
 message HeartbeatRequest {
@@ -95,12 +91,13 @@ message LookupRequest {
 }
 
 message LookupResponse {
-  repeated SignedWarrant warrants = 1;  // 비어 있으면 무영장. 셋 다 일치한 것만
+  repeated SignedWarrant warrants = 1;  // 비어 있으면 무영장. 셋 다 일치한 것만. 서버 불변식상 최대 1개
 }
 
 service AuditIngestService {
   // 서버는 적재한 지점까지 ack, 노드는 그 이하를 bbolt 에서 지운다.
-  // 재전송이 전제이므로 서버는 (node_id, node_seq) 로 멱등하게 받는다.
+  // 재전송이 전제이므로 서버는 (node_id, seq_epoch, node_seq) 로 멱등하게 받는다.
+  // node_id 는 mTLS 클라이언트 인증서에서 뽑는다. 노드가 적어 보내는 hostname 은 키가 아니다.
   rpc Stream(stream AuditBatch) returns (stream AuditAck);
 }
 
@@ -110,8 +107,10 @@ message AuditBatch {
   repeated WriteAggregate write_aggregates = 3;
   repeated GapReport gaps = 4;  // 이벤트와 같은 스트림이어야 순서가 맞는다
   fixed64 last_node_seq = 5;
+  fixed64 seq_epoch = 6;  // bbolt 초기화 때 새로 뽑는 난수. node_seq 가 1 로 되돌아가도 옛 키와 안 겹친다
 }
 
 message AuditAck {
+  fixed64 seq_epoch = 2;  // 어느 epoch 의 ack 인가. 다르면 노드는 무시한다
   fixed64 acked_through_node_seq = 1;
 }

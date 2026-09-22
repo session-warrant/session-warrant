@@ -40,7 +40,7 @@ message Warrant {
   Mode mode = 41;
   OnExpiry on_expiry = 42;
 
-  uint32 policy_id = 50;  // rule_* 맵 키의 앞부분
+  uint32 policy_id = 50;  // 불변 정책 버전 id. 정책 수정마다 새로 발급 · 재사용 금지. rule_* 맵 키의 앞부분
   Policy policy = 51;     // 영장과 함께 서명된다
 
   bool break_glass = 60;  // 자기보호를 풀 수 있는 유일한 영장. 일반 발급 경로로는 못 켠다
@@ -76,10 +76,12 @@ message ExecRule {
 }
 
 // 최장 일치 → 길이가 같으면 DENY → 안 걸리면 금지. 목록 순서는 무의미하다.
+// 조상 순회 깊이 상한을 넘으면 "안 걸림" = 금지. 상한 값은 커널이 정한다 (README 3).
 message WriteRule {
   enum Effect {
-    EFFECT_ALLOW = 0;
-    EFFECT_DENY  = 1;
+    EFFECT_UNSPECIFIED = 0;  // 컴파일러가 거부한다. 빠뜨린 DENY 가 ALLOW 로 읽히면 안 된다
+    EFFECT_ALLOW = 1;
+    EFFECT_DENY  = 2;
   }
 
   string path = 1;  // DENY 는 반드시 디렉터리
