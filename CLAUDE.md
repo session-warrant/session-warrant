@@ -381,7 +381,7 @@ deploy/   bootstrap.sh · enable-bpf-lsm.sh · systemd/ · ansible/
 bench/    bypass/(§04 우회) · overhead/(훅별 실측) · pamtiming/(PAM 타이밍) · inode/(inode 안정성)
 ```
 
-## 3인 분담 (2026-09-09 확정)
+## 3인 분담 (2026-09-09 확정 → 2026-09-23 재배치)
 
 기술 스택 문서 §10 의 A·B·C 틀을 따르되, **프론트(`web/`)는 범위에서 뺀다.**
 화면은 Grafana 가 PostgreSQL 을 직접 읽는 걸로 대체하고, React 화면 4개는 목 데이터
@@ -389,9 +389,9 @@ bench/    bypass/(§04 우회) · overhead/(훅별 실측) · pamtiming/(PAM 타
 
 | | 이름 | 담당 | 소유 디렉터리 |
 |---|---|---|---|
-| **A** | 장지은 | 커널 | `bpf/` · `agent/internal/{loader,bpfmap,ringbuf,policy}` |
-| **B** | 김종혁 | 서버·계약 | `proto/` · `server/` · `agent/internal/{upstream,store}` |
-| **C** | 김강민 | 노드 통합·검증·운영 | `pam/` · `agent/internal/pamsock` · `agent/cmd/warrantd` · `bench/` · `deploy/` |
+| **A** | 김강민 | 커널 | `bpf/` · `agent/internal/{loader,bpfmap,ringbuf,policy}` |
+| **B** | 장지은 | 서버·계약 | `proto/` · `server/` · `agent/internal/{upstream,store}` |
+| **C** | 김종혁 | 노드 통합·검증·운영 | `pam/` · `agent/internal/pamsock` · `agent/cmd/warrantd` · `bench/` · `deploy/` |
 
 **경계는 언어가 아니라 계약이다.** 사람 경계가 계약 경계와 겹치도록 잘랐다.
 
@@ -403,12 +403,13 @@ bench/    bypass/(§04 우회) · overhead/(훅별 실측) · pamtiming/(PAM 타
   `upstream`·`store` 는 C 로 넘기고, 그때는 proto 확정이 더 급해진다.
 - **벤치는 커널 담당이 짜지 않는다.** 자기 코드를 자기가 재면 유리한 조건만 재게 된다.
 
-**기계.** BPF 는 서브 PC 한 대에서만 돈다. A 가 기계를 소유한다. C 는 PAM 작업에 물리
-콘솔이 필요하므로 시간대를 나누거나 두 번째 박스를 둔다. B 는 기계가 필요 없다.
+**기계.** BPF 는 서브 PC 한 대에서만 돈다. A 가 기계를 소유한다. C 는 PAM 작업과 `bench/`
+실행에 물리 콘솔이 필요하므로 시간대를 나누거나 두 번째 박스를 둔다. B 는 기계가 필요 없다.
 
-**인수인계.** 스파이크 S0~S3 와 proto 초안은 김종혁이 혼자 진행했다. 커널 실측 경험이
-전부 B 에게 있으므로, 첫 주에 `docs/experiments.md` 와 `bench/` 결과를 A 에게 넘기는
-시간을 따로 잡는다.
+**인수인계.** 스파이크 S0~S3 와 proto 는 김종혁이 혼자 진행했고, 2026-09-23 재배치로
+김종혁이 C 를 맡는다. `bench/` 가 C 소유라 **측정 경험은 담당과 함께 남는다** —
+넘길 것은 두 가지다: proto 확정 내용과 `server/` 맥락을 **B(장지은)** 에게,
+커널 실측 맥락(`docs/experiments.md` · S1 방법론)을 **A(김강민)** 에게.
 
 **통합 마일스톤은 하나다.** 훅 하나(`sched_process_fork` 또는 `bprm_check_security`)
 → warrantd → 서버 → Grafana 패널까지 **"무영장 세션 한 건이 뜬다"를 4주 차에** 만든다.
