@@ -16,8 +16,28 @@ internal/policy/    경로 → (dev, ino) 컴파일. fanotify 로 재컴파일 �
 internal/ringbuf/   ringbuf consumer → 감사 이벤트 · dropped 카운터
 internal/upstream/  중앙 gRPC 클라이언트 (발급 push 수신 · 감사 업로드)
 internal/store/     bbolt. 중앙이 끊긴 동안의 영장·감사 로컬 보관
+internal/pb/        proto/*.proto 생성물 (커밋한다)
 bpf/                bpf2go 생성물 (커밋한다)
 ```
+
+## 소유 (2026-09-23 재배치)
+
+| 패키지 | 담당 |
+|---|---|
+| `loader` · `bpfmap` · `ringbuf` · `policy` | A · 김강민 (커널) |
+| `upstream` · `store` | B · 장지은 (서버·계약) |
+| `pamsock` · `cmd/warrantd` | C · 김종혁 (노드 통합) |
+
+**A ↔ B 의 경계는 gRPC 가 아니라 `bpfmap` 의 맵 레이아웃 하나다.** `upstream` 은 맵을 직접
+열지 않고 `bpfmap` 함수만 부른다. 값 구조체는 `proto/warrant.proto` 에서 나온다.
+
+## 상태
+
+**골격만 있다.** 패키지와 시그니처·주석은 있고 본문은 전부 `panic("미구현")` 이다.
+의존성도 아직 없다 — `go.mod` 에 require 가 비어 있고 표준 라이브러리만 쓴다.
+`go build ./...` · `go vet ./...` 는 통과한다.
+
+cilium/ebpf · grpc-go · bbolt 는 해당 패키지를 실제로 구현할 때 각자 추가한다.
 
 ## 규칙
 
