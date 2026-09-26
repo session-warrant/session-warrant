@@ -11,6 +11,28 @@ C · `pam_warrant.so`. sshd 주소 공간에 dlopen 되므로 **Go 런타임을 
 4. warrantd 에 유닉스 소켓으로 `(login_account, cgroup_id, host, auth_info 원문)` 을 넘긴다.
 5. 응답을 기다리지 않는다 — 태그를 맵에 박는 건 warrantd 의 몫이다.
 
+## 빌드 · 검증
+
+`bench/pamtiming` 과 같은 사다리다. 단계를 건너뛰지 않는다.
+
+```sh
+make check                              # 도구 · 모듈 디렉터리 · PrivateTmp
+make                                    # 빌드 + 심볼 검사 (pam_sm_* 6개, wr_* 노출 0)
+sudo make install                       # 모듈 디렉터리로 · 테스트 서비스 생성
+sudo make listen                        # ← 다른 터미널. warrantd 대신 받아 찍는다
+sudo make test                          # 1단계   세션 안
+sudo make test-detached                 # 1.5단계 세션 밖 — 실제 세션 번호 · cgroup id
+sudo I_CAN_RECOVER=1 make enable-sshd   # 3단계   복구 경로 확보 후에만
+sudo make disable                       # 넣은 줄 · 테스트 서비스 제거
+make status                             # 설치본이 최신인가 · sshd 에 들어가 있나
+```
+
+- 3단계의 새 접속은 **다중화 없이** 한다 (`ssh -o ControlPath=none …`). ControlMaster 로
+  다중화된 창은 PAM 세션을 새로 열지 않아 모듈이 안 불린다.
+- 제품 설치는 `socket=` 없이: `sudo I_CAN_RECOVER=1 make enable-sshd PAM_ARGS=`.
+- `.so` 는 빌드한 기계의 아키텍처 전용이다. 서브 PC 에서는 거기서 다시 빌드한다.
+- 검증 기록: `docs/experiments.md` S3 「후속」 (2026-09-26, Lima VM).
+
 ## 규칙
 
 - **fail-open.** warrantd 에 못 붙으면 **로그인을 허용**하고 무영장 세션으로 기록·경보한다.
