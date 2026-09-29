@@ -223,22 +223,25 @@ static __always_inline void fill_proc(struct warrant_proc *p)
 /* payload 는 호출부가 스택에 만들어 넘긴다.
  * verifier 가 상수 크기를 요구하므로 예약은 최대 크기로 고정한다. */
 static __always_inline void emit(__u16 hook, __u8 verdict, __u8 tag_source,
-				 __u64 wid, struct warrant *w,
+				 __u64 wid, struct warrant *w, __u8 origin,
 				 const void *payload, __u16 plen)
 {
+	/* 번호를 먼저 올린다. reserve 가 실패해도 번호는 소비된다 —
+	 * 그래야 소비자가 빠진 번호로 유실을 알아챈다. 성공한 뒤에 올리면
+	 * 드롭된 이벤트가 흔적 없이 사라지고 (cpu, cpu_seq) 가 무의미해진다. */
+	__u32 zero = 0;
+	__u64 seq = 0;
+	__u64 *p = bpf_map_lookup_elem(&cpu_seq, &zero);
+	if (p) {
+		*p += 1;
+		seq = *p;
+	}
+
 	struct warrant_evt *e = bpf_ringbuf_reserve(&events, WARRANT_EVT_MAX, 0);
 	if (!e)
 		return;
 
-	__u32 zero = 0;
-	__u64 *seq = bpf_map_lookup_elem(&cpu_seq, &zero);
-	if (seq) {
-		*seq += 1;
-		e->cpu_seq = *seq;
-	} else {
-		e->cpu_seq = 0;
-	}
-
+	e->cpu_seq     = seq;
 	e->boot_ts_ns  = bpf_ktime_get_boot_ns();
 	e->warrant_id  = wid;
 	e->cpu         = bpf_get_smp_processor_id();
@@ -247,7 +250,7 @@ static __always_inline void emit(__u16 hook, __u8 verdict, __u8 tag_source,
 	e->hook        = hook;
 	e->verdict     = verdict;
 	e->mode        = w ? w->mode : WARRANT_MODE_OBSERVE;
-	e->origin      = WARRANT_ORIGIN_LSM;
+	e->origin      = origin;
 	e->tag_source  = tag_source;
 	e->payload_len = plen;
 	__builtin_memset(e->_pad, 0, sizeof(e->_pad));
@@ -274,7 +277,8 @@ static __always_inline void emit(__u16 hook, __u8 verdict, __u8 tag_source,
  * 반드시 디렉터리여야 하고, 그 검사는 warrantd 의 policy 가 한다 (§15).
  */
 static __always_inline __u8 dentry_write_allowed(struct dentry *d, __u32 policy_id,
-						 __u32 *out_dev, __u64 *out_ino)
+						 struct warrant_fileref *self,
+						 struct warrant_fileref *evid)
 {
 	struct warrant_rule_key k = {};
 	k.policy_id = policy_id;
@@ -293,9 +297,18 @@ static __always_inline __u8 dentry_write_allowed(struct dentry *d, __u32 policy_
 			if (sb) {
 				bpf_probe_read_kernel(&k.dev, sizeof(k.dev), &sb->s_dev);
 
-				if (depth == 0 && out_dev && out_ino) {
-					*out_dev = k.dev;
-					*out_ino = k.ino;
+				/* inode_create 는 아직 없는 파일의 dentry 로 불린다 —
+				 * 그 dentry 에는 inode 가 없다. 증거 필드를 0 으로
+				 * 내보내면 기록이 아무것도 가리키지 못하므로,
+				 * 올라가다 처음 만나는 실제 inode(= 부모 디렉터리)를
+				 * 증거로 남긴다. */
+				if (depth == 0 && self) {
+					self->dev = k.dev;
+					self->ino = k.ino;
+				}
+				if (evid && evid->ino == 0) {
+					evid->dev = k.dev;
+					evid->ino = k.ino;
 				}
 
 				struct warrant_write_val *v =
@@ -336,28 +349,24 @@ static __always_inline int file_verdict(struct file *file, __u8 is_probe, __u8 o
 	__u8 denied;
 
 	struct warrant_pl_write pl = {};
-	__u32 dev = 0;
-	__u64 ino = 0;
 
 	if (val != 0) {
 		denied = 1;   /* 취소 · 만료 — 쓰기는 양쪽 다 죽는다 */
 		if (is_probe)
-			get_dev_ino_probe(file, &dev, &ino);
+			get_dev_ino_probe(file, &pl.file.dev, &pl.file.ino);
 		else
-			get_dev_ino(file, &dev, &ino);
+			get_dev_ino(file, &pl.file.dev, &pl.file.ino);
 	} else {
 		struct dentry *d = NULL;
 		bpf_probe_read_kernel(&d, sizeof(d), &file->f_path.dentry);
-		denied = !dentry_write_allowed(d, w->policy_id, &dev, &ino);
+		denied = !dentry_write_allowed(d, w->policy_id, &pl.file, &pl.parent);
 	}
 
 	/* 허용된 쓰기는 기록하지 않는다. 전건 남기면 ringbuf 가 넘친다 (§13). */
 	if (denied) {
-		pl.file.dev = dev;
-		pl.file.ino = ino;
 		bpf_probe_read_kernel(&pl.f_flags, sizeof(pl.f_flags), &file->f_flags);
 		emit(WARRANT_HOOK_FILE_OPEN, verdict_of(w, denied), tag, wid, w,
-		     &pl, sizeof(pl));
+		     origin, &pl, sizeof(pl));
 	}
 
 	if (origin == WARRANT_ORIGIN_KPROBE)
@@ -392,18 +401,17 @@ static __always_inline int inode_verdict(struct dentry *d, __u16 hook, __u8 op)
 	if (!w)
 		return 0;
 
-	__u32 dev = 0;
-	__u64 ino = 0;
+	struct warrant_pl_inode pl = {};
 	__u8 val = validity(w);
+	/* target 은 대상 자신(없을 수 있다), dir 은 증거로 쓸 수 있는 가장 가까운
+	 * 실제 inode 다. 생성처럼 대상이 아직 없으면 dir 만 채워진다. */
 	__u8 denied = val != 0 ? 1
-			       : !dentry_write_allowed(d, w->policy_id, &dev, &ino);
+			       : !dentry_write_allowed(d, w->policy_id, &pl.target, &pl.dir);
 
 	if (denied) {
-		struct warrant_pl_inode pl = {};
-		pl.target.dev = dev;
-		pl.target.ino = ino;
 		pl.op = op;
-		emit(hook, verdict_of(w, denied), tag, wid, w, &pl, sizeof(pl));
+		emit(hook, verdict_of(w, denied), tag, wid, w,
+		     WARRANT_ORIGIN_LSM, &pl, sizeof(pl));
 	}
 	return ret_of(w, denied);
 }
@@ -498,7 +506,7 @@ int BPF_PROG(warrant_bprm, struct linux_binprm *bprm, int ret)
 	pl.file.ino = ino;
 	pl.i_mode = bprm->file->f_inode->i_mode;   /* setuid 탐지 */
 	emit(WARRANT_HOOK_BPRM_CHECK_SECURITY, verdict_of(w, denied), tag, wid, w,
-	     &pl, sizeof(pl));
+	     WARRANT_ORIGIN_LSM, &pl, sizeof(pl));
 
 	return ret_of(w, denied);
 }
@@ -616,7 +624,7 @@ int BPF_PROG(warrant_connect, struct socket *sock, struct sockaddr *address,
 
 	/* connect 는 빈도가 낮아 허용도 기록한다 (§13). */
 	emit(WARRANT_HOOK_SOCKET_CONNECT, verdict_of(w, denied), tag, wid, w,
-	     &pl, sizeof(pl));
+	     WARRANT_ORIGIN_LSM, &pl, sizeof(pl));
 	return ret_of(w, denied);
 }
 
@@ -648,7 +656,7 @@ int BPF_PROG(warrant_fork, struct task_struct *parent, struct task_struct *child
 	pl.child_cgroup_id = cg;
 
 	emit(WARRANT_HOOK_SCHED_PROCESS_FORK, WARRANT_VERDICT_ALLOW, tag, *wid, w,
-	     &pl, sizeof(pl));
+	     WARRANT_ORIGIN_LSM, &pl, sizeof(pl));
 	return 0;
 }
 
@@ -679,7 +687,7 @@ static __always_inline int selfprotect(__u16 hook)
 	__u8 quiet = (last && now - *last < 1000000000ULL) ? 1 : 0;
 	if (!quiet) {
 		bpf_map_update_elem(&sp_seen, &k, &now, BPF_ANY);
-		emit(hook, verdict_of(w, 1), tag, wid, w, NULL, 0);
+		emit(hook, verdict_of(w, 1), tag, wid, w, WARRANT_ORIGIN_LSM, NULL, 0);
 	}
 
 	return ret_of(w, 1);
