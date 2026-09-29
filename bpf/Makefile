@@ -1,6 +1,7 @@
 # Session Warrant — BPF 빌드
 #
-#   make            smoke 스파이크 빌드
+#   make            smoke 스파이크 + 제품 판정 코드 빌드
+#   make test       판정 코드 동작 검증 (bpftool 로 맵을 직접 쓴다. Go 불필요)
 #   make V=1        실행되는 명령을 그대로 보여준다 (디버깅용)
 #   make check      툴체인 경로만 확인
 #   make vmlinux.h  이 커널의 BTF 덤프 (커밋하지 않는다 — 커널마다 다르다)
@@ -25,11 +26,11 @@ else
   Q := @
 endif
 
-.PHONY: all clean check
+.PHONY: all clean check test
 # 없으면 make 가 %.bpf.o · %.skel.h 를 중간 산출물로 보고 지운다 (bpftool 로 못 들여다본다).
 .SECONDARY:
 
-all: smoke
+all: smoke warrant.bpf.o
 
 vmlinux.h:
 	@test -r /sys/kernel/btf/vmlinux || { \
@@ -54,6 +55,11 @@ smoke: smoke.c smoke.skel.h
 	@echo "  CC    $@"
 	$(Q)$(CC) $(HOST_CFLAGS) -I. smoke.c -o $@ $(HOST_LDLIBS)
 	@echo "  실행: sudo ./bpf/smoke"
+
+# 영장 · 규칙을 bpftool 로 직접 넣고 명령이 실제로 막히는지 종료 코드로 본다.
+# 성능은 재지 않는다 — 그건 bench/ 담당이다.
+test: warrant.bpf.o
+	$(Q)cd .. && ./bpf/wtest.sh
 
 check:
 	@echo "CLANG   = $(CLANG)"

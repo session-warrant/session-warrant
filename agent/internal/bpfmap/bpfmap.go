@@ -4,14 +4,15 @@ package bpfmap
 // Warrant 는 warrants 맵의 값. bpf/warrant.bpf.h 의 struct warrant 와 바이트 단위로 같아야 한다.
 // 필드는 proto/warrant.proto 를 먼저 고친다.
 type Warrant struct {
-	ExpiresNs uint64 // boot 기준
-	GraceNs   uint64
-	SubjectID uint32
-	PolicyID  uint32
-	Revoked   uint8
-	Mode      uint8
-	OnExpiry  uint8
-	_         [5]byte // C 구조체와 크기를 맞추는 패딩
+	ExpiresNs  uint64 // boot 기준
+	GraceNs    uint64
+	SubjectID  uint32
+	PolicyID   uint32
+	Revoked    uint8
+	Mode       uint8
+	OnExpiry   uint8
+	BreakGlass uint8   // 자기보호 5종을 통과하는 유일한 영장. 일반 발급 경로로는 못 켠다
+	_          [4]byte // C 구조체와 크기를 맞추는 패딩
 }
 
 // FileRef 는 rule_* 키의 뒷부분. inode 번호는 파일시스템 안에서만 유일하므로 dev 를 빼면 안 된다.
