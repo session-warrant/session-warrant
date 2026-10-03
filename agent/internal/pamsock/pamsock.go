@@ -8,7 +8,19 @@
 // 값이 없으면 "-". 형식은 pam/pam_warrant.c 와 같이 고친다.
 package pamsock
 
-import "context"
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io/fs"
+	"log"
+	"net"
+	"os"
+	"strconv"
+	"strings"
+
+	"golang.org/x/crypto/ssh"
+)
 
 type Request struct {
 	Op           string // OPEN · CLOSE
@@ -19,29 +31,163 @@ type Request struct {
 	AuthInfo     string // SSH_AUTH_INFO_0 원문. 여러 줄 · 끝 공백 가능
 }
 
-// Server 의 소켓은 root 전용(0600)이고, 보낸 쪽 uid 가 0 이 아니면 버린다.
-// 공개키는 비밀이 아니라서 메시지 내용만으로는 위조를 막을 수 없다.
-type Server struct{}
+type Server struct {
+	conn *net.UnixConn
+}
 
 func Listen(socketPath string) (*Server, error) {
-	panic("미구현")
+	if err := os.Remove(socketPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("pamsock: remove %s: %w", socketPath, err)
+	}
+
+	la, err := net.ResolveUnixAddr("unixgram", socketPath)
+	if err != nil {
+		return nil, fmt.Errorf("pamsock: resolve %s: %w", socketPath, err)
+	}
+
+	conn, err := net.ListenUnixgram("unixgram", la)
+	if err != nil {
+		return nil, fmt.Errorf("pamsock: listen %s: %w", socketPath, err)
+	}
+
+	if err := os.Chmod(socketPath, 0o600); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("pamsock: chmod %s: %w", socketPath, err)
+	}
+
+	return &Server{conn: conn}, nil
 }
 
-// Serve 는 수신 큐를 빨리 비운다. 큐가 차면 PAM 쪽 sendto 가 조용히 실패한다.
 func (s *Server) Serve(ctx context.Context, b Binder) error {
-	panic("미구현")
+	stop := context.AfterFunc(ctx, func() { s.conn.Close() })
+	defer stop()
+
+	buf := make([]byte, 4096)
+	for {
+		n, err := s.conn.Read(buf)
+
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			return err
+		}
+
+		req, err := parse(buf[:n])
+		if err != nil {
+			log.Printf("%v", err)
+			continue
+		}
+
+		switch req.Op {
+		case "OPEN":
+			if _, err := b.Bind(ctx, req); err != nil {
+				log.Printf("pamsock: bind cgroup %d: %v", req.CgroupID, err)
+				continue
+			}
+
+		case "CLOSE":
+			if req.CgroupID == 0 {
+				continue
+			}
+			if err := b.Unbind(ctx, req.CgroupID); err != nil {
+				log.Printf("pamsock: unbind cgroup %d: %v", req.CgroupID, err)
+				continue
+			}
+
+		}
+	}
+
 }
 
-// Binder 의 구현은 cmd/warrantd 가 조립한다.
+// Called by Serve for each datagram.
+// Parses one datagram into a Request.
+func parse(b []byte) (Request, error) {
+	s := strings.TrimSuffix(string(b), "\n")
+
+	op, rest, ok := strings.Cut(s, "\t")
+	if !ok {
+		return Request{}, fmt.Errorf("pamsock: no fields (%d bytes)", len(b))
+	}
+
+	switch op {
+	case "OPEN":
+		f := strings.SplitN(rest, "\t", 5)
+		if len(f) != 5 {
+			return Request{}, fmt.Errorf("pamsock: OPEN: want 5 fields, got %d", len(f))
+		}
+		cgid, err := parseCgroupID(f[1])
+		if err != nil {
+			return Request{}, err
+		}
+		return Request{
+			Op:           op,
+			SessionID:    orEmpty(f[0]),
+			CgroupID:     cgid,
+			LoginAccount: orEmpty(f[2]),
+			RHost:        orEmpty(f[3]),
+			AuthInfo:     orEmpty(f[4]),
+		}, nil
+
+	case "CLOSE":
+		f := strings.Split(rest, "\t")
+		if len(f) != 2 {
+			return Request{}, fmt.Errorf("pamsock: CLOSE: want 2 fields, got %d", len(f))
+		}
+		cgid, err := parseCgroupID(f[1])
+		if err != nil {
+			return Request{}, err
+		}
+		return Request{Op: op, SessionID: orEmpty(f[0]), CgroupID: cgid}, nil
+
+	default:
+		return Request{}, fmt.Errorf("pamsock: unknown op %q", op)
+	}
+}
+
+// Called by parse.
+// Reads cgroup_id; "-" returns 0.
+func parseCgroupID(v string) (uint64, error) {
+	if v == "-" {
+		return 0, nil
+	}
+	id, err := strconv.ParseUint(v, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("pamsock: cgroup_id: %w", err)
+	}
+	return id, nil
+}
+
+func orEmpty(v string) string {
+	if v == "-" {
+		return ""
+	}
+	return v
+}
+
+// Implement at cmd/warrantd
 type Binder interface {
-	// Bind 는 (hostname, login_account, 공개키 지문) 셋이 다 맞는 영장에 잇는다.
-	// 못 찾으면 무영장으로 기록할 뿐 에러가 아니다.
 	Bind(ctx context.Context, r Request) (warrantID uint64, err error)
 	Unbind(ctx context.Context, cgroupID uint64) error
 }
 
-// Fingerprint 는 publickey 줄에서 ssh-keygen -lf 와 같은 "SHA256:..." 를 만든다.
-// 인증서면 안의 공개키 지문. 빈 값은 "매칭 안 함"이지 와일드카드가 아니다.
+// Called by the Binder in cmd/warrantd.
+// Returns "SHA256:..." of the publickey line's key (inner key for certs), or "" if none.
 func Fingerprint(authInfo string) (string, error) {
-	panic("미구현")
+	for _, line := range strings.Split(authInfo, "\n") {
+		key, ok := strings.CutPrefix(line, "publickey ")
+		if !ok {
+			continue
+		}
+		pub, _, _, _, err := ssh.ParseAuthorizedKey([]byte(key))
+		if err != nil {
+			return "", fmt.Errorf("pamsock: fingerprint: %w", err)
+		}
+		if cert, ok := pub.(*ssh.Certificate); ok {
+			pub = cert.Key //인증서 방식
+			// !ok 일 경우 일반키 방식
+		}
+		return ssh.FingerprintSHA256(pub), nil
+	}
+	return "", nil
 }
