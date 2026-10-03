@@ -62,7 +62,7 @@ func (s *Server) Serve(ctx context.Context, b Binder) error {
 	stop := context.AfterFunc(ctx, func() { s.conn.Close() })
 	defer stop()
 
-	buf := make([]byte, 4096)
+	buf := make([]byte, 8192) // = WR_LINE_MAX in pam/pam_warrant.c
 	for {
 		n, err := s.conn.Read(buf)
 

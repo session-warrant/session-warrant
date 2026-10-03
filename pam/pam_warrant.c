@@ -11,12 +11,14 @@
 
 #include <security/pam_appl.h> 
 #include <security/pam_modules.h>
+#include <security/pam_ext.h>
 #include <sys/un.h>
+#include <syslog.h>
 
 
 #define WR_SOCKET   "/run/warrantd/pam.sock"
 #define WR_CGROOT "/sys/fs/cgroup"
-#define WR_LINE_MAX 2048
+#define WR_LINE_MAX 8192   // = pamsock Serve buffer
 
 
 static const char *wr_socket_path(int argc, const char** argv)
@@ -86,35 +88,31 @@ static uid_t wr_uid(const char* user)
     return pw ? pw->pw_uid : (uid_t)-1;
 }
 
-static void wr_sanitize_field(char *str)
-{
-    for(; *str; str++){
-        if(*str == '\t' || *str == '\n' || *str == '\r') *str = ' ';
-    }
-}
-
-
 int pam_sm_open_session(pam_handle_t *pamh, int flags, int argc, const char** argv){
 
-    char line[WR_LINE_MAX], auth[WR_LINE_MAX / 2] ;
+    char line[WR_LINE_MAX];
 
     const char * user = wr_item(pamh, PAM_USER);
     const char * rhost = wr_item(pamh, PAM_RHOST);
     const char * sid = pam_getenv(pamh, "XDG_SESSION_ID");
-    const char* auth_info;
-    uid_t uid = wr_uid(user);
+    const char * auth = pam_getenv(pamh, "SSH_AUTH_INFO_0");
+    unsigned long long cgid = wr_cgid(wr_uid(user), sid);
+    int n;
 
     (void)flags;
 
-    auth_info = pam_getenv(pamh, "SSH_AUTH_INFO_0");
-    snprintf(auth, sizeof(auth) , "%s", auth_info ? auth_info : "-");
-    wr_sanitize_field(auth);
+    if(!sid || !*sid) sid = "-";
+    if(!auth) auth = "-";
 
-    snprintf(line, sizeof(line), "OPEN\t%s\t%llu\t%s\t%s\t%s\n",
-            (sid && *sid)? sid:"-",
-            wr_cgid(uid, sid),
-            user,rhost,auth);
-    
+    n = snprintf(line, sizeof(line), "OPEN\t%s\t%llu\t%s\t%s\t%s\n",
+            sid, cgid, user, rhost, auth);
+    if(n < 0) return PAM_SUCCESS;
+    if((size_t)n >= sizeof(line)){
+        pam_syslog(pamh, LOG_WARNING, "auth info too long (%d bytes), sent as -", n);
+        snprintf(line, sizeof(line), "OPEN\t%s\t%llu\t%s\t%s\t-\n",
+                sid, cgid, user, rhost);
+    }
+
     wr_send(wr_socket_path(argc, argv), line);
     return PAM_SUCCESS;   
 }
