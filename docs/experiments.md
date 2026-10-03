@@ -737,8 +737,15 @@ openssh-portable `auth-pam.c` 의 `do_pam_session()` 이 `expose_authinfo()` 를
 
 - **auth info 끝에 공백이 붙는다.** sshd 는 방식마다 한 줄(`\n` 종료)을 쓰고
   (`auth2.c` `auth2_update_session_info`), 모듈의 필드 정리가 그 `\n` 을 공백으로
-  바꿨다. warrantd 파서는 앞뒤 공백을 잘라야 한다. 모듈이 `publickey` 줄 하나만 골라
-  보내게 하면(남은 TODO) 같이 사라진다.
+  바꿨다. ~~warrantd 파서는 앞뒤 공백을 잘라야 한다. 모듈이 `publickey` 줄 하나만 골라
+  보내게 하면(남은 TODO) 같이 사라진다.~~
+  **→ 정정 (2026-10-03, `9e329dd`): 치환이 버그였다. 공백을 자를 일이 아니다.**
+  `password,publickey` 처럼 두 방식을 거치면 두 줄이 `password publickey ssh-…` 한 줄로
+  합쳐져, 지문 계산이 `publickey` 줄을 못 찾는다 — 키가 있는데 `REASON_NO_KEY` 가 된다.
+  auth info 는 데이터그램의 마지막 필드라 `pamsock.parse` 가 `SplitN(…, 5)` 로 탭 ·
+  줄바꿈을 그대로 보존한다. 그래서 모듈은 **원문을 손대지 않고** 보내고, `publickey`
+  줄 고르기는 Go 쪽 `pamsock.Fingerprint` 가 한다(`fda07f0`). 수정 뒤 3단계를 다시 타면
+  `OPEN` 줄 끝이 `…AAAA\n\n` 이어야 한다(auth info 의 `\n` + 프레임 `\n`). **아직 안 돌렸다.**
 
 - **세션 번호는 숫자가 아닐 수 있다 — `c1`.** systemd `logind-dbus.c` 의
   `manager_choose_session_id()` 는 **호출자의 커널 audit 세션 id 를 세션 번호로
@@ -779,8 +786,16 @@ openssh-portable `auth-pam.c` 의 `do_pam_session()` 이 `expose_authinfo()` 를
 #### 모듈에 남은 것
 
 - `SSH_AUTH_INFO_0` 이 빈 문자열이면 `-` 로 바꾸지 않는다 (sshd 는 인증 정보가
-  없으면 변수를 지우지 않고 `""` 을 넣는다 — `auth-pam.c` `expose_authinfo`)
-- `publickey` 줄만 고르기 · auth / line 버퍼 잘림 확인 (RSA 인증서는 1024 바이트를 넘는다)
+  없으면 변수를 지우지 않고 `""` 을 넣는다 — `auth-pam.c` `expose_authinfo`).
+  코드는 `NULL` 일 때만 `-` 로 바꾼다. 빈 문자열은 지문 `""` → `REASON_NO_KEY`. 미실측.
+- ~~`publickey` 줄만 고르기~~ — 모듈에서 하지 않는다. 위 정정 참조.
+- ✔ 버퍼 잘림 (`9e329dd`) — auth 복사 버퍼(1024)를 없애고 `WR_LINE_MAX` 2048 → 8192,
+  `pamsock` 수신 버퍼도 8192 로 맞췄다(**두 값은 같아야 한다** — 수신 쪽이 작으면
+  데이터그램이 조용히 잘린다). 그래도 넘치면 잘린 키 대신 auth 를 `-` 로 보내고
+  `pam_syslog` 로 경고한다. 넘침 판정은 9,000바이트 입력으로 확인했다. **RSA 인증서
+  실물로는 안 쟀다** — 8192 는 RSA-4096 키 · RSA-4096 CA 인증서(base64 ≈ 2.3KB)에서 계산한 여유다.
+- **수정 뒤 3단계 재확인** — 위 두 수정은 VM 에서 `-Werror` 빌드 · `nm` 까지만 봤다.
+  1단계(`pamtester`)는 auth info 가 `-` 라 수정 전후 출력이 같다. sshd 를 거쳐야 보인다.
 - 4단계의 나머지 둘(경로 108자 초과 · 모듈 파일 없음)은 안 돌렸다
 
 ---
@@ -836,8 +851,9 @@ Spring context는 **한 번도 뜬 적이 없다.** 컴파일만 됐고 datasour
    `bench/overhead/gate.bpf.c` 의 `oh_decide()` 가 초안이다.
 3. **`pam/pam_warrant.so`** — S3 이 방법을 확정했다. `XDG_SESSION_ID` → 경로 →
    `stat` → warrantd 에 유닉스 소켓. **fail-open** 이어야 한다 (§17).
-   → 초안 완료 · Lima VM 에서 sshd 까지 검증 (2026-09-26, S3 「후속」). 다음은
-   수신 쪽 `agent/internal/pamsock`.
+   → 초안 완료 · Lima VM 에서 sshd 까지 검증 (2026-09-26, S3 「후속」).
+   수신 쪽 `agent/internal/pamsock` 도 구현됨 (`fda07f0` · `9e329dd`). 다음은
+   수정 뒤 3단계 재확인과 `cmd/warrantd` 의 `Binder` 구현.
 4. **S2 재실행** — 진짜 `session-N.scope` 로. `helpers.bash` 만 교체하고 케이스는
    손대지 않는다. 그리고 `bench/bypass/out/` 이 비어 있으니 그때 채운다.
 5. **S4 — inode 안정성.** `apt upgrade` · `vim` 저장(write-new+rename) ·
