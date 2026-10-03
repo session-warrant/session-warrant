@@ -695,6 +695,94 @@ logind 가 번호를 반납하고 다음 세션이 같은 번호를 다시 받�
 1·2단계가 그걸 걸러낸다. 원본은 `.warrant-bak` 로 백업되고 `make disable` 이
 복원한다.
 
+### 후속 — `pam_warrant.so` 실물 · `SSH_AUTH_INFO_0` (2026-09-26, Lima VM)
+
+S3 은 "session 단계에 scope 가 있는가"만 쟀다. 제품 모듈이 나오면서 남은 가정 하나가
+실물 앞에 섰다 — **공개키 원문 `SSH_AUTH_INFO_0` 이 `pam_sm_open_session` 시점에
+PAM 환경에 있는가.** `proto/README.md` 미해결 1(공유 계정에서 사람을 가르는
+`ssh_key_fingerprints`)이 기대던 마지막 미실측이었다.
+
+**환경:** 맥북의 Lima VM `sw` — Ubuntu 24.04.4 · 커널 6.8.0-142 · aarch64.
+모듈은 `pam` 브랜치 `0a26671`. 수신기는 warrantd 대신 `/tmp/warrant-test.sock`
+(`SOCK_DGRAM`, 0600 root)에 받은 데이터그램을 그대로 찍는 Python 한 줄.
+성능 측정이 아니라 동작 확인이라 VM 결과로 판정하되, **서브 PC 첫 배포 때 3단계를
+한 번 반복한다.** OpenSSH 버전은 기록하지 않았다(`dpkg -l openssh-server` 로 채울 것).
+
+S3 과 같은 사다리를 탔다. 3단계 전에 VM 을 끄고 디스크를 `cp -c` 로 복제해
+뒀다 — Lima 는 콘솔이 없고 `limactl shell` 도 VM 안의 sshd 를 거친다.
+
+| | 방법 | 수신기에 온 것 | 판정 |
+|---|---|---|---|
+| 0 | `-Wall -Wextra -Werror` 빌드 · `nm -D` | `pam_sm_*` 정확히 6개, `wr_*` 노출 0 | ✔ |
+| 1 | `pamtester` (세션 안) | `OPEN\t-\t0\tjonnykim\t-\t-` · `CLOSE\t-\t0` | ✔ 로드 · 형식 · `argv` |
+| 1.5 | `systemd-run --scope --slice=system.slice pamtester` | `OPEN\tc1\t4948…` · `CLOSE\tc1\t4948` | ✔ 세션 번호 · cgroup id |
+| 3 | `/etc/pam.d/sshd` 의 `@include common-session` 바로 뒤, 맥에서 접속 | 아래 | **✔** |
+| 4 | 수신기 소켓 파일을 지우고 맥에서 접속 | (없음) | ✔ 로그인 됨 |
+
+3단계 한 건을 세션 안에서 뽑은 값과 맞췄다:
+
+| 필드 | `OPEN` 줄 | 세션 안 실측 |
+|---|---|---|
+| 세션 번호 | `6` | `$XDG_SESSION_ID` = 6 |
+| cgroup id | `5092` | `stat -c %i` = 5092 · `CLOSE` 도 5092 |
+| 출발지 | `192.168.5.2` | Lima 쪽 맥 주소 (맥은 127.0.0.1 로 붙었다) |
+| auth info | `publickey ssh-ed25519 AAAAC3Nz…+8N4 ` | 지문 `SHA256:lratyNLD…hlX/E` = Lima 키 `~/.lima/_config/user.pub` |
+
+**`SSH_AUTH_INFO_0` 은 open_session 시점에 있고, 실제로 인증에 쓴 키와 일치한다.**
+openssh-portable `auth-pam.c` 의 `do_pam_session()` 이 `expose_authinfo()` 를
+`pam_open_session()` 보다 먼저 부르는 순서가 이 빌드에서도 참이었다. 대안 경로
+(`ExposeAuthInfo` → `SSH_USER_AUTH`)는 필요 없다.
+
+#### 같이 나온 것
+
+- **auth info 끝에 공백이 붙는다.** sshd 는 방식마다 한 줄(`\n` 종료)을 쓰고
+  (`auth2.c` `auth2_update_session_info`), 모듈의 필드 정리가 그 `\n` 을 공백으로
+  바꿨다. warrantd 파서는 앞뒤 공백을 잘라야 한다. 모듈이 `publickey` 줄 하나만 골라
+  보내게 하면(남은 TODO) 같이 사라진다.
+
+- **세션 번호는 숫자가 아닐 수 있다 — `c1`.** systemd `logind-dbus.c` 의
+  `manager_choose_session_id()` 는 **호출자의 커널 audit 세션 id 를 세션 번호로
+  쓰고**, 없거나 이미 쓰이고 있으면 `c` + 카운터로 만든다. 1.5단계의 테스트 서비스에는
+  `pam_loginuid.so` 가 없어서 새 audit id 가 안 생겼고, 호출자가 물려준 id 는 이미
+  그 ssh 세션이 쓰고 있어 `c1` 이 됐다. sshd 스택은 `pam_loginuid.so` 가
+  `common-session` 앞에 있어서 두 값이 같다 — 3단계 `6/6`, 기존 세션 `4/4`
+  (`$XDG_SESSION_ID` / `/proc/self/sessionid`).
+  → **`pamsock` 은 세션 번호를 문자열로 다룬다. 정수로 파싱하지 않는다.**
+
+- **⚠ 위 3차의 "재사용" 설명은 메커니즘이 틀렸을 가능성이 크다 (미확인).**
+  "세션이 끝나면 logind 가 번호를 반납하고 다음 세션이 다시 받는다"고 적었지만,
+  logind 는 카운터를 되돌리지 않고 audit id 를 우선 쓴다. 3차의 세 번은 모두 같은
+  터미널에서 `systemd-run --scope` 로 불렀으니, **셋 다 같은 audit 세션 id 를
+  물려받아 같은 번호가 나왔다**는 쪽이 소스와 맞는다.
+  **결론은 그대로다** — 같은 세션 번호가 서로 다른 cgroup 을 가리키는 일은 실제로
+  일어났고, audit id 를 물려받는 경로 · `c` 카운터 · 재부팅을 생각하면 세션 번호는
+  여전히 키가 될 수 없다. 확인하려면
+  `sudo systemd-run --scope --slice=system.slice cat /proc/self/sessionid` 가
+  호출한 셸의 값과 같은지 본다.
+
+- **ControlMaster 로 다중화된 접속은 PAM 세션을 새로 열지 않는다.** Lima 의 ssh
+  설정이 ControlMaster 를 켜 둬서, 두 번째 `ssh lima-sw` 는 기존 연결 위에 채널만
+  열었다(`Shared connection to 127.0.0.1 closed.`). 인증도 `pam_open_session` 도
+  없었고, 새 셸은 **모듈을 넣기 전에 열린** 세션 4 의 cgroup(4642)에 그대로 들어갔다.
+  `-o ControlPath=none` 으로 새로 연결하자 정상적으로 `OPEN` 이 왔다.
+  → 창 수와 PAM 세션 수는 다르다. 그리고 **모듈 배포 전에 열린 연결 위의 창은 계속
+  태그가 없다** — ControlPersist 면 몇 시간씩. proto 의 `REASON_PAM_ABSENT` 가 이
+  경우이고, warrantd 는 기동 때 기존 `session-*.scope` 를 훑어 이런 세션을 찾아야 한다.
+
+- **`sudo -i` 뒤에도 cgroup id 와 audit 세션 id 는 그대로다.** root 셸에서
+  `$XDG_SESSION_ID` 는 비었지만(환경 초기화) cgroup 4642 · audit id 4 는 로그인 때
+  값이었다. S2 의 `sudo` → `cg_tag=1` 을 손으로 본 것이다.
+
+- **출발지는 직접 붙은 쪽이다.** 맥은 `127.0.0.1:51022` 로 붙었는데 VM 은
+  `192.168.5.2` 로 봤다. `PAM_RHOST` 를 신원 판단에 쓰지 않는 이유의 작은 실례.
+
+#### 모듈에 남은 것
+
+- `SSH_AUTH_INFO_0` 이 빈 문자열이면 `-` 로 바꾸지 않는다 (sshd 는 인증 정보가
+  없으면 변수를 지우지 않고 `""` 을 넣는다 — `auth-pam.c` `expose_authinfo`)
+- `publickey` 줄만 고르기 · auth / line 버퍼 잘림 확인 (RSA 인증서는 1024 바이트를 넘는다)
+- 4단계의 나머지 둘(경로 108자 초과 · 모듈 파일 없음)은 안 돌렸다
+
 ---
 
 ## 부수 검증 — `server/` 빌드 (2026-09-01)
@@ -748,6 +836,8 @@ Spring context는 **한 번도 뜬 적이 없다.** 컴파일만 됐고 datasour
    `bench/overhead/gate.bpf.c` 의 `oh_decide()` 가 초안이다.
 3. **`pam/pam_warrant.so`** — S3 이 방법을 확정했다. `XDG_SESSION_ID` → 경로 →
    `stat` → warrantd 에 유닉스 소켓. **fail-open** 이어야 한다 (§17).
+   → 초안 완료 · Lima VM 에서 sshd 까지 검증 (2026-09-26, S3 「후속」). 다음은
+   수신 쪽 `agent/internal/pamsock`.
 4. **S2 재실행** — 진짜 `session-N.scope` 로. `helpers.bash` 만 교체하고 케이스는
    손대지 않는다. 그리고 `bench/bypass/out/` 이 비어 있으니 그때 채운다.
 5. **S4 — inode 안정성.** `apt upgrade` · `vim` 저장(write-new+rename) ·
