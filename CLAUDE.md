@@ -44,24 +44,31 @@ SSH 세션에 범위·유효기간을 가진 **영장(warrant)** 을 붙이고, 
 하나라도 빠진 채 `-EPERM`을 켜면 verifier를 통과한 버그 하나로 자기 박스에서
 잠긴다. 이 순서는 일정과 무관하게 지킨다.
 
-## 현재 상태 (2026-09-08)
+## 현재 상태 (2026-10-06)
 
 **S0 · S1 · S2 · S3 전부 통과. 남은 스파이크는 S4 뿐이고, 그건 제품 코드와 병행 가능하다.**
 BPF LSM이 붙고 돌고, 쓰기 포화 조건에서 오버헤드가 **1% 미만**이며, 태그 두 겹이 §04 표대로 동작하고,
 PAM session 단계에서 `session-N.scope` 가 이미 확정돼 있다(태깅 공백 없음).
 실험 경위 전체는 `docs/experiments.md` 에 있다.
 
+**부품은 절반쯤 있고, 끝에서 끝까지 도는 경로는 아직 없다.** 4주 차 마일스톤
+("무영장 세션 한 건이 뜬다")의 경로에서 커널만 돈다:
+커널 훅 ✔ → `loader` ✗ → `warrantd` ✗ → `upstream` ✗ → 서버 gRPC ✗ → DB(스키마만) → Grafana ✗
+
 | 계층 | 상태 |
 |---|---|
-| `bpf/` | `smoke.bpf.c` + 로더 — **동작 확인됨**. 제품 코드는 아직 없다 |
-| `deploy/` | `bootstrap.sh` · `enable-bpf-lsm.sh` — 동작 |
-| `server/` | Java 클래스 골격 52개 (시그니처 + 의사코드 주석, 본문 미구현). **빌드·의존성 해결 확인됨** — `bootJar` 까지 통과 |
-| `bench/overhead/` | S1 하네스 — 3차 실행 완료(티어 E 포함). **최악 조건 1% 미만 — S1 통과** |
+| `bpf/` | 제품 판정 코드 `warrant.bpf.{c,h}` — **훅 15개**(자기보호 5훅 포함, 6번째는 warrantd 파일 `rule_write` DENY). `wtest.sh` 로 **29/29 통과**(커널 7.0 VM, bpftool 로 맵 직접 기록). `-EPERM` 은 영장 `mode=ENFORCE` 로만 열린다 — 발급 안 하면 감사 모드. 없음: `socket_sendmsg` · `file_open` 외 `kprobe` 미러. 알려진 구멍: `/dev/null` 쓰기가 막혀 `nohup` 이 죽는다(기본 허용 세트 필요) |
+| `proto/` | **확정** (2026-09-23) — `warrant` · `agent` · `audit` 3파일 |
+| `pam/` | `pam_warrant.c` 141줄 — Lima VM 에서 sshd 3단계까지 검증(2026-09-26). auth info 원문 전달 · 버퍼 8192 수정(`9e329dd`) 뒤 **sshd 재확인 남음** |
+| `agent/` | **8개 중 3개 구현** — `bpfmap` · `ringbuf`(A) · `pamsock`(C, 테스트 31건). `loader` · `policy`(A) · `store` · `upstream`(B) · `cmd/warrantd`(C) 는 `panic("미구현")`. 리눅스 전용 상수 때문에 **맥에서는 빌드 안 된다** — `GOOS=linux` 로 확인 |
+| `server/` | Java 51클래스 — 엔티티 · 리포지토리 · 설정 · Flyway V1 은 있고, `api` · `application` · `grpc` · `crypto` · `slack` 27클래스는 본문 미구현. **테스트 0개.** `bootJar` 까지 빌드됨, `bootRun` 은 아직 안 뜬다 |
+| `deploy/` | `bootstrap.sh` · `enable-bpf-lsm.sh` — 동작. `systemd/` · `ansible/` 은 비어 있다 — warrantd 유닛(`Before=sshd.service` · `RuntimeDirectoryMode=0700`) 필요 |
+| `bench/overhead/` | S1 하네스 — 6차까지(읽기 감시 R · I · I2 포함). **최악 조건 1% 미만 — S1 통과** |
 | `bench/bypass/` | S2 §04 표 = bats 13케이스 + §18 4구멍(skip). **8 통과 · 0 실패**, 출력 커밋됨. 진짜 세션으로 재확인 남음 |
 | `bench/pamtiming/` | S3 하네스 — **통과**. sshd 11/11, 태깅 공백 없음 |
 | `bench/inode/` | S4 하네스 — fanotify 감시자 + 변형 카탈로그. **아직 안 돌렸다** |
-| `web/` | 감사 4화면(개요·검색·세션 타임라인·무영장). React 19 + shadcn, **빌드 확인됨**. 목 데이터 |
-| `proto/` `agent/` `pam/` | 디렉터리 + `README.md` 만. 코드 없음 |
+| Grafana | 없음 — 화면은 이걸로 대체하기로 했다 |
+| `web/` | **범위 밖, 동결.** 감사 4화면, React 19 + shadcn, 목 데이터 |
 
 각 디렉터리의 `README.md` 에 그 계층이 지켜야 할 제약이 적혀 있다. 작업 전에 해당 README를 먼저 읽을 것.
 
