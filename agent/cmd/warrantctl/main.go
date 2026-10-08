@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/session-warrant/session-warrant/agent/internal/bpfmap"
+	"github.com/session-warrant/session-warrant/agent/internal/policy"
 	"github.com/session-warrant/session-warrant/agent/internal/ringbuf"
 )
 
@@ -108,49 +109,42 @@ func run(pinDir string, o opts) error {
 		return err
 	}
 
+	// 규칙은 policy 를 거친다. 경로→inode 변환도, 기본 허용 세트도,
+	// 위험한 조합 경고도 전부 거기 있다 — 여기서 맵에 직접 쓰지 않는다.
+	spec := policy.Spec{Name: "warrantctl"}
+	for _, x := range o.allowExec {
+		spec.ExecRules = append(spec.ExecRules, policy.ExecRule{Path: x})
+	}
+	for _, x := range o.allowWrite {
+		spec.WriteRules = append(spec.WriteRules,
+			policy.WriteRule{Path: x, Effect: policy.EffectAllow, Recursive: true})
+	}
+	for _, x := range o.denyWrite {
+		spec.WriteRules = append(spec.WriteRules,
+			policy.WriteRule{Path: x, Effect: policy.EffectDeny, Recursive: true})
+	}
+	for _, x := range o.allowNet {
+		spec.NetRules = append(spec.NetRules, policy.NetRule{CIDR: x})
+	}
+
+	compiled, err := policy.Compile(policyID, spec)
+	if err != nil {
+		return err
+	}
+	for _, msg := range compiled.Warnings {
+		fmt.Fprintf(os.Stderr, "  %s %s\n", paint(o.color, cAmber, "경고"), msg)
+	}
+	if err := compiled.Apply(m); err != nil {
+		return err
+	}
+
 	// 이름 표에 담아두면 로그에서 inode 대신 경로가 보인다.
 	names := map[bpfmap.FileRef]string{}
-	remember := func(p string, r bpfmap.FileRef) { names[r] = p }
-
-	for _, p := range o.allowExec {
-		r, err := bpfmap.FileRefOf(p)
-		if err != nil {
-			return err
-		}
-		if err := m.PutExecRule(policyID, r); err != nil {
-			return err
-		}
-		remember(p, r)
-		logf(o.color, "  exec   allow  %s", p)
+	for _, src := range compiled.Sources {
+		names[src.Ref] = src.Path
 	}
-	for _, p := range o.allowWrite {
-		r, err := bpfmap.FileRefOf(p)
-		if err != nil {
-			return err
-		}
-		if err := m.PutWriteRule(policyID, r, true, true); err != nil {
-			return err
-		}
-		remember(p, r)
-		logf(o.color, "  write  allow  %s", p)
-	}
-	for _, p := range o.denyWrite {
-		r, err := bpfmap.FileRefOf(p)
-		if err != nil {
-			return err
-		}
-		if err := m.PutWriteRule(policyID, r, false, true); err != nil {
-			return err
-		}
-		remember(p, r)
-		logf(o.color, "  write  DENY   %s", p)
-	}
-	for _, c := range o.allowNet {
-		if err := m.PutNetRule(policyID, c, 0, bpfmap.ProtoAny); err != nil {
-			return err
-		}
-		logf(o.color, "  net    allow  %s", c)
-	}
+	logf(o.color, "  규칙 %d개 (실행 %d · 쓰기 %d · 네트워크 %d)",
+		len(compiled.Sources), len(compiled.Exec), len(compiled.Write), len(compiled.Net))
 
 	if o.cgroup != 0 {
 		if err := m.TagCgroup(o.cgroup, warrantID); err != nil {
@@ -182,6 +176,31 @@ func run(pinDir string, o opts) error {
 			}
 		}()
 	}
+
+	// 규칙이 가리키던 파일이 갈리면 그 규칙은 조용히 무효가 된다 (S4).
+	watcher, err := policy.NewWatcher()
+	if err != nil {
+		return err
+	}
+	defer watcher.Close()
+	_ = watcher.OnChange(func(id uint32) {
+		fmt.Fprintf(os.Stderr, "%s %s 정책 %d 의 inode 가 바뀌었다 — 다시 컴파일한다\n",
+			stamp(time.Now()), paint(o.color, cAmber, "⟳"), id)
+		nc, err := policy.Compile(id, spec)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "  재컴파일 실패:", err)
+			return
+		}
+		if err := nc.Apply(m); err != nil {
+			fmt.Fprintln(os.Stderr, "  재적용 실패:", err)
+			return
+		}
+		for _, src := range nc.Sources {
+			names[src.Ref] = src.Path
+		}
+		_ = watcher.Watch(nc)
+	})
+	_ = watcher.Watch(compiled)
 
 	c, err := ringbuf.Open(pinDir)
 	if err != nil {
