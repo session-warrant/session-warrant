@@ -145,6 +145,10 @@ The kernel decides using only those maps. **No user-space round trip at
 decision time.** If the central server is unreachable or `warrantd` dies,
 already issued warrants keep expiring and enforcing.
 
+![Session Warrant target architecture](docs/architecture.png)
+
+*Target architecture. Source: [`docs/architecture.drawio`](docs/architecture.drawio) (open with draw.io).*
+
 ```
  CONTROL PLANE               NODE · USER SPACE                 NODE · KERNEL
  ┌──────────────────┐        ┌──────────────────┐             ┌──────────────────────────┐
