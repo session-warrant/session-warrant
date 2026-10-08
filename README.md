@@ -1,5 +1,7 @@
 # Session Warrant
 
+**English** | [한국어](README.ko.md)
+
 **Scoped, time-limited SSH access, enforced by the kernel instead of the shell.**
 
 Session Warrant attaches a *warrant* to every SSH session: who is logging in,
@@ -10,11 +12,13 @@ hooks inside the Linux kernel, so it follows the session through `sudo`, `su`,
 Gateway-style SSH access control (Teleport, StrongDM, Boundary, and similar)
 controls the door. Session Warrant controls what happens after the door.
 
-> **Status (2026-09-03):** research spike. BPF LSM attaches and runs on
-> Ubuntu 24.04 / kernel 6.8, the two-layer tag survives `sudo`, `su`, `nohup`
-> and `systemd-run --scope`, worst-case `file_open` overhead is **+2.0%**.
-> This semester's deliverable is **audit mode**. Enforcement (`-EPERM`) is out
-> of scope. See [Roadmap](#roadmap).
+> **Status (2026-10-08):** spikes S0–S3 passed on Ubuntu 24.04 / kernel 6.8.
+> The two-layer tag survives `sudo`, `su`, `nohup` and `systemd-run --scope`,
+> worst-case `file_open` overhead is **under 1%**, and `session-N.scope` already
+> exists when the PAM session hook runs. Kernel verdict code (15 hooks), the PAM
+> module and four `warrantd` packages are implemented; the end-to-end path
+> (node → server → dashboard) is being wired. This semester's deliverable is
+> **audit mode**. Enforcement (`-EPERM`) is out of scope. See [Roadmap](#roadmap).
 
 ## Contents
 
@@ -50,7 +54,7 @@ forge.
 
 ```
 Session Warrant  W-4821-3F
-  Subject     jhukkim@seswar.io  (login account: ec2-user)
+  Subject     alice@example.com  (login account: ec2-user)
   Reason      INC-4821 payment latency incident
   Targets     prod-payment-{03,04}
   Valid       14:00 → 14:30  (30 min, auto-expires)
@@ -140,31 +144,31 @@ exactly, so "fine in audit, blocked in enforcement" cannot happen.
 
 ## Architecture
 
-The central server issues warrants. `warrantd` copies them into kernel maps.
-The kernel decides using only those maps. **No user-space round trip at
-decision time.** If the central server is unreachable or `warrantd` dies,
+The central server issues warrants. `warrantd` copies them into kernel maps
+and binds each SSH session to its warrant. The kernel decides using only those
+maps. **No user-space round trip at decision time.** If the central server is unreachable or `warrantd` dies,
 already issued warrants keep expiring and enforcing.
 
-![Session Warrant target architecture](docs/architecture.png)
+![Session Warrant target architecture](docs/architecture.en.png)
 
-*Target architecture. Source: [`docs/architecture.drawio`](docs/architecture.drawio) (open with draw.io).*
+*Target architecture. Source: [`docs/architecture.en.drawio`](docs/architecture.en.drawio) (open with draw.io).*
 
 ```
  CONTROL PLANE               NODE · USER SPACE                 NODE · KERNEL
  ┌──────────────────┐        ┌──────────────────┐             ┌──────────────────────────┐
  │ issue · approve  │ push   │ warrantd         │ map write   │ BPF maps                 │
  │ identity (OIDC)  │ ─────▶ │  policy compile  │ ──────────▶ │  cgroup_warrant          │
- │ Ed25519 signing  │ gRPC   │  map management  │             │  task_warrant            │
+ │ Ed25519 signing  │ gRPC   │  session binding │             │  task_warrant            │
  │                  │        │  ringbuf consumer│             │  warrants (exp·rev·mode) │
- │ audit store      │ ◀───── │  kill switch     │ ◀────────── │  rule_exec/write/net     │
- │ warrant_id→person│ events │  warrant cache   │  ringbuf    │  events (ringbuf)        │
+ │ audit store      │ ◀───── │  warrant cache   │ ◀────────── │  rule_exec/write/net     │
+ │ (PostgreSQL)     │ events │                  │  ringbuf    │  events (ringbuf)        │
  └──────────────────┘        └──────────────────┘             ├──────────────────────────┤
-                             ┌──────────────────┐   bind      │ BPF programs             │
-                             │ sshd             │ ──────────▶ │  lsm/bprm_check_security │
-                             │  pam_warrant.so  │             │  lsm/file_open · inode_* │
-                             │  bash·sudo·vim   │  syscall    │  lsm/socket_connect      │
-                             └──────────────────┘ ──────────▶ │  tp/sched_process_fork   │
-                                                              └──────────────────────────┘
+                                      ▲ unix socket           │ BPF programs             │
+                             ┌──────────────────┐             │  lsm/bprm_check_security │
+                             │ sshd             │             │  lsm/file_open · inode_* │
+                             │  pam_warrant.so  │  syscall    │  lsm/socket_connect      │
+                             │  bash·sudo·vim   │ ──────────▶ │  tp/sched_process_fork   │
+                             └──────────────────┘             └──────────────────────────┘
 ```
 
 ### Components
@@ -172,10 +176,10 @@ already issued warrants keep expiring and enforcing.
 | Component | Language | Role |
 |---|---|---|
 | Central server | Java / Spring Boot | Approval, identity, warrant signing, audit store, gRPC push to nodes |
-| `warrantd` | Go | Compiles policy into map form (binaries → inode keys, CIDRs → LPM trie), loads and pins BPF, consumes the ringbuf, holds a warrant cache for central outages, owns the kill switch |
-| `pam_warrant.so` | C | In sshd's PAM stack. `account`: is there a valid warrant? `session`: read the `session-N.scope` cgroup id and write `cgroup_warrant[cgroup_id] = warrant_id`. Must sit after `pam_systemd.so` |
-| BPF programs | C | LSM hooks for exec, write, egress; tracepoint for fork propagation; the shared verdict function |
-| Dashboard | TypeScript or Grafana | Session and warrant reporting |
+| `warrantd` | Go | Compiles policy into map form (paths → `(dev, ino)`, CIDRs → LPM trie), binds sessions to warrants by (host, account, SSH key fingerprint), loads and pins BPF, consumes the ringbuf, keeps a bbolt cache for central outages, owns the kill switch |
+| `pam_warrant.so` | C | In sshd's PAM session stack, after `pam_systemd.so`. Resolves `XDG_SESSION_ID` → `session-N.scope` cgroup id and sends it with the login account and `SSH_AUTH_INFO_0` to `warrantd` over a Unix datagram socket. Never blocks; if `warrantd` is unreachable the login is allowed and recorded as warrantless |
+| BPF programs | C | LSM hooks for exec, write, egress and self-protection; tracepoint for fork propagation; the shared verdict function |
+| Dashboard | Grafana | Reads PostgreSQL directly: warrantless sessions, access report |
 
 ### Kernel maps
 
@@ -185,9 +189,9 @@ already issued warrants keep expiring and enforcing.
 | `cgroup_warrant` | `HASH` | `cgroup_id → warrant_id` | Primary binding |
 | `task_warrant` | `TASK_STORAGE` | `task → warrant_id` | Secondary binding, copied on fork |
 | `warrants` | `HASH` | `warrant_id → struct` | Expiry, subject, policy, revoked, mode, on_expiry |
-| `rule_exec` | `HASH` | `(policy, inode) → u8` | Allowed binaries |
-| `rule_write` | `HASH` | `(policy, inode) → u8` | Allowed write directories |
-| `rule_net` | `LPM_TRIE` | `(policy, CIDR) → u8` | Allowed outbound ranges |
+| `rule_exec` | `HASH` | `(policy, dev, ino) → u8` | Allowed binaries |
+| `rule_write` | `HASH` | `(policy, dev, ino) → {effect, recursive}` | Write rules, longest match, DENY wins |
+| `rule_net` | `LPM_TRIE` | `(policy, CIDR) → {proto, ports}` | Allowed outbound ranges |
 | `events` | `RINGBUF` | → audit record | Verdicts, consumed by `warrantd` |
 
 ```c
@@ -199,6 +203,7 @@ struct warrant {
     __u8  revoked;      // one byte, immediate revocation
     __u8  mode;         // 0 observe · 1 dryrun · 2 enforce
     __u8  on_expiry;    // 0 downgrade · 1 terminate · 2 grace
+    __u8  break_glass;  // emergency warrant, the only one past self-protection
 };
 ```
 
@@ -220,16 +225,16 @@ lives in user space and **fails soft**. This asymmetry is deliberate.
 ## Repository layout
 
 ```
-proto/    protobuf schema — single source of truth for the warrant struct. Finalized after the spike
-bpf/      C · BPF programs (vmlinux.h is gitignored)                    ← smoke test works
-agent/    Go · warrantd                                                   ← README only
+proto/    protobuf schema — single source of truth for the warrant struct  ← finalized 2026-09-23
+bpf/      C · BPF programs (vmlinux.h is gitignored)                      ← 15 hooks, wtest.sh 29/29
+agent/    Go · warrantd                                                     ← bpfmap · ringbuf · pamsock · policy done
           cmd/warrantd/ · internal/{loader,bpfmap,pamsock,policy,ringbuf,upstream,store}/
-pam/      C · pam_warrant.so, kept under 200 lines                        ← README only
-server/   Java · Spring Boot central server                               ← 52-class skeleton, bootJar builds
-web/      dashboard, or Grafana                                           ← README only
-deploy/   bootstrap.sh · enable-bpf-lsm.sh · systemd/ · ansible/          ← scripts work
-bench/    overhead/ (S1 harness) · bypass/ (S2 bats cases)                ← both run
-docs/     planning, tech-stack and eBPF-fields documents (Korean)
+pam/      C · pam_warrant.so, kept under 200 lines                          ← works through sshd (VM)
+server/   Java · Spring Boot central server                                 ← entities · Flyway; services in progress
+web/      React mock dashboard — frozen, replaced by Grafana                ← out of scope
+deploy/   bootstrap.sh · enable-bpf-lsm.sh · systemd/ · ansible/            ← scripts work
+bench/    overhead/ (S1) · bypass/ (S2) · pamtiming/ (S3) · inode/ (S4)      ← S1–S3 run
+docs/     planning documents (Korean), experiment log, architecture diagram
 ```
 
 Each directory's `README.md` states the constraints that layer must respect.
@@ -249,7 +254,7 @@ warrantless-session detection and an organization-wide SSH access report.
 | Two-layer tag | cgroup + fork propagation, verified | D-Bus succession |
 | Overhead | Measured per hook, through p99 | — |
 | Issuance path | Central → `warrantd` → maps | Slack approval integration |
-| Self-protection (6 hooks) | Designed and documented | Implemented |
+| Self-protection (6) | Designed; kernel hooks in place, audit only | Enforced |
 
 Enforcement is enabled only after all six self-protection hooks are in place.
 With one missing, a single verifier-passing bug locks you out of your own box.
@@ -259,27 +264,23 @@ With one missing, a single verifier-passing bug locks you out of your own box.
 Throw-away code. What survives is the harness under `bench/`.
 
 - [x] **S0 · Environment.** `bootstrap.sh`, `enable-bpf-lsm.sh`, `bpf/smoke`. BPF LSM attaches and runs.
-- [x] **S1 · `file_open` overhead.** Four tiers (no hook / `return 0` / + write gate / + lookups) × load workloads, through p99. Worst case +2.0% on a write-saturated workload. Read-dominated workloads show no difference. Tier E (hook present, no warrant) still unmeasured.
+- [x] **S1 · `file_open` overhead.** Tiers from no hook to full lookups × load workloads, through p99. Measured inside the kernel per call, then multiplied by call count: **77 ns × 40,851 calls = 0.36%** on a write-saturated workload, **under 1%** worst case. Read-dominated workloads show no difference because the write gate stops them first. A warrantless session costs almost the same as a warranted one (the cgroup lookup dominates). An earlier "+2.0%" wall-clock figure was withdrawn as physically impossible.
 - [x] **S2 · Tag propagation.** The table above as bats cases. 8 pass, 9 skip, 0 fail on kernel 6.8.0. `systemd-run --scope` came out `cg_tag=0 task_tag=1`, which is the measured justification for the second layer.
-- [ ] **S3 · PAM timing.** A 20-line module that only logs. Confirm `session-N.scope` exists when `pam_warrant.so` runs. Then re-run S2 against a real session.
-- [ ] **S4 · Inode stability.** Package upgrade, `vim` save, logrotate. List the points where a recompile is needed.
+- [x] **S3 · PAM timing.** `ssh localhost` 11 times through `/etc/pam.d/sshd`: `session-N.scope` already existed every time, no polling, **no tagging gap**. Also found that `XDG_SESSION_ID` is reused while the cgroup id is not, which is why warrants are keyed on the cgroup id. S2 still to be re-run against a real session.
+- [ ] **S4 · Inode stability.** Package upgrade, `vim` save, logrotate. Harness ready, not yet run.
 
-### Build order after the spikes
+### Progress after the spikes
 
-Hooks are attached one at a time, each with verifier and overhead checked:
+Hooks were attached one at a time, each with verifier and overhead checked.
 
-1. `sched_process_fork` (tag propagation)
-2. `bprm_check_security` (exec)
-3. `socket_connect` (egress)
-4. `file_open` (write)
-5. `inode_{create,unlink,rename,link,symlink}` as one set (deny by directory inode)
-6. Self-protection: `lsm/bpf`, `task_kill`, `sb_umount`, `ptrace_access_check`, `kernel_module_request`, own-file write denial
-7. `socket_sendmsg` (UDP without connect)
-8. `kprobe/security_*` mirrors for audit mode
+- [x] `sched_process_fork`, `bprm_check_security`, `socket_connect`, `file_open`, `inode_{create,unlink,rename,link,symlink}`
+- [x] Self-protection: `lsm/bpf`, `task_kill`, `sb_umount`, `ptrace_access_check`, `kernel_module_request`, plus own-file write denial as a forced rule
+- [x] `kprobe/security_file_open` mirror for audit mode
+- [ ] `socket_sendmsg` (UDP without connect), remaining `kprobe` mirrors
+- [x] `proto/` finalized · `pam_warrant.so` · `warrantd` packages `bpfmap`, `ringbuf`, `pamsock`, `policy`
+- [ ] `warrantd` assembly, `loader`, `store`, `upstream` · server gRPC and services · Grafana panels
 
-In parallel: finalize `proto/warrant.proto`, implement `warrantd` (loader, map
-management, ringbuf consumer, upstream gRPC), fill in the server skeleton,
-write `pam_warrant.so`.
+Next milestone: **one warrantless session shows up on the dashboard**, end to end.
 
 ## Design rules
 
@@ -315,7 +316,7 @@ All four are recorded in audit mode and committed as skipped tests in
 | PAM module | C | libpam-dev |
 | Central server | Java 25 | Spring Boot 4.1.1 · Security (OIDC) · Data JPA · Flyway · gRPC server starter |
 | Database | — | PostgreSQL 18, partitioned audit events |
-| Dashboard | TypeScript | React 19 · Vite, or Grafana |
+| Dashboard | — | Grafana on PostgreSQL |
 
 Four languages is a constraint. BPF is C only. PAM is `dlopen`ed into sshd,
 so no Go runtime there. The server is Java by decision. Go rather than Rust for
@@ -348,6 +349,18 @@ cd bench/bypass && make check && make && sudo make test
 cd server && ./gradlew bootJar
 ```
 
-##
+### Prerequisites
 
 Kernel prerequisites: Linux 5.15+ with BPF LSM, cgroup v2, systemd-logind.
+
+## Documents
+
+Planning documents are in Korean.
+
+| Document | Contents |
+|---|---|
+| [`docs/session-warrant-plan.html`](docs/session-warrant-plan.html) | Concept, plan and architecture (§01–§19) |
+| [`docs/session-warrant-tech-stack.html`](docs/session-warrant-tech-stack.html) | Technology choices and rationale |
+| [`docs/session-warrant-ebpf-fields.html`](docs/session-warrant-ebpf-fields.html) | Every value the BPF programs extract |
+| [`docs/experiments.md`](docs/experiments.md) | S0–S4 experiment log, including withdrawn conclusions |
+| [`docs/architecture.en.drawio`](docs/architecture.en.drawio) | Architecture diagram source ([한국어](docs/architecture.drawio)) |
