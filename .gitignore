@@ -63,6 +63,8 @@ bench/inode/inowatch
 # 위의 !docs/** 보다 뒤에 와야 이긴다
 docs/session-warrant-pitch.html
 docs/*.docx
+# draw.io 자동 백업
+*.bkp
 
 # clangd 인덱싱 산출물 (VM/서브 PC 에서 생성, 커밋하지 않는다)
 compile_commands.json
