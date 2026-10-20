@@ -1,4 +1,12 @@
 // Package policy 는 경로를 (dev, ino) 로 컴파일한다. 이 변환은 여기서만 한다.
+//
+// 하는 일:
+//   - Compile: 정책 Spec 을 검증하고 exec · write · net 규칙으로 바꾼다.
+//     기본 허용 세트를 넣고, 위험한 실행 · 쓰기 조합을 경고한다
+//   - Compiled.Apply: 컴파일 결과를 bpfmap 에 쓴다
+//   - Watcher: 컴파일한 경로의 inode 가 바뀌면 OnChange 로 알린다
+//
+// 부르는 쪽: cmd/warrantd (영장 수신 뒤 3·4단계에서 붙인다).
 package policy
 
 import (

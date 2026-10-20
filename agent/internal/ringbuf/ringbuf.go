@@ -1,4 +1,13 @@
 // Package ringbuf 는 커널 events ringbuf 를 소비한다. 유실은 Gap 으로 드러낸다.
+//
+// 하는 일:
+//   - Open/Close: pin 된 events 맵을 연다
+//   - Run: 레코드를 하나씩 디코드해 handler 로 넘긴다
+//   - OnGap · DroppedTotal: (cpu, cpu_seq) 가 건너뛰면 Gap 을 알리고 유실 수를 센다
+//   - Record.Exec · Write · Inode · Connect · Fork: 훅별 payload 를 꺼낸다
+//   - HookName · VerdictName 등(names.go): 숫자 코드를 proto enum 이름으로 바꾼다
+//
+// 부르는 쪽: cmd/warrantd (logRecord · logGap). 나중엔 upstream 으로 흘려보낸다.
 package ringbuf
 
 import (

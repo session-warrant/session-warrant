@@ -1,4 +1,13 @@
 // Package upstream 은 중앙 gRPC 클라이언트다 (mTLS). 끊겨도 커널의 집행은 계속된다.
+//
+// 하는 일:
+//   - Dial · Heartbeat: 중앙에 붙고 살아 있음을 알린다
+//   - Subscribe: 영장 push 를 받아 Applier 로 넘긴다
+//   - Verify · ToKernel: 서명을 검증하고, 절대시각을 노드 boot 기준 맵 값으로 바꾼다
+//   - LookupActiveWarrant: PAM 세션의 계정 · 지문으로 영장을 찾는다
+//   - StreamAudit · RequestExtension: 감사 이벤트를 올리고 연장을 요청한다
+//
+// 부르는 쪽: cmd/warrantd 기동 5단계, binder. 상태: 미구현 (B 담당).
 package upstream
 
 import (
