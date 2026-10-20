@@ -1,5 +1,10 @@
 // Package pamsock 은 pam_warrant.so 가 보내는 세션 정보를 받는다.
 //
+// 하는 일:
+//   - Listen: 유닉스 데이터그램 소켓을 연다
+//   - Serve: OPEN 은 Binder.Bind, CLOSE 는 Binder.Unbind 로 넘긴다
+//   - Fingerprint: auth info 에서 공개키 지문을 뽑는다
+//
 // SOCK_DGRAM, 한 데이터그램에 한 줄. 응답은 없다 — PAM 은 기다리지 않는다.
 //
 //	OPEN\tsession_id\tcgroup_id\tlogin_account\trhost\tauth_info\n

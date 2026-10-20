@@ -1,4 +1,14 @@
 // Package bpfmap 은 BPF 맵의 유일한 진입점이다. 다른 패키지는 맵을 직접 열지 않는다.
+//
+// 하는 일:
+//   - Open/Close: bpffs 에 pin 된 맵을 연다
+//   - PutWarrant · Revoke · DeleteWarrant: 영장 값을 쓰고 취소한다
+//   - TagCgroup · UntagCgroup: 세션 cgroup 에 영장 id 를 붙이고 뗀다
+//   - PutExecRule · PutWriteRule · PutNetRule: 정책 규칙을 맵에 넣는다
+//   - SetActive: 전체 훅을 켜고 끈다
+//   - FileRefOf · BootNs: 경로 → (dev, ino), 현재 boot 기준 시각
+//
+// 부르는 쪽: cmd/warrantd(binder), policy.Apply, upstream.
 package bpfmap
 
 import (

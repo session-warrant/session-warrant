@@ -1,5 +1,9 @@
 // warrantd — 노드 에이전트. 조립만 한다. 판정은 커널이 한다.
 //
+// 하는 일:
+//   - main.go: 맵 · PAM 소켓 · ringbuf 를 열고, 종료 신호까지 돌린다. 감사 레코드와 Gap 을 로그로 남긴다
+//   - binder.go: PAM 세션이 열리면 무영장 사유(NO_WARRANT · NO_KEY)를 기록하고, 닫히면 태그를 뗀다
+//
 // 기동 순서 (바꾸지 말 것):
 //  1. loader.Load     pin 된 맵이 있으면 재사용
 //  2. store.Open      캐시된 영장을 맵에 복원
@@ -7,6 +11,7 @@
 //  4. pamsock.Listen  여기 전에 로그인한 세션은 태그가 없다 (유닛에 Before=sshd.service)
 //  5. ringbuf · upstream  실패해도 죽지 않는다
 //
+// 지금은 4 · 5(ringbuf) 만 붙어 있다. 1 · 3 은 bpftool 이 대신한다.
 // 종료할 때 pin 은 지우지 않는다.
 package main
 
@@ -24,15 +29,6 @@ import (
 	"github.com/session-warrant/session-warrant/agent/internal/pamsock"
 	"github.com/session-warrant/session-warrant/agent/internal/ringbuf"
 )
-
-// 1. 플래그 (이미 있다)
-// 2. ctx := signal.NotifyContext(...)
-// 3. maps := bpfmap.Open(*pinDir)        — loader 가 없으니 pin 된 맵을 연다
-// 4. srv := pamsock.Listen(*socketPath)
-// 5. cons := ringbuf.Open(*pinDir) + OnGap
-// 6. 두 고루틴 띄우기: srv.Serve · cons.Run
-// 7. 기다리기: ctx 종료 또는 고루틴 실패
-// 8. 정리: 고루틴이 끝나길 기다린 뒤 Close. pin 은 지우지 않는다
 
 func main() {
 	var (
