@@ -253,7 +253,7 @@ warrantless-session detection and an organization-wide SSH access report.
 | LSM hooks | Attached, `return 0`, record only | `-EPERM` |
 | Two-layer tag | cgroup + fork propagation, verified | D-Bus succession |
 | Overhead | Measured per hook, through p99 | — |
-| Issuance path | Central → `warrantd` → maps | Slack approval integration |
+| Issuance path | Central → `warrantd` → maps | In-console request and approval |
 | Self-protection (6) | Designed; kernel hooks in place, audit only | Enforced |
 
 Enforcement is enabled only after all six self-protection hooks are in place.
