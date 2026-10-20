@@ -251,7 +251,7 @@ Ed25519 서명                      · 정책 → (dev,ino) 컴파일           
 | 계층 | 언어 | 핵심 의존성 |
 |---|---|---|
 | BPF 프로그램 | C | libbpf · vmlinux.h · clang/LLVM 18+ · CO-RE |
-| 노드 에이전트 `warrantd` | Go 1.25+ | cilium/ebpf v0.22 · bpf2go · grpc-go · bbolt · x/sys/unix |
+| 노드 에이전트 `warrantd` | Go 1.25+ | cilium/ebpf v0.22 · bpf2go · grpc-go v1.81 · protobuf-go v1.36.12 · bbolt · x/sys/unix |
 | PAM 모듈 | C | libpam-dev |
 | 중앙 서버 | Java 25 (LTS) | Spring Boot 4.1.1 · Security(OIDC) · Data JPA · Flyway · `spring-boot-starter-grpc-server` |
 | DB | — | PostgreSQL 18 (감사 이벤트는 선언적 파티셔닝) |
@@ -364,7 +364,9 @@ cd server
 
 `proto/` 를 고치면 `server/build.gradle` 의 `srcDir '../proto'` 를 통해 자동으로
 다시 생성된다 — **`.proto` 수정 뒤 `./gradlew generateProto compileJava` 로
-세 언어 중 최소한 Java 쪽은 깨지지 않았는지 확인한다.** Go·C 생성물은 아직 없다.
+세 언어 중 최소한 Java 쪽은 깨지지 않았는지 확인한다.** Go 는 `make -C agent proto`
+로 다시 뽑아 `agent/internal/pb` 를 커밋한다 — protoc 36.2 · 플러그인은 `agent/go.mod` 의 `tool`
+이 고정한다. C 생성물은 없다.
 
 ### 웹 (범위 밖, 동결)
 

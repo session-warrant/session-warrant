@@ -12,7 +12,8 @@
 | `agent.proto` | `WarrantPushService`(push 서버 스트리밍 · heartbeat · 연장 요청 · 조회) · `AuditIngestService`(양방향 스트리밍) |
 
 `server/` 에서 `./gradlew generateProto compileJava` 가 통과한다 (`WarrantProtos` · `AuditProtos` ·
-`AgentProtos` · `*ServiceGrpc`). Go · C 쪽 생성물은 아직 없다.
+`AgentProtos` · `*ServiceGrpc`). Go 는 `make -C agent proto` → `agent/internal/pb` (2026-10-20).
+C 쪽 생성물은 없다 — PAM 은 protobuf 를 쓰지 않는다.
 
 ## 초안이 정한 것 — 골격 주석과 다른 지점
 
@@ -29,7 +30,7 @@
 - **감사 스트림은 양방향이다.** ack 를 중간중간 돌려줘야 하므로 클라이언트 스트리밍(응답 1회)으로는 안 된다.
 - **Java 는 `java_multiple_files=false`.** `Warrant` · `AuditEvent` 가 도메인 클래스와 이름이 겹쳐서
   `WarrantProtos.Warrant` 로 쓴다.
-- `go_package` 는 `agent/` 에 `go.mod` 가 생기면 그때 맞춘다.
+- `go_package` 는 `.../agent/internal/pb;pb` 로 세 파일이 한 Go 패키지에 들어간다.
 
 ## 검토에서 고친 것 (2026-09-09)
 

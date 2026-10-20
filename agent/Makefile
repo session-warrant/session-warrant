@@ -13,9 +13,11 @@ vet:
 test:
 	$(GO) test ./...
 
-# proto/*.proto → internal/pb/. 생성물은 커밋한다.
+# proto/*.proto → internal/pb/. 생성물은 커밋한다. 플러그인 버전은 go.mod 의 tool 이 고정한다.
 proto:
 	protoc -I ../proto \
+		--plugin=protoc-gen-go=$$($(GO) tool -n protoc-gen-go) \
+		--plugin=protoc-gen-go-grpc=$$($(GO) tool -n protoc-gen-go-grpc) \
 		--go_out=. --go_opt=module=github.com/session-warrant/session-warrant/agent \
 		--go-grpc_out=. --go-grpc_opt=module=github.com/session-warrant/session-warrant/agent \
 		../proto/warrant.proto ../proto/audit.proto ../proto/agent.proto
@@ -27,8 +29,8 @@ bpf:
 check:
 	@printf '%-22s' 'go'; $(GO) version 2>/dev/null || echo '없음 — https://go.dev/dl'
 	@printf '%-22s' 'protoc'; protoc --version 2>/dev/null || echo '없음 — apt install protobuf-compiler / brew install protobuf'
-	@printf '%-22s' 'protoc-gen-go'; protoc-gen-go --version 2>/dev/null || echo '없음 — go install google.golang.org/protobuf/cmd/protoc-gen-go@latest'
-	@printf '%-22s' 'protoc-gen-go-grpc'; protoc-gen-go-grpc --version 2>/dev/null || echo '없음 — go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest'
+	@printf '%-22s' 'protoc-gen-go'; $(GO) tool protoc-gen-go --version 2>/dev/null || echo '없음 — go.mod 의 tool 확인'
+	@printf '%-22s' 'protoc-gen-go-grpc'; $(GO) tool protoc-gen-go-grpc --version 2>/dev/null || echo '없음 — go.mod 의 tool 확인'
 	@printf '%-22s' 'clang'; clang --version 2>/dev/null | head -1 || echo '없음 — 서브 PC 에서만 필요'
 
 clean:
