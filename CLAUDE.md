@@ -61,7 +61,7 @@ PAM session 단계에서 `session-N.scope` 가 이미 확정돼 있다(태깅 �
 | `proto/` | **확정** (2026-09-23) — `warrant` · `agent` · `audit` 3파일 |
 | `pam/` | `pam_warrant.c` 141줄 — Lima VM 에서 sshd 3단계까지 검증(2026-09-26). auth info 원문 전달 · 버퍼 8192 수정(`9e329dd`) 뒤 **sshd 재확인 남음** |
 | `agent/` | **8개 중 3개 구현** — `bpfmap` · `ringbuf`(A) · `pamsock`(C, 테스트 31건). `loader` · `policy`(A) · `store` · `upstream`(B) · `cmd/warrantd`(C) 는 `panic("미구현")`. 리눅스 전용 상수 때문에 **맥에서는 빌드 안 된다** — `GOOS=linux` 로 확인 |
-| `server/` | Java 51클래스 — 엔티티 · 리포지토리 · 설정 · Flyway V1 은 있고, `api` · `application` · `grpc` · `crypto` · `slack` 27클래스는 본문 미구현. **테스트 0개.** `bootJar` 까지 빌드됨, `bootRun` 은 아직 안 뜬다 |
+| `server/` | Java 51클래스 — 엔티티 · 리포지토리 · 설정 · Flyway V1 은 있고, `api` · `application` · `grpc` · `crypto` · `slack` 27클래스는 본문 미구현. **테스트 0개.** `bootRun` 이 뜬다(2026-10-20) — Flyway V1 실제 DDL 15테이블, `/actuator/health` UP. 엔티티는 아직 주석이라 `ddl-auto: validate` 가 검사할 대상이 없다 |
 | `deploy/` | `bootstrap.sh` · `enable-bpf-lsm.sh` — 동작. `systemd/` · `ansible/` 은 비어 있다 — warrantd 유닛(`Before=sshd.service` · `RuntimeDirectoryMode=0700`) 필요 |
 | `bench/overhead/` | S1 하네스 — 6차까지(읽기 감시 R · I · I2 포함). **최악 조건 1% 미만 — S1 통과** |
 | `bench/bypass/` | S2 §04 표 = bats 13케이스 + §18 4구멍(skip). **8 통과 · 0 실패**, 출력 커밋됨. 진짜 세션으로 재확인 남음 |
@@ -354,13 +354,22 @@ sudo make test-apt                             # 실제 패키지 재설치 포�
 
 ```sh
 cd server
+docker compose -f compose.yaml up -d --wait   # 로컬 PostgreSQL 18 · 호스트 5433
+./gradlew bootRun                  # :8080 (health 만 공개) · Flyway 적용. OIDC 는 SPRING_PROFILES_ACTIVE=oidc
 ./gradlew build                    # 컴파일 + 테스트 + bootJar
 ./gradlew generateProto            # proto/*.proto → Java (protobuf + grpc)
 ./gradlew test --tests '*WarrantServerApplicationTests'    # ← 테스트 하나만
 ```
 
-**`bootRun` 은 아직 뜨지 않는다.** datasource·bean 이 전부 주석이라 컴파일과
-`bootJar` 까지만 검증돼 있다. 테스트도 0개다 (`failOnNoDiscoveredTests = false`).
+**`bootRun` 은 뜨지만 아직 아무 일도 안 한다.** 엔티티 · 서비스 · gRPC 서비스가 전부 주석이라,
+gRPC 서비스 빈이 하나도 없어서 9090 이 열리지 않는다 — 첫 서비스(`AuditIngestGrpcService`)를 붙이면 열린다.
+테스트도 0개다 (`failOnNoDiscoveredTests = false`).
+
+- **V1 은 한 번 적용되면 고치지 않는다.** 스키마 변경은 V2 부터. 로컬에서 V1 을 고쳤다면
+  `docker compose -f compose.yaml down -v` 로 볼륨째 지운다.
+- `compose.yaml` 의 `name: session-warrant` 를 지우지 말 것 — 폴더 이름 `server` 가 프로젝트
+  이름이 되어 다른 리포의 `server/` compose 를 멈추거나 교체한다(2026-10-20 실제로 일어났다).
+- gRPC 설정 키는 `spring.grpc.server.*` 다. Boot 3 시절 `grpc.server.port` 는 조용히 무시된다.
 
 `proto/` 를 고치면 `server/build.gradle` 의 `srcDir '../proto'` 를 통해 자동으로
 다시 생성된다 — **`.proto` 수정 뒤 `./gradlew generateProto compileJava` 로

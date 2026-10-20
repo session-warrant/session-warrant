@@ -1,0 +1,26 @@
+# 로컬 개발용 PostgreSQL. 운영 배포 설정이 아니다.
+#   docker compose -f server/compose.yaml up -d
+# 호스트 포트는 5433 — 다른 프로젝트의 5432 와 겹치지 않게. application.yml 기본값과 같다.
+# name 을 지우지 말 것 — 없으면 폴더 이름(server)이 프로젝트 이름이 되어 다른 리포의
+# server/ compose 와 같은 프로젝트로 묶이고, up 이 그쪽 컨테이너를 멈추거나 교체한다.
+name: session-warrant
+
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: warrant
+      POSTGRES_USER: warrant
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+    ports:
+      - "${DB_PORT:-5433}:5432"
+    volumes:
+      - warrant-pg:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U warrant -d warrant"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  warrant-pg:
