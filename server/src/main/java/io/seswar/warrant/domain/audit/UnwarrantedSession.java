@@ -10,7 +10,7 @@ import jakarta.persistence.Table;
 import java.time.Instant;
 import java.util.UUID;
 
-/** 영장 없이 성립한 SSH 세션(§07 STEP 2). */
+/** 영장 없이 성립한 SSH 세션(§07 STEP 2). 필드의 뜻과 제약은 server/README.md 「감사 엔티티」. */
 @Entity
 @Table(name = "unwarranted_session")
 public class UnwarrantedSession {
@@ -22,7 +22,6 @@ public class UnwarrantedSession {
     @Column(nullable = false)
     private UUID nodeId;
 
-    /** 이 세션을 실어 온 감사 이벤트의 키. (nodeId, seqEpoch, nodeSeq) 가 재전송 멱등 키다(V2). */
     @Column(nullable = false)
     private long seqEpoch;
 
@@ -34,7 +33,6 @@ public class UnwarrantedSession {
 
     private String loginAccount;
 
-    /** 공개키 지문({@code SHA256:...}). 비어 있으면 NO_KEY. <b>이 값으로 사람을 역추적한다.</b> */
     private String sshKeyFingerprint;
 
     private String sourceAddress;
@@ -42,17 +40,9 @@ public class UnwarrantedSession {
     @Column(nullable = false)
     private long cgroupId;
 
-    /**
-     * proto {@code UnwarrantedSessionEvent.Reason}: NO_WARRANT · NO_KEY · KEY_MISMATCH ·
-     * AGENT_UNREACHED · CENTRAL_STALE · PAM_ABSENT.
-     */
     @Column(nullable = false)
     private String reason;
 
-    /**
-     * 이 세션이 실제로 무엇을 했는지 — 연결된 감사 이벤트 수.
-     * "무영장 세션이 몇 건 있었다"보다 "무영장 세션이 무엇을 했다"가 훨씬 강한 자료다.
-     */
     @Column(nullable = false)
     private long observedEventCount;
 

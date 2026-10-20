@@ -81,6 +81,71 @@ warrantd → `AuditIngestGrpcService`(gRPC 스트림) → `AuditIngestService.in
 - **적재는 Hibernate JDBC 배치**(`hibernate.jdbc.batch_size: 100`). 쿼리가 "조회 1 + INSERT" 라 예전
   `INSERT … ON CONFLICT` 한 번보다 많다. 수집량이 병목이 되면 `audit_event` 하나만 `ON CONFLICT` 로 되돌린다.
 
+## 노드 (`domain/node/Node`)
+
+영장을 집행하는 호스트. warrantd 한 대가 한 노드다. 테이블은 `node`(V1).
+
+| 필드 | 뜻 · 제약 |
+|---|---|
+| `clientCertFingerprint` | mTLS 클라이언트 인증서 지문. **노드 신원은 이것이다.** 감사 멱등 키 `(node_id, seq_epoch, node_seq)` 의 `node_id` 는 이 값으로 찾은 `id` 다. UNIQUE |
+| `hostname` | 노드가 신고한 이름(`NodeHello.hostname`). 자기 신고라 **키로 쓰지 않는다.** 인증서의 것과 다르면 경보한다 |
+| `kernelVersion` · `agentVersion` | 노드 신고값. 진단용 |
+| `bpfLsmEnabled` | `/sys/kernel/security/lsm` 에 `bpf` 가 있는가. **false 면 그 노드에 ENFORCE 영장을 발급해도 강제되지 않는다** — 발급 시점에 거부하거나 최소한 승인자에게 알려야 한다. 조용히 통과시키면 "막고 있다고 믿는데 안 막히는" 최악의 상태가 된다 |
+| `attachedHooks` | 지금 붙어 있는 훅(`NodeHello.attached_hooks`), `TEXT[]`. 훅을 하나씩 붙이는 동안 "이 노드는 `file_open` 을 아직 안 본다"를 알아야 빈 데이터를 "아무 일 없음"으로 오해하지 않는다 |
+| `currentSeqEpoch` | 지금 감사 `seq_epoch`. warrantd 의 bbolt 가 초기화되면 바뀐다 — **바뀐 사실 자체가 조사 대상이다** |
+| `lastSeenAt` | 마지막 하트비트. gRPC 스트림이 살아 있는지와는 별개로 기록한다 |
+| `bootedAt` | 노드 부팅 시각. 절대시각 → `bpf_ktime_get_boot_ns` 변환의 기준이지만 **변환은 warrantd 가 한다.** 여기 값은 시계 스큐 진단용 참고 정보일 뿐이다 |
+
+## 감사 엔티티 (`domain/audit/`)
+
+공통 규칙:
+- **enum 칼럼은 순서(ordinal)가 아니라 proto 번호를 `SMALLINT` 로 저장한다** (`AuditEnumConverters`). Java enum 순서를
+  바꿔도 과거 행의 뜻이 바뀌지 않고, Grafana 가 DB 를 직접 읽어도 proto 문서 하나로 해석된다.
+  `Origin` 은 proto 의 0 이 UNSPECIFIED 라 LSM=1 부터다 — 순서로 저장하면 여기서 어긋난다.
+  서버에만 있는 분류(`AuditEventType`, 각종 reason · cause)는 이름을 `TEXT` 로 저장한다.
+- **훅에 따라 비는 칸은 래퍼 타입**(`Long` · `Integer`). 기본형은 NULL 을 못 담아 읽을 때 터진다.
+- 만드는 방법: `AuditEvent.builder()`, `UnwarrantedSession.of(...)`, `EventGap.of(...)`. gRPC 층이 proto 에서 만든다.
+
+### `AuditEvent` — 감사 레코드 한 건 (`audit_event`)
+
+커널 ringbuf → warrantd → gRPC 로 도착한다. 일 단위 range 파티션(`occurred_at`)이라 DB 의 PK 는 `(id, occurred_at)` 이다.
+**남는 것**(§14): 실행된 모든 프로세스, 자원에 손댄 순간. **안 남는 것**: 셸 빌트인(`cd`), 인터프리터 내부 로직,
+파일 읽기, 터미널 입력.
+
+| 필드 | 뜻 · 제약 |
+|---|---|
+| `nodeId` | mTLS 인증서로 찾은 노드. 노드가 신고한 hostname 이 아니다 |
+| `seqEpoch` · `nodeSeq` | `(nodeId, seqEpoch, nodeSeq)` 가 재전송 멱등 키(「감사 수집」). `seqEpoch` 가 없으면 bbolt 초기화 뒤 1 로 돌아간 `nodeSeq` 의 새 이벤트가 중복으로 버려진다 |
+| `warrantId` | 커널이 들고 있던 u64(proto `warrant_id`). `Warrant.warrantId` 와 조인한다. **0 이면 영장 없는 프로세스** — 그 자체가 조사 대상이다 |
+| `kernelSubjectId` | 커널이 들고 있던 u32. 조회 시점에 사람 이름으로 조인한다 |
+| `mode` | `WOULD_DENY` 가 OBSERVE 인지 DRYRUN 인지 가른다 |
+| `tagSource` | `TASK` 면 cgroup 을 벗어난 프로세스를 2차 방어선(fork 전파)이 잡은 것이다 |
+| `origin` | lsm 과 kprobe 미러가 같은 입력에 다른 verdict 를 내면 버그다(§15). warrantd 발은 `AGENT` |
+| `uid` | sudo 뒤의 uid. **신원이 아니라 정황 정보다** — 신원은 `warrantId` 쪽에 있다 |
+| `deviceId` · `inode` | 커널이 실제로 연 파일의 `(dev, ino)`. **신뢰의 근거는 이것이다** |
+| `resolvedPath` | 해석된 경로. 리포트 가독성용 참고 정보이며 증거로 쓰지 않는다 |
+| `argvTruncated` | 명령줄 인자. **1급 증거가 아니다**(§14) — BPF 스택 제약으로 잘리고 `exec -a` 한 줄이면 argv[0] 이 위조된다 |
+| `destination` | `CONNECT` · `UDP_SEND` 의 목적지. AF_UNIX 면 `sun_path` |
+
+### `UnwarrantedSession` — 영장 없이 성립한 SSH 세션 (`unwarranted_session`, §07 STEP 2)
+
+| 필드 | 뜻 · 제약 |
+|---|---|
+| `seqEpoch` · `nodeSeq` | 이 세션을 실어 온 감사 이벤트의 키. `(nodeId, seqEpoch, nodeSeq)` 가 재전송 멱등 키다(V2) |
+| `sshKeyFingerprint` | 공개키 지문(`SHA256:...`). 비어 있으면 `NO_KEY`. **이 값으로 사람을 역추적한다** — 공유 계정에서 사람을 가르는 유일한 값 |
+| `reason` | proto `UnwarrantedSessionEvent.Reason`: `NO_WARRANT` · `NO_KEY` · `KEY_MISMATCH` · `AGENT_UNREACHED` · `CENTRAL_STALE` · `PAM_ABSENT` |
+| `observedEventCount` | 이 세션이 실제로 한 일 — 연결된 감사 이벤트 수. "무영장 세션이 몇 건"보다 "무영장 세션이 무엇을 했다"가 훨씬 강한 자료다. **아직 0 으로만 들어간다** |
+
+### `EventGap` — 유실 구간 (`audit_gap`)
+
+**빈 구간을 숨기지 않고 명시적으로 기록한다**(§14). 감추면 조사자가 "이 시간대에는 아무 일도 없었다"로 잘못 읽는다.
+
+| 필드 | 뜻 · 제약 |
+|---|---|
+| `from` · `to` | 빠진 구간. 칼럼 이름은 `from_at` · `to_at` — `from` · `to` 가 SQL 예약어라서 |
+| `droppedCount` | 커널 ringbuf 가 보고한 드롭 수. **모르면 NULL** — 0 과 구분한다 |
+| `cause` | proto `GapReport.Cause`: `RINGBUF_OVERFLOW` · `AGENT_DOWN` · `LOCAL_STORE_FULL` · `CPU_SEQ_SKIP` |
+
 ## 의존성에서 한 번 걸리는 지점
 
 Spring Boot 4 는 Boot 3 과 스타터 좌표가 다르고, gRPC 는 아예 소속이 바뀌었다.
