@@ -7,7 +7,7 @@ spring:
       enabled: true          # WebFlux 대신 이걸로 간다
 
   datasource:
-    url: jdbc:postgresql://localhost:5432/warrant
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5433}/warrant   # 로컬은 server/compose.yaml
     username: warrant
     password: ${DB_PASSWORD:changeme}
 
@@ -20,22 +20,12 @@ spring:
     enabled: true
     locations: classpath:db/migration
 
-  security:
-    oauth2:
-      client:
-        provider:
-          keycloak:
-            issuer-uri: ${OIDC_ISSUER:http://localhost:8080/realms/warrant}
-        registration:
-          keycloak:
-            client-id: ${OIDC_CLIENT_ID:warrant-server}
-            client-secret: ${OIDC_CLIENT_SECRET:}
-            scope: openid,profile,email
-
-grpc:
-  server:
-    port: 9090
-    # 노드 인증은 mTLS. 영장 스트림에는 정책 전체가 흐른다
+  grpc:
+    server:
+      port: 9090
+      servlet:
+        enabled: false     # 서블릿(8080) 위가 아니라 별도 포트. mTLS 를 콘솔과 따로 건다
+      # 노드 인증은 mTLS. 영장 스트림에는 정책 전체가 흐른다
 
 warrant:
   # 시간 정책의 핵심은 넉넉히 주는 게 아니라 짧게 주고 연장을 싸게 만드는 것이다(§03).

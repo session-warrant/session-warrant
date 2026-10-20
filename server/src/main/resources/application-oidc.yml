@@ -1,0 +1,15 @@
+# 콘솔 로그인(OIDC). 기동할 때 issuer 에 접속해 설정을 받아오므로 Keycloak 이 떠 있어야 한다.
+#   SPRING_PROFILES_ACTIVE=oidc ./gradlew bootRun
+# 프로필 없이 띄우면 콘솔 로그인 없이 뜬다 — gRPC · health 만 쓰는 로컬 개발용.
+spring:
+  security:
+    oauth2:
+      client:
+        provider:
+          keycloak:
+            issuer-uri: ${OIDC_ISSUER:http://localhost:8080/realms/warrant}
+        registration:
+          keycloak:
+            client-id: ${OIDC_CLIENT_ID:warrant-server}
+            client-secret: ${OIDC_CLIENT_SECRET:}
+            scope: openid,profile,email
