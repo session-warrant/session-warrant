@@ -25,11 +25,36 @@ io.seswar.warrant
 ├── application/  유스케이스 서비스 (발급 · 연장 · 취소 · 승인 · 감사 수집 · 무영장 탐지)
 ├── crypto/       Ed25519 서명 — protobuf 바이트에 서명한다
 ├── grpc/         warrantd 와의 통신 (영장 push = 서버 스트리밍, 감사 = 클라이언트 스트리밍)
-├── api/          REST — 콘솔 · 리포트
-├── slack/        Block Kit 승인 흐름
+├── api/          REST — 콘솔(신청 · 승인 큐 · 연장 · 회수) · 리포트
 ├── repository/   Spring Data JPA
 └── config/       Security(OIDC) · gRPC · 가상 스레드
 ```
+
+## 신청 · 승인 — 콘솔 자체 경로
+
+영장 신청과 승인은 **콘솔(웹)에서 한다.** 외부 메신저 연동은 두지 않는다 (2026-10-16 결정).
+이번 학기 범위 밖이라(루트 `CLAUDE.md` 범위표) API 는 골격만 있다.
+
+| 메서드 · 경로 | 누가 | 하는 일 |
+|---|---|---|
+| `POST /api/warrants` | REQUESTER | 발급 신청. lint ERROR 면 큐에 올리지도 않는다 |
+| `POST /api/warrants/{id}/extensions` | 영장 주체 | 연장 요청. warrantd 의 T-5분 자동 요청(gRPC `RequestExtension`)과 같은 큐로 간다 |
+| `GET /api/approvals?kind=` | APPROVER | 승인 큐 — 발급 대기 + 열린 연장 요청 |
+| `POST /api/approvals/{warrantId}/approve` | APPROVER | 발급 대기면 발급 · 서명 · push, 연장 요청이면 새 revision push |
+| `POST /api/approvals/{warrantId}/reject` | APPROVER | 반려. 사유 필수 |
+
+- **자기 승인 금지는 서버가 집행한다.** 승인자는 본문이 아니라 OIDC 로그인 주체에서 온다.
+  요청자 == 승인자면 `ApprovalService` 가 거부하고, 연장 요청은 영장 주체 본인이 승인할 수 없다.
+  콘솔의 비활성 버튼은 표시일 뿐이다.
+- **승인은 멱등이다.** 본문의 `requestLineageId` 가 지금 열린 요청과 다르면 409. 이중 클릭이나
+  두 승인자의 동시 클릭이 중복 발급이 되지 않는다.
+- **연장 요청은 계보 한 줄(`EXTENSION_REQUESTED`)이다.** 별도 테이블을 두지 않는다 — 영장당
+  열린 요청은 하나뿐이고, 상태가 계보에서 파생된다는 원칙과 맞는다. 발급 반려는 `REJECTED`.
+- **CSRF 보호를 끄지 않는다.** 콘솔은 세션 쿠키로 붙으므로, 끄면 승인자가 연 다른 탭이 승인을 대신 보낼 수 있다.
+- **서버는 알림을 보내지 않는다.** "승인 대기 N분 초과" · 유예 진입 · break-glass · 자기보호 훅 히트 경보는
+  Grafana 경보 규칙이 PostgreSQL(계보 · 감사 이벤트)을 직접 읽어 건다. 화면을 Grafana 로 대체한 것과 같은 선이다.
+- **대가:** 승인자에게 푸시가 가지 않으므로 승인 지연이 늘 수 있다. 짧은 기본 기간(§03)이 굴러가려면
+  연장이 싸야 한다 — 그래서 read-only 영장의 정책 자동 승인(`warrant.extension.auto-approve`)을 유지한다.
 
 ## 의존성에서 한 번 걸리는 지점
 
@@ -59,4 +84,4 @@ protobuf-gradle-plugin 은 BOM 을 읽지 못하므로 `ext.protobufVersion` · 
 2. `Warrant` · `Policy` 엔티티 + Flyway V1
 3. 발급 → 서명 → push 경로 (`WarrantIssuanceService` → `WarrantSigner` → `WarrantPushService`)
 4. 감사 수집 (`AuditIngestService`) 및 무영장 세션 탐지
-5. Slack 승인 · 연장 정책
+5. 콘솔 신청 · 승인 큐 · 연장 정책

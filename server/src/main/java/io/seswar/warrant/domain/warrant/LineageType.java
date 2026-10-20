@@ -8,10 +8,16 @@ public enum LineageType {
 
     REQUESTED,
 
+    /** 발급 요청이 반려됨. */
+    REJECTED,
+
     /** 발급. 승인자 · 사유 · 원 기간이 함께 남는다. */
     ISSUED,
 
-    /** 사람이 버튼을 눌러 연장. */
+    /** 연장 요청. 사람이 콘솔에서 올렸거나 warrantd 가 T-5분에 올렸다. 열려 있는 동안 승인 큐에 뜬다. */
+    EXTENSION_REQUESTED,
+
+    /** 승인자가 콘솔에서 승인해 연장. */
     EXTENDED,
 
     /**

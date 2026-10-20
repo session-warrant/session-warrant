@@ -6,7 +6,7 @@ public class WarrantController {
     // POST   /api/warrants                  발급 요청 (승인 전)
     // GET    /api/warrants/{id}             단건 — 계보 포함
     // GET    /api/warrants?subject=&state=  목록
-    // POST   /api/warrants/{id}/extend      연장 요청 또는 승인
+    // POST   /api/warrants/{id}/extensions  연장 요청 (영장 주체 본인). 승인은 /api/approvals
     // DELETE /api/warrants/{id}             회수
     //
     // 주의: 만료를 여기서 "실행"하는 엔드포인트를 만들지 말 것.
@@ -25,7 +25,7 @@ public class WarrantController {
         throw new UnsupportedOperationException("미구현");
     }
 
-    public Object extend(/* UUID id, ExtendRequest body */) {
+    public Object requestExtension(/* UUID id, ExtensionRequest body, Authentication auth */) {
         throw new UnsupportedOperationException("미구현");
     }
 
