@@ -1,13 +1,25 @@
 package io.seswar.warrant.domain.node;
 
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
 import java.time.Instant;
 import java.util.Set;
 import java.util.UUID;
 
 /** 영장을 집행하는 호스트. warrantd 한 대가 한 노드다. */
-// @Entity @Table(name = "node")
+@Entity
+@Table(name = "node")
 public class Node {
 
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
     /**
@@ -15,9 +27,11 @@ public class Node {
      * {@code (node_id, seq_epoch, node_seq)} 의 node_id 는 이 값으로 찾은 {@link #id} 다.
      * {@code NodeHello.hostname} 은 노드 자기 신고라 키로 쓰지 않는다.
      */
+    @Column(nullable = false, unique = true)
     private String clientCertFingerprint;
 
     /** 노드가 신고한 hostname. 인증서의 것과 다르면 경보한다. */
+    @Column(nullable = false)
     private String hostname;
 
     private String kernelVersion;
@@ -36,6 +50,8 @@ public class Node {
      * 지금 붙어 있는 훅 ({@code NodeHello.attached_hooks}). 훅을 하나씩 붙이는 동안
      * "이 노드는 file_open 을 아직 안 본다"를 알아야 빈 데이터를 "아무 일 없음"으로 오해하지 않는다.
      */
+    @JdbcTypeCode(SqlTypes.ARRAY)  // TEXT[]
+    @Column(nullable = false)
     private Set<String> attachedHooks;
 
     /** 현재 감사 seq epoch. bbolt 가 초기화되면 바뀐다 — 바뀐 사실 자체가 조사 대상이다. */

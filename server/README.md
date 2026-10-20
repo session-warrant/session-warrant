@@ -56,6 +56,31 @@ io.seswar.warrant
 - **대가:** 승인자에게 푸시가 가지 않으므로 승인 지연이 늘 수 있다. 짧은 기본 기간(§03)이 굴러가려면
   연장이 싸야 한다 — 그래서 read-only 영장의 정책 자동 승인(`warrant.extension.auto-approve`)을 유지한다.
 
+## 감사 수집 — 재전송 멱등
+
+warrantd → `AuditIngestGrpcService`(gRPC 스트림) → `AuditIngestService.ingest` → PostgreSQL.
+**`AuditBatch` 하나 = `ingest` 호출 하나 = 트랜잭션 하나 = ack 하나.**
+
+- **중복 수신을 전제로 한다.** warrantd 는 ack 를 못 받으면 마지막 ack 이후를 다시 보낸다. 보내는 쪽에서
+  중복을 막는 대신 받는 쪽이 멱등하게 받는다.
+- **멱등 키.** 감사 이벤트 · 무영장 세션은 `(node_id, seq_epoch, node_seq)`, 유실 구간은 구간 자체
+  `(node_id, from_at, to_at, cause)`. 셋 다 DB UNIQUE 로 걸려 있다(V1 · V2). `seq_epoch` 가 키에 없으면
+  bbolt 초기화 뒤 1 로 돌아간 `node_seq` 의 새 이벤트가 중복으로 버려진다.
+- **저장 순서.** 이미 있는 키를 배치의 seq 범위로 한 번에 조회해 빼고(같은 배치 안의 중복도 뺀다),
+  남은 것만 `saveAllAndFlush`. 조회와 저장 사이에 같은 키가 끼어들면 UNIQUE 가 막고 배치 전체가 롤백된다 —
+  ack 가 안 나가니 재전송 때 건너뛴다.
+- **flush 는 `ingest` 안에서 한다.** 커밋 때로 미루면 UNIQUE 위반이 이 메서드 밖에서 터진다.
+  ack 를 보내기 전에, `ingest` 가 예외로 끝나야 한다.
+- **세 테이블을 한 트랜잭션으로 묶는다.** 반쯤 저장된 배치가 남으면 그 뒤의 ack 가 거짓이 된다.
+- **ack 는 `ingest` 가 정상 반환한 뒤에만.** 저장 전에 ack 하면 서버가 죽었을 때 warrantd 는 이미 지운 기록을
+  다시 보낼 수 없다.
+- **배치 안의 행은 전부 그 스트림의 노드 것이어야 한다.** 섞이면 거부한다 — 남의 노드 이름으로 기록된다.
+- **수집 경로에서 조인하지 않는다.** `kernelSubjectId` → 주체 이름은 조회 시점에 붙인다. 수집 경로에 넣으면
+  처리량이 주체 테이블 락에 묶인다.
+- **경보는 보내지 않는다.** 무영장 세션 · 자기보호 히트 경보는 Grafana 가 이 테이블들을 읽어 건다.
+- **적재는 Hibernate JDBC 배치**(`hibernate.jdbc.batch_size: 100`). 쿼리가 "조회 1 + INSERT" 라 예전
+  `INSERT … ON CONFLICT` 한 번보다 많다. 수집량이 병목이 되면 `audit_event` 하나만 `ON CONFLICT` 로 되돌린다.
+
 ## 의존성에서 한 번 걸리는 지점
 
 Spring Boot 4 는 Boot 3 과 스타터 좌표가 다르고, gRPC 는 아예 소속이 바뀌었다.
