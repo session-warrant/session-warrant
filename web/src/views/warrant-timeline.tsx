@@ -1,75 +1,102 @@
-import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardAction } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { EventTable } from "@/components/event-table"
 import { ModeChip } from "@/components/pills"
-import { NOW, MIN, events, gaps, subjects, warrants, warrantById } from "@/data"
-import { blocked, type Filters } from "@/lib/filters"
+import { Deed, GRACE, STATUS_KO, statusOf } from "@/components/warrant-card"
+import { NOW, MIN, events, gaps, warrantById, type Warrant } from "@/data"
+import { blocked, warrantsIn, type Filters } from "@/lib/filters"
 import { fmtHM, fmtN, rel, subjName } from "@/lib/format"
 import { cn } from "@/lib/utils"
 
 interface Props { filters: Filters; warrant: string | null; setWarrant: (id: string) => void; onOpenEvent: (id: string) => void }
-const ON = { downgrade: "강등 — 세션은 살고 권한만 죽는다", kill: "종료 — scope 프로세스 일괄 종료", grace: "유예 — 세션만 자르고 백그라운드 잡은 grace 까지" }
+/** 유효기간 띠 — 발급 · 만료 · 유예 · 지금을 한 축에. 30분 눈금. */
+function ValidityBand({ w }: { w: Warrant }) {
+  const graceEnd = w.on_expiry === "grace" ? w.expires + GRACE : null
+  const t0 = w.lineage[0].t, t1 = Math.max(graceEnd ?? w.expires, NOW) + 5 * MIN
+  const px = (t: number) => ((t - t0) / (t1 - t0)) * 100
+  const ticks: number[] = []
+  for (let t = Math.ceil(t0 / (30 * MIN)) * 30 * MIN; t < t1; t += 30 * MIN) ticks.push(t)
+  const exts = w.lineage.filter((l) => l.kind.startsWith("연장"))
+  return (
+    <div>
+      <div className="relative h-7 rounded-[4px] bg-muted" role="img" aria-label={`유효 ${fmtHM(w.issued)}–${fmtHM(w.expires)}`}>
+        <div className="absolute inset-y-0 rounded-l-[4px] border-r-2 border-foreground bg-accent" style={{ left: `${px(w.issued)}%`, width: `${px(w.expires) - px(w.issued)}%` }}>
+          <span className="absolute left-0 top-1/2 -translate-y-1/2 px-2 font-mono text-[11px] text-ink-2">유효</span>
+        </div>
+        {graceEnd && <div className="hatch-warn absolute inset-y-0 rounded-r-[4px]" style={{ left: `${px(w.expires)}%`, width: `${px(graceEnd) - px(w.expires)}%` }}><span className="absolute left-0 top-1/2 -translate-y-1/2 px-2 font-mono text-[11px] text-warn">유예</span></div>}
+        {exts.map((l) => <span key={l.t} title={`${l.kind} · ${l.who}`} className="absolute -top-1 size-2 -translate-x-1/2 rotate-45 bg-foreground" style={{ left: `${px(l.t)}%` }} />)}
+        <div className="absolute -inset-y-1.5 w-0.5 -translate-x-1/2 rounded bg-deny" style={{ left: `${px(NOW)}%` }}>
+          <span className="absolute -top-5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-deny px-1.5 font-mono text-[10.5px] font-semibold leading-4 text-white dark:text-black">지금</span>
+        </div>
+      </div>
+      <div className="relative mt-1.5 h-4 font-mono text-[10.5px] text-muted-foreground">
+        {ticks.filter((t) => px(t) > 3 && px(t) < 96).map((t) => <span key={t} className="absolute -translate-x-1/2 whitespace-nowrap" style={{ left: `${px(t)}%` }}>{fmtHM(t)}</span>)}
+      </div>
+      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+        <span className="flex items-center gap-1.5"><span className="size-2 rotate-45 bg-foreground" />연장 승인</span>
+        <span className="flex items-center gap-1.5"><span className="h-2.5 w-0.5 bg-deny" />기준 시각</span>
+        {graceEnd && <span className="flex items-center gap-1.5"><span className="hatch-warn size-2.5 rounded-[2px]" />유예</span>}
+      </div>
+    </div>
+  )
+}
 
 export function WarrantTimeline({ filters, warrant, setWarrant, onOpenEvent }: Props) {
-  const ws = warrants.filter((w) => filters.node === "all" || w.node === filters.node)
+  // 보고 있는 시간 창과 겹치는 영장만 — 과거로 스크롤하면 그때의 영장이 나온다
+  const ws = warrantsIn(filters)
   const w = (warrant && ws.find((x) => x.id === warrant)) ? warrantById[warrant] : ws[0]
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap gap-2">
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4" role="tablist" aria-label="영장">
         {ws.map((x) => {
-          const status = x.expires > NOW ? `만료 ${rel(x.expires)}` : x.on_expiry === "grace" ? "유예 중" : "만료됨"
-          const on = w?.id === x.id
+          const st = statusOf(x), on = w?.id === x.id
+          const pct = Math.max(0, Math.min(100, ((NOW - x.issued) / (x.expires - x.issued)) * 100))
           return (
-            <button key={x.id} onClick={() => setWarrant(x.id)} aria-pressed={on}
-              className={cn("flex min-w-[210px] flex-col gap-0.5 rounded-md border bg-card px-3 py-2 text-left hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring", on && "border-primary bg-accent hover:bg-accent")}>
-              <span className="flex items-center gap-1.5 font-mono text-[13px] font-semibold">{x.id} <ModeChip mode={x.mode} /></span>
-              <span className="text-xs text-foreground/70">{subjName(x.subject)} · {x.node} · {status}</span>
+            <button key={x.id} role="tab" onClick={() => setWarrant(x.id)} aria-selected={on}
+              className={cn("flex flex-col gap-1.5 rounded-md border bg-card px-3 py-2.5 text-left transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring", on && "border-foreground ring-1 ring-foreground")}>
+              <span className="flex items-center justify-between gap-1.5"><span className="font-mono text-[13px] font-semibold">{x.id}</span><ModeChip mode={x.mode} /></span>
+              <span className="truncate text-xs text-ink-2">{subjName(x.subject)} · <span className="font-mono">{x.node}</span></span>
+              <span className="flex items-center gap-2">
+                <span className="h-1 flex-1 overflow-hidden rounded-full bg-muted"><span className={cn("block h-full", st === "active" ? "bg-foreground" : st === "grace" ? "bg-warn" : "bg-muted-foreground/50")} style={{ width: `${pct}%` }} /></span>
+                <span className={cn("font-mono text-[10.5px]", st === "grace" ? "text-warn" : "text-muted-foreground")}>{st === "active" ? rel(x.expires) : STATUS_KO[st]}</span>
+              </span>
             </button>
           )
         })}
       </div>
-      {!w ? <Card><CardContent className="py-8 text-center text-sm text-muted-foreground">이 노드에는 영장이 없습니다</CardContent></Card> : (() => {
-        const graceEnd = w.on_expiry === "grace" ? w.expires + 120 * MIN : null
-        const t0 = w.lineage[0].t, t1 = Math.max(graceEnd ?? w.expires, NOW) + 5 * MIN
-        const px = (t: number) => ((t - t0) / (t1 - t0)) * 100
+      {!w ? <Card><CardContent className="py-8 text-center text-sm text-muted-foreground">이 기간 · 노드에는 영장이 없습니다</CardContent></Card> : (() => {
         const ev = events.filter((e) => e.warrant === w.id)
         const gs = gaps.filter((g) => g.node === w.node && g.from >= w.issued)
+        const lineage = [...w.lineage.map((l) => ({ ...l, now: false })), ...(w.expires > NOW ? [{ t: NOW, kind: "지금", who: `만료까지 ${rel(w.expires).replace(" 후", "")}`, note: "", now: true }] : [])]
         return (<>
-          <Card>
-            <CardHeader>
-              <CardTitle className="font-mono text-sm">{w.id}</CardTitle><CardDescription>{w.reason}</CardDescription>
-              <CardAction className="text-xs text-muted-foreground">발급 {fmtHM(w.issued)} · {rel(w.issued)}</CardAction>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-4">
-              <div className="grid gap-3 text-xs md:grid-cols-2 xl:grid-cols-4">
-                <div><div className="text-[11px] uppercase tracking-wider text-muted-foreground">주체</div><div className="mt-0.5">{subjName(w.subject)} <span className="text-muted-foreground">{subjects[w.subject].email}</span></div></div>
-                <div><div className="text-[11px] uppercase tracking-wider text-muted-foreground">대상 · 바인딩</div><div className="mt-0.5">{w.node} <span className="font-mono text-muted-foreground">{w.session} → cgroup {w.cgroup}</span></div></div>
-                <div><div className="text-[11px] uppercase tracking-wider text-muted-foreground">정책</div><div className="mt-0.5">
-                  write {w.policy.write.length ? w.policy.write.map((p) => <span key={p} className="font-mono">{p}</span>) : <span className="text-muted-foreground">없음(read-only)</span>} · exec {w.policy.exec} · net {w.policy.net.length ? w.policy.net.map((p) => <span key={p} className="font-mono">{p}</span>) : <span className="text-muted-foreground">전면 차단</span>}
-                </div></div>
-                <div><div className="text-[11px] uppercase tracking-wider text-muted-foreground">모드 · 만료 동작</div><div className="mt-0.5 flex items-center gap-1.5"><ModeChip mode={w.mode} /> {ON[w.on_expiry]}</div></div>
-              </div>
-              {/* 유효기간 띠 */}
-              <div className="relative h-[22px] overflow-hidden rounded bg-muted" aria-hidden>
-                <div className="absolute inset-y-0 border-r-2 border-primary bg-accent" style={{ left: `${px(w.issued)}%`, width: `${px(w.expires) - px(w.issued)}%` }}><span className="absolute top-[3px] px-1.5 font-mono text-[11px] text-foreground/70">발급 {fmtHM(w.issued)}</span></div>
-                {graceEnd && <div className="hatch-warn absolute inset-y-0" style={{ left: `${px(w.expires)}%`, width: `${px(graceEnd) - px(w.expires)}%` }}><span className="absolute top-[3px] px-1.5 font-mono text-[11px] text-foreground/70">유예 → {fmtHM(graceEnd)}</span></div>}
-                <div className="absolute inset-y-0 w-0.5 bg-deny" style={{ left: `${px(NOW)}%` }} />
-                <span className="absolute right-0 top-[3px] px-1.5 font-mono text-[11px] text-foreground/70">만료 {fmtHM(w.expires)}</span>
-              </div>
-              {/* 계보 */}
-              <ol className="flex flex-col">
-                {[...w.lineage.map((l) => ({ ...l, now: false })), ...(w.expires > NOW ? [{ t: NOW, kind: "지금", who: `만료까지 ${rel(w.expires).replace(" 후", "")}`, note: "", now: true }] : [])].map((l, i, arr) => (
-                  <li key={i} className="relative grid grid-cols-[62px_18px_1fr] gap-x-2.5 pb-3.5">
-                    {i < arr.length - 1 && <span className="absolute left-[80px] top-3.5 -bottom-0.5 w-0.5 bg-input" aria-hidden />}
-                    <span className="pt-px font-mono text-xs text-foreground/70">{fmtHM(l.t)}</span>
-                    <span className={cn("z-[1] mt-1 ml-1 size-2.5 rounded-full border-2 border-primary bg-card", /만료/.test(l.kind) && "border-muted-foreground bg-muted-foreground", l.now && "border-deny bg-deny")} />
-                    <span className="text-xs"><span className="font-semibold">{l.kind}</span> <span className="text-foreground/70">· {l.who}</span>{l.note && <><br /><span className="mt-0.5 inline-block rounded bg-muted px-2 py-1 text-foreground/80">{l.note}</span></>}</span>
-                  </li>
-                ))}
-              </ol>
-            </CardContent>
-          </Card>
-          <Card className="pb-0">
+          <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
+            <div className="flex flex-col gap-4">
+              <Deed w={w} />
+              <Card className="gap-6">
+                <CardHeader><CardTitle className="text-sm">유효기간</CardTitle></CardHeader>
+                <CardContent><ValidityBand w={w} /></CardContent>
+              </Card>
+            </div>
+            <Card className="gap-4">
+              <CardHeader><CardTitle className="text-sm">계보</CardTitle></CardHeader>
+              <CardContent>
+                <ol className="flex flex-col">
+                  {lineage.map((l, i, arr) => (
+                    <li key={i} className="relative grid grid-cols-[44px_14px_1fr] gap-x-3 pb-4 last:pb-0">
+                      {i < arr.length - 1 && <span className="absolute left-[62px] top-4 -bottom-0.5 w-px bg-input" aria-hidden />}
+                      <span className="pt-px font-mono text-xs text-muted-foreground">{fmtHM(l.t)}</span>
+                      <span className={cn("z-[1] mt-1 size-3 rounded-full border-2 border-foreground bg-card", /만료/.test(l.kind) && "border-muted-foreground bg-muted-foreground", l.now && "border-deny bg-deny ring-4 ring-deny/15")} />
+                      <span className="text-[13px]">
+                        <span className={cn("font-semibold", l.now && "text-deny")}>{l.kind}</span> <span className="text-xs text-muted-foreground">· {l.who}</span>
+                        {l.note && <span className="mt-1 block rounded-[4px] border-l-2 border-input bg-muted/60 px-2.5 py-1.5 text-xs text-ink-2">{l.note}</span>}
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+              </CardContent>
+            </Card>
+          </div>
+          <Card className="gap-4 pb-0">
             <CardHeader><CardTitle className="text-sm">이 영장의 이벤트</CardTitle><CardDescription>{fmtN(ev.length)}건 · 차단 {fmtN(ev.filter(blocked).length)} · 유실 구간 {gs.length}</CardDescription></CardHeader>
             <EventTable events={ev} gaps={gs} onSelect={onOpenEvent} />
           </Card>

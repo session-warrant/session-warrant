@@ -3,10 +3,10 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* 흑백 톤. 색은 판정 시리즈·경보 강조에만 남긴다. */
+/* 흑백 원장 톤. 색은 판정 3색 · 경보에만 쓴다. */
 :root {
-  --radius: 0.5rem;
-  --background: #f2f2f2;
+  --radius: 0.375rem;
+  --background: #f2f2f0;
   --foreground: #111111;
   --card: #ffffff;
   --card-foreground: #111111;
@@ -14,55 +14,64 @@
   --popover-foreground: #111111;
   --primary: #111111;
   --primary-foreground: #ffffff;
-  --secondary: #e8e8e8;
+  --secondary: #eaeae7;
   --secondary-foreground: #111111;
-  --muted: #ececec;
-  --muted-foreground: #6b6b6b;
-  --accent: #e4e4e4;
+  --muted: #eaeae7;
+  --muted-foreground: #6b6b68;
+  --ink-2: #434341;
+  --accent: #e4e4e0;
   --accent-foreground: #111111;
   --destructive: #b33a32;
-  --border: #dcdcdc;
-  --input: #c4c4c4;
+  --border: #dcdcd8;
+  --input: #c4c4bf;
   --ring: #111111;
-  /* 판정 시리즈 — validate_palette.js 통과 (light). 여기만 색이 있다 */
+  --sidebar: #fafaf8;
+  /* 판정 시리즈 — validate_palette.js 통과 (light, #fff). 여기만 색이 있다 */
   --v-allow: #1f8a4c;
   --v-would: #4e5bc7;
   --v-deny: #b33a32;
-  --gap-ink: #6b6b6b;
+  --gap-ink: #6b6b68;
   --warn: #8a5a0a;
   --warn-wash: #f5ebd5;
   --deny-wash: #f6e4e2;
+  --allow-wash: #e2f1e8;
+  --would-wash: #e6e8f7;
   --chart-1: var(--v-allow);
   --chart-2: var(--v-would);
   --chart-3: var(--v-deny);
 }
 
 .dark {
-  --background: #0b0b0b;
-  --foreground: #ececec;
-  --card: #151515;
-  --card-foreground: #ececec;
-  --popover: #1c1c1c;
-  --popover-foreground: #ececec;
-  --primary: #ececec;
-  --primary-foreground: #0b0b0b;
-  --secondary: #202020;
-  --secondary-foreground: #ececec;
-  --muted: #1f1f1f;
-  --muted-foreground: #8a8a8a;
-  --accent: #262626;
+  --background: #0c0c0b;
+  --foreground: #ececea;
+  --card: #161615;
+  --card-foreground: #ececea;
+  --popover: #1b1b1a;
+  --popover-foreground: #ececea;
+  --primary: #ececea;
+  --primary-foreground: #0c0c0b;
+  --secondary: #20201e;
+  --secondary-foreground: #ececea;
+  --muted: #20201e;
+  --muted-foreground: #8b8b87;
+  --ink-2: #ababa7;
+  --accent: #262624;
   --accent-foreground: #ffffff;
-  --destructive: #e4756b;
-  --border: #272727;
-  --input: #3a3a3a;
-  --ring: #ececec;
+  --destructive: #e06a60;
+  --border: #282826;
+  --input: #3b3b38;
+  --ring: #ececea;
+  --sidebar: #111110;
+  /* validate_palette.js 통과 (dark, #161615) */
   --v-allow: #3fa86e;
   --v-would: #7c88e6;
   --v-deny: #e06a60;
-  --gap-ink: #8a8a8a;
+  --gap-ink: #8b8b87;
   --warn: #e0a93a;
   --warn-wash: #2b2210;
   --deny-wash: #2c1715;
+  --allow-wash: #12261a;
+  --would-wash: #1b1e36;
 }
 
 @theme inline {
@@ -98,13 +107,18 @@
   --color-warn: var(--warn);
   --color-warn-wash: var(--warn-wash);
   --color-deny-wash: var(--deny-wash);
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", "Liberation Mono", monospace;
+  --color-allow-wash: var(--allow-wash);
+  --color-would-wash: var(--would-wash);
+  --color-ink-2: var(--ink-2);
+  --color-sidebar: var(--sidebar);
+  --font-sans: "IBM Plex Sans KR", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", monospace;
 }
 
 @layer base {
   * { @apply border-border outline-ring/50; }
-  body { @apply bg-background text-foreground; -webkit-font-smoothing: antialiased; }
+  body { @apply bg-background text-foreground; -webkit-font-smoothing: antialiased; word-break: keep-all; overflow-wrap: anywhere; }
+  .font-mono { font-variant-numeric: tabular-nums; }
 }
 
 /* 감사 유실 구간 — 빗금. 숨기지 않는다. */
@@ -114,3 +128,13 @@
 .hatch-warn {
   background: repeating-linear-gradient(45deg, transparent 0 5px, color-mix(in srgb, var(--warn) 30%, transparent) 5px 6px);
 }
+
+/* 선택과 호버를 다르게 — shadcn 기본은 둘 다 bg-accent 라 구분이 안 된다.
+   선택은 반전, 호버는 옅은 회색. components/ui 는 CLI 생성물이라 여기서 덮는다. */
+[data-slot="toggle-group-item"]:hover { background: var(--muted); color: var(--foreground); }
+[data-slot="toggle-group-item"][data-state="on"] { background: var(--foreground); color: var(--background); border-color: var(--foreground); }
+[data-slot="toggle-group-item"][data-state="on"]:hover { background: color-mix(in srgb, var(--foreground) 88%, var(--background)); }
+[data-slot="select-item"]:focus, [data-slot="select-item"][data-highlighted] { background: var(--accent); color: var(--foreground); }
+[data-slot="select-item"][data-state="checked"] { font-weight: 600; }
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
