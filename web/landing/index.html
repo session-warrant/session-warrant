@@ -1,0 +1,806 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Session Warrant</title>
+<meta name="description" content="SSH 세션의 범위와 기한을 리눅스 커널이 집행하는 오픈소스. 각자의 서버에 직접 설치해 운영합니다.">
+<meta property="og:title" content="Session Warrant">
+<meta property="og:description" content="SSH 세션에 영장을 붙이고, 커널이 집행합니다. 오픈소스.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pretendard@1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap">
+<style>
+/* 다크 단일 테마 · 에디토리얼 스플릿 히어로 → 지표 띠 → 비교 → 콘솔 → 벤토 → 흐름 → 표 → 단계 → FAQ → 풀블리드 CTA */
+:root {
+  color-scheme: dark;
+  --bg: #09090B;
+  --bg-2: #0E0E11;
+  --surface: #141417;
+  --surface-2: #1B1B1F;
+  --line: rgba(255,255,255,.07);
+  --line-2: rgba(255,255,255,.13);
+  --ink: #EDEDEF;
+  --ink-2: #A1A1AA;
+  --ink-3: #71717A;
+  --accent: #E2675E;
+  --accent-wash: rgba(226,103,94,.12);
+  --allow: #3FA86E;
+  --would: #7C88E6;
+  --warn: #D9A441;
+  --kr: "Pretendard Variable", "Pretendard", "Geist", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --en: "Geist", "Pretendard Variable", "Pretendard", system-ui, sans-serif;
+  --mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --ease: cubic-bezier(.16, 1, .3, 1);
+  --wrap: 1200px;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 400 16px/1.7 var(--kr); -webkit-font-smoothing: antialiased; word-break: keep-all; overflow-wrap: anywhere; }
+body::after { content: ""; position: fixed; inset: 0; z-index: 60; pointer-events: none; opacity: .035; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+h1, h2, h3, h4 { margin: 0; font-weight: 700; text-wrap: balance; }
+p { margin: 0; }
+a { color: inherit; text-decoration: none; }
+code, .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; border-radius: 6px; }
+.ic { width: 1em; height: 1em; flex: none; }
+.wrap { max-width: var(--wrap); margin-inline: auto; padding-inline: clamp(16px, 4vw, 32px); }
+section { padding-block: clamp(96px, 12vw, 160px); position: relative; }
+.shade { background: var(--bg-2); }
+
+/* 아이브로 · 섹션 머리 */
+.eyebrow { display: inline-flex; align-items: center; gap: 8px; width: max-content; border-radius: 999px; padding: 5px 12px; font: 500 11px/1.4 var(--mono); letter-spacing: .15em; text-transform: uppercase; background: var(--accent-wash); color: var(--accent); }
+.head { display: grid; gap: 18px; max-width: 680px; margin-bottom: clamp(48px, 6vw, 72px); }
+.head h2 { font-size: clamp(30px, 4.2vw, 48px); line-height: 1.22; letter-spacing: -.035em; }
+.head p { color: var(--ink-2); font-size: clamp(16px, 1.5vw, 18px); }
+
+/* 버튼 — 알약 + 중첩 화살표 */
+.btn { display: inline-flex; align-items: center; gap: 14px; border-radius: 999px; padding: 8px 8px 8px 26px; min-height: 52px; font: 600 16px/1 var(--kr); cursor: pointer; border: 0; transition: transform .5s var(--ease), box-shadow .5s var(--ease), background .5s var(--ease); }
+.btn .arr { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; font-size: 17px; transition: transform .5s var(--ease); }
+.btn:hover { transform: scale(1.02); }
+.btn:hover .arr { transform: translateX(3px); }
+.btn:active { transform: scale(.98); }
+.btn-light { background: var(--ink); color: var(--bg); }
+.btn-light .arr { background: rgba(0,0,0,.08); }
+.btn-light:hover { box-shadow: 0 0 36px rgba(237,237,239,.14); }
+.btn-ghost { background: transparent; color: var(--ink); padding: 8px 26px; box-shadow: inset 0 0 0 1px var(--line-2); }
+.btn-ghost:hover { box-shadow: inset 0 0 0 1px var(--ink-2); }
+
+/* 이중 베젤 */
+.bezel { padding: 6px; border-radius: 28px; background: rgba(255,255,255,.03); box-shadow: inset 0 0 0 1px var(--line); }
+.core { border-radius: 22px; background: var(--surface); box-shadow: inset 0 1px 1px rgba(255,255,255,.06); overflow: hidden; }
+
+/* ── 내비: 떠 있는 유리 알약 ─────────────────────── */
+.nav { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 16px); left: 50%; transform: translateX(-50%); z-index: 40; width: max-content; max-width: calc(100% - 24px); display: flex; align-items: center; gap: 6px; padding: 6px 6px 6px 18px; border-radius: 999px; background: rgba(20,20,23,.62); backdrop-filter: blur(20px) saturate(1.3); -webkit-backdrop-filter: blur(20px) saturate(1.3); box-shadow: inset 0 0 0 1px var(--line-2), inset 0 1px 0 rgba(255,255,255,.08), 0 12px 32px -12px rgba(0,0,0,.6); }
+.logo { display: inline-flex; align-items: center; gap: 9px; font: 600 15px/1 var(--en); letter-spacing: -.01em; white-space: nowrap; }
+.logo-mark { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 6px; background: var(--ink); color: var(--bg); font: 600 11px/1 var(--mono); letter-spacing: .02em; }
+.nav-links { display: flex; margin-left: 18px; }
+.nav-links a { padding: 8px 13px; border-radius: 999px; font-size: 14px; color: var(--ink-2); transition: color .5s var(--ease), background .5s var(--ease); }
+.nav-links a:hover { color: var(--ink); background: rgba(255,255,255,.05); }
+.nav .btn { min-height: 38px; padding: 0 18px; font-size: 14px; margin-left: 10px; }
+@media (max-width: 860px) { .nav-links { display: none; } }
+
+/* ── 히어로 ─────────────────────────────────────── */
+.hero { padding-block: clamp(140px, 16vw, 200px) clamp(80px, 10vw, 128px); overflow: hidden; }
+.orb { position: absolute; border-radius: 50%; pointer-events: none; filter: blur(10px); animation: float 9s ease-in-out infinite; }
+.orb.a { width: 620px; height: 620px; right: -160px; top: -120px; background: radial-gradient(circle, rgba(226,103,94,.16), transparent 62%); }
+.orb.b { width: 520px; height: 520px; left: -220px; bottom: -260px; background: radial-gradient(circle, rgba(161,161,170,.08), transparent 65%); animation-delay: -4s; }
+@keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-16px); } }
+.hero .wrap { position: relative; display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: clamp(48px, 6vw, 88px); align-items: center; }
+.hero h1 { font-size: clamp(40px, 6vw, 72px); line-height: 1.16; letter-spacing: -.045em; margin-top: 24px; }
+.hero h1 span { color: var(--accent); }
+.hero .lede { margin-top: 26px; font-size: clamp(17px, 1.6vw, 19px); color: var(--ink-2); max-width: 30em; }
+.hero .ctas { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 40px; }
+@media (max-width: 960px) { .hero .wrap { grid-template-columns: minmax(0, 1fr); } }
+
+.exhibit { position: relative; }
+.deed { position: relative; z-index: 2; background: var(--surface); border-radius: 16px; margin-right: clamp(0px, 5vw, 56px); overflow: hidden; box-shadow: inset 0 0 0 1px var(--line-2), inset 0 1px 0 rgba(255,255,255,.06), 0 30px 60px -28px rgba(0,0,0,.9); }
+.deed-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 18px 22px 0; }
+.deed-label { display: block; font: 500 11px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); }
+.deed-no { display: block; margin-top: 7px; font: 600 18px/1 var(--mono); letter-spacing: -.01em; }
+.state { display: inline-flex; align-items: center; gap: 7px; padding: 5px 11px; border-radius: 999px; font-size: 12.5px; font-weight: 600; color: var(--allow); background: rgba(63,168,110,.13); }
+.state::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.deed dl { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 8px 14px; margin: 0; padding: 18px 22px 20px; font-size: 13.5px; }
+.deed dt { color: var(--ink-3); font-size: 12.5px; }
+.deed dd { margin: 0; min-width: 0; }
+.deed .tok { font: 500 12.5px var(--mono); background: var(--surface-2); padding: 1px 6px; border-radius: 4px; }
+.deed-foot { display: flex; justify-content: space-between; gap: 12px; padding: 11px 22px; background: var(--surface-2); border-top: 1px solid var(--line); font: 400 11.5px/1.4 var(--mono); color: var(--ink-3); }
+
+.term { position: relative; z-index: 1; margin: -22px 0 0 clamp(0px, 5vw, 56px); padding: 40px 0 14px; border-radius: 16px; background: #111113; box-shadow: inset 0 0 0 1px var(--line-2), inset 0 1px 0 rgba(255,255,255,.06), 0 30px 60px -30px rgba(0,0,0,.9); font: 400 13px/1.6 var(--mono); overflow: hidden; }
+.tl { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; gap: 10px; padding: 3px 18px; align-items: baseline; transition: background .5s var(--ease); }
+.tl.on { background: rgba(255,255,255,.04); }
+.tl .t { color: var(--ink-3); }
+.tl .c { min-width: 0; }
+.tl .c b { color: #8FB0FF; font-weight: 400; }
+.tl .why { grid-column: 2 / 4; color: var(--ink-3); font-size: 12px; margin-top: -2px; }
+.r { font-size: 11px; font-weight: 600; letter-spacing: .04em; padding: 1px 8px; border-radius: 999px; white-space: nowrap; }
+.r.allow { color: #6FD39A; background: rgba(63,168,110,.14); }
+.r.deny { color: #FF8D84; background: rgba(226,103,94,.16); }
+.tl.exp { margin-top: 6px; padding-top: 9px; border-top: 1px dashed var(--line-2); color: var(--warn); }
+.tl.exp .c { grid-column: 2 / 4; }
+.cursor { display: inline-block; width: 7px; height: 14px; background: var(--ink); vertical-align: -2px; animation: blink 1.1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+
+/* ── 지표 띠 ─────────────────────────────────────── */
+.metrics { padding-block: 0; }
+.metrics .wrap { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-block: 1px solid var(--line); }
+.m { padding: 34px 28px 32px 0; display: grid; gap: 6px; min-width: 0; }
+.m + .m { padding-left: 28px; border-left: 1px solid var(--line); }
+.m b { font: 600 clamp(34px, 4vw, 48px)/1 var(--en); letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
+.m b small { font-size: .42em; font-weight: 500; color: var(--ink-3); margin-left: 4px; letter-spacing: 0; }
+.m span { font-size: 14px; color: var(--ink-2); }
+.metrics-note { padding-top: 14px; font: 400 12px var(--mono); color: var(--ink-3); }
+@media (max-width: 860px) { .metrics .wrap { grid-template-columns: repeat(2, minmax(0, 1fr)); } .m:nth-child(3) { padding-left: 0; border-left: 0; } .m:nth-child(n+3) { border-top: 1px solid var(--line); } }
+
+/* ── 비교 ───────────────────────────────────────── */
+.vs { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: clamp(40px, 6vw, 96px); align-items: start; }
+.vs .head { position: sticky; top: 120px; margin-bottom: 0; }
+.vs-rows { display: grid; }
+.vs-row { display: grid; grid-template-columns: 112px minmax(0, 1fr) minmax(0, 1fr); gap: 18px; padding: 22px 0; border-bottom: 1px solid var(--line); align-items: baseline; }
+.vs-row:first-child { padding-top: 0; }
+.vs-row .k { font-size: 13px; color: var(--ink-3); }
+.vs-row .them { color: var(--ink-3); }
+.vs-row .us { font-weight: 600; display: flex; gap: 8px; align-items: baseline; }
+.vs-row .us .ic { color: var(--allow); transform: translateY(2px); }
+.vs-cap { display: grid; grid-template-columns: 112px minmax(0, 1fr) minmax(0, 1fr); gap: 18px; padding-bottom: 14px; font: 500 11px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); }
+@media (max-width: 900px) { .vs { grid-template-columns: minmax(0, 1fr); } .vs .head { position: static; } }
+@media (max-width: 560px) { .vs-row, .vs-cap { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .vs-row .k, .vs-cap span:first-child { grid-column: 1 / 3; } }
+
+/* ── 콘솔 목업 ───────────────────────────────────── */
+.frame-bar { display: flex; align-items: center; gap: 7px; padding: 12px 16px; border-bottom: 1px solid var(--line); font: 400 12px/1 var(--mono); color: var(--ink-3); }
+.frame-bar i { width: 10px; height: 10px; border-radius: 50%; background: var(--line-2); }
+.frame-bar span { margin-left: 10px; }
+.frame-bar em { margin-left: auto; font-style: normal; }
+.app { display: grid; grid-template-columns: 184px minmax(0, 1fr); font-size: 13px; line-height: 1.5; background: var(--bg); }
+.rail { border-right: 1px solid var(--line); padding: 18px 12px; display: flex; flex-direction: column; gap: 3px; background: var(--surface); }
+.rail .brand { font: 600 14px var(--en); padding: 0 8px 14px; }
+.rail .lbl { font: 500 10.5px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); padding: 10px 8px 3px; }
+.rail .it { display: flex; justify-content: space-between; padding: 6px 8px; border-radius: 6px; color: var(--ink-2); }
+.rail .it.cur { background: var(--surface-2); color: var(--ink); font-weight: 600; }
+.rail .n { font: 500 11px/1.6 var(--mono); color: var(--ink-3); }
+.rail .n.hot { color: var(--accent); }
+.mainc { min-width: 0; }
+.topbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 11px 20px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.topbar h5 { margin: 0; font-size: 15px; }
+.seg { display: inline-flex; border-radius: 6px; overflow: hidden; box-shadow: inset 0 0 0 1px var(--line-2); font-size: 11.5px; }
+.seg span { padding: 3px 9px; color: var(--ink-2); }
+.seg .on { background: var(--surface-2); color: var(--ink); font-weight: 600; }
+.sel { border-radius: 6px; box-shadow: inset 0 0 0 1px var(--line-2); padding: 3px 9px; font-size: 11.5px; color: var(--ink-2); }
+.topbar .now { margin-left: auto; font-size: 11.5px; color: var(--ink-3); }
+.body { padding: 16px 20px 20px; display: grid; gap: 12px; }
+.tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.tile { background: var(--surface); border-radius: 8px; box-shadow: inset 0 0 0 1px var(--line); border-left: 3px solid var(--line-2); padding: 11px 13px; display: grid; gap: 3px; min-width: 0; }
+.tile.crit { border-left-color: var(--accent); } .tile.gap { border-left-color: var(--ink-3); }
+.tile .l { font-size: 11.5px; color: var(--ink-2); }
+.tile .v { font: 600 25px/1.1 var(--en); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.tile .v small { font: 500 12px var(--kr); color: var(--ink-3); margin-left: 3px; }
+.tile .f { font-size: 11px; color: var(--ink-3); }
+.panel { background: var(--surface); border-radius: 8px; box-shadow: inset 0 0 0 1px var(--line); min-width: 0; }
+.ph { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 11px 14px 0; }
+.ph b { font-size: 13px; }
+.ph span { font-size: 11.5px; color: var(--ink-3); }
+.ph .rt { margin-left: auto; }
+.pb { padding: 10px 14px 12px; }
+.chart svg { display: block; width: 100%; height: auto; }
+.chart .grid { stroke: var(--line); }
+.chart .ax { fill: var(--ink-3); font: 400 10px var(--mono); }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 11px; color: var(--ink-2); margin-top: 6px; }
+.legend span { display: inline-flex; align-items: center; gap: 5px; }
+.sw { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+.sw.allow { background: var(--allow); } .sw.would { background: var(--would); } .sw.deny { background: var(--accent); }
+.sw.gap { box-shadow: inset 0 0 0 1px var(--ink-3); background: repeating-linear-gradient(45deg, var(--ink-3) 0 1.5px, transparent 1.5px 4px); }
+.two { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 12px; }
+.hbars { display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content; gap: 6px 10px; align-items: center; font-size: 11.5px; }
+.hbars .k { font: 400 11px var(--mono); color: var(--ink-3); }
+.hbars .bar { display: flex; gap: 2px; height: 9px; background: var(--surface-2); border-radius: 2px; overflow: hidden; }
+.hbars .bar i { display: block; height: 100%; }
+.hbars .n { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-2); }
+.hbars .n small { color: var(--ink-3); }
+.wl { display: grid; gap: 8px; }
+.wl-it { border-radius: 8px; box-shadow: inset 0 0 0 1px var(--line); padding: 8px 10px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; background: var(--surface); }
+.wl-it .h { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 12.5px; flex-wrap: wrap; min-width: 0; }
+.wl-it .h .mono { font-weight: 400; font-size: 11px; color: var(--ink-3); }
+.wl-it .meta { text-align: right; font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.wl-it .d { grid-column: 1 / 3; font-size: 11.5px; color: var(--ink-2); }
+.chip { display: inline-flex; align-items: center; font: 600 10px/1 var(--mono); letter-spacing: .03em; padding: 3px 7px; border-radius: 999px; }
+.chip.crit, .chip.deny { color: var(--accent); background: var(--accent-wash); }
+.chip.warn { color: var(--warn); background: rgba(217,164,65,.12); }
+.chip.would { color: var(--would); background: rgba(124,136,230,.13); }
+.chip.allow { color: var(--allow); background: rgba(63,168,110,.13); }
+.tablewrap { overflow-x: auto; }
+table.ev { width: 100%; border-collapse: collapse; font-size: 11.5px; min-width: 640px; }
+.ev th { text-align: left; font-weight: 500; color: var(--ink-3); background: var(--surface-2); padding: 6px 12px; white-space: nowrap; }
+.ev td { padding: 7px 12px; border-top: 1px solid var(--line); white-space: nowrap; }
+.ev td.obj { font-family: var(--mono); max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+.ev small { color: var(--ink-3); }
+@media (max-width: 1000px) { .app { grid-template-columns: minmax(0, 1fr); } .rail { display: none; } }
+@media (max-width: 760px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } .two { grid-template-columns: minmax(0, 1fr); } .topbar .now { margin-left: 0; width: 100%; } }
+
+/* ── 벤토 ───────────────────────────────────────── */
+.bento { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 16px; margin-top: 16px; }
+.bento > .bezel { grid-column: span 7; }
+.bento > .bezel.narrow { grid-column: span 5; }
+.bento .core { height: 100%; padding: 28px; display: flex; flex-direction: column; gap: 10px; }
+.bento .ico { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; font-size: 20px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); color: var(--ink); }
+.bento h3 { font-size: 20px; letter-spacing: -.025em; margin-top: 8px; }
+.bento p { font-size: 15px; color: var(--ink-2); }
+.frag { margin-top: auto; padding-top: 18px; }
+.frag-in { border-radius: 12px; background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); padding: 14px 16px; font-size: 12.5px; min-width: 0; }
+@media (max-width: 860px) { .bento > .bezel, .bento > .bezel.narrow { grid-column: span 12; } }
+.kv { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 6px 12px; margin: 0; }
+.kv dt { color: var(--ink-3); font-size: 11.5px; }
+.kv dd { margin: 0; min-width: 0; font: 400 12px var(--mono); }
+.kv dd.dim { color: var(--ink-3); text-decoration: line-through; text-decoration-color: var(--line-2); }
+.kv dd.strong { font-weight: 600; color: var(--ink); }
+.lineage { list-style: none; margin: 0; padding: 0 0 0 16px; border-left: 1px solid var(--line-2); display: grid; gap: 8px; }
+.lineage li { position: relative; display: grid; grid-template-columns: 42px 70px minmax(0, 1fr); gap: 8px; align-items: baseline; }
+.lineage li::before { content: ""; position: absolute; left: -20.5px; top: 6px; width: 8px; height: 8px; border-radius: 50%; background: var(--bg); box-shadow: inset 0 0 0 1.5px var(--ink-3); }
+.lineage li.key::before { background: var(--ink); box-shadow: none; }
+.lineage .t { font: 400 11.5px var(--mono); color: var(--ink-3); }
+.lineage .k { font-weight: 600; font-size: 12px; }
+.lineage .n { font-size: 12px; color: var(--ink-2); }
+.gaprow { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 12px; padding: 7px 10px; border-radius: 6px; font: 400 11.5px var(--mono); }
+.gaprow .t { color: var(--ink-3); }
+.gaprow.hatch { background: repeating-linear-gradient(45deg, transparent 0 6px, rgba(161,161,170,.16) 6px 7px); box-shadow: inset 0 0 0 1px var(--line-2); }
+
+/* ── 흐름 ───────────────────────────────────────── */
+.flow { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.flow li { padding-right: 24px; display: grid; gap: 10px; align-content: start; }
+.flow .n { display: flex; align-items: center; gap: 12px; font: 500 12px/1 var(--mono); color: var(--ink-3); }
+.flow .n::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, var(--line-2), transparent); }
+.flow li:last-child .n::after { opacity: 0; }
+.flow h3 { font-size: 19px; letter-spacing: -.02em; margin-top: 8px; }
+.flow p { font-size: 15px; color: var(--ink-2); }
+.flow .where { font: 400 12px var(--mono); color: var(--ink-3); }
+@media (max-width: 900px) { .flow { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 40px; } }
+@media (max-width: 520px) { .flow { grid-template-columns: minmax(0, 1fr); } }
+
+/* ── 표식 표 ─────────────────────────────────────── */
+.tag { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: clamp(40px, 6vw, 96px); align-items: center; }
+.tag .head { margin-bottom: 0; }
+table.prop { width: 100%; border-collapse: collapse; font-size: 14px; min-width: 460px; }
+.prop th { text-align: left; font: 500 11px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); padding: 0 12px 14px 0; }
+.prop td { padding: 15px 12px 15px 0; border-top: 1px solid var(--line); }
+.prop td:first-child { font: 400 13.5px var(--mono); }
+.prop .bit { text-align: center; width: 64px; font-family: var(--mono); color: var(--ink-2); }
+.prop .ok { font-weight: 600; }
+.prop .cut { color: var(--ink-3); }
+@media (max-width: 960px) { .tag { grid-template-columns: minmax(0, 1fr); } }
+
+/* ── 도입 단계 ───────────────────────────────────── */
+.track { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+.stage { padding: 26px 24px; display: grid; gap: 10px; align-content: start; border-radius: 22px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
+.stage .sn { display: flex; justify-content: space-between; align-items: center; font: 500 12px var(--mono); color: var(--ink-3); }
+.stage h3 { font-size: 20px; letter-spacing: -.02em; margin-top: 18px; }
+.stage p { font-size: 14.5px; color: var(--ink-2); }
+.stage.last { background: transparent; box-shadow: inset 0 0 0 1px var(--line-2); }
+.track-note { margin-top: 24px; font-size: 15px; color: var(--ink-2); }
+@media (max-width: 900px) { .track { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 520px) { .track { grid-template-columns: minmax(0, 1fr); } }
+
+/* ── FAQ: 나란히 놓은 목록 ─────────────────────────── */
+.qa { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 clamp(32px, 5vw, 72px); }
+.qa div { padding: 26px 0; border-top: 1px solid var(--line); display: grid; gap: 8px; }
+.qa h3 { font-size: 17px; letter-spacing: -.015em; }
+.qa p { font-size: 15px; color: var(--ink-2); }
+@media (max-width: 760px) { .qa { grid-template-columns: minmax(0, 1fr); } }
+
+/* ── CTA ───────────────────────────────────────── */
+.cta { overflow: hidden; }
+.cta::before { content: ""; position: absolute; inset: 0; background: radial-gradient(60% 70% at 85% 30%, rgba(226,103,94,.14), transparent 70%), radial-gradient(50% 60% at 10% 90%, rgba(161,161,170,.06), transparent 70%); pointer-events: none; }
+.cta .wrap { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(40px, 6vw, 96px); align-items: center; }
+.cta h2 { font-size: clamp(36px, 5.4vw, 64px); line-height: 1.15; letter-spacing: -.045em; }
+.cta .sub { margin-top: 20px; font-size: 18px; color: var(--ink-2); }
+.paths { display: grid; gap: 12px; }
+.path { display: block; transition: transform .5s var(--ease); }
+.path:hover { transform: translateY(-2px); }
+.path .core { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 18px 12px 18px 22px; }
+.path b { font-size: 16px; }
+.path span:not(.arr):not(.core) { color: var(--ink-2); font-size: 14.5px; }
+.path .arr { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; background: var(--surface-2); font-size: 17px; transition: transform .5s var(--ease); }
+.path:hover .arr { transform: translateX(3px); }
+@media (max-width: 900px) { .cta .wrap { grid-template-columns: minmax(0, 1fr); } }
+
+/* ── 시작하기 ─────────────────────────────────────── */
+.start { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: clamp(40px, 6vw, 96px); align-items: start; }
+.start .head { margin-bottom: 0; }
+.req-list { list-style: none; margin: 14px 0 0; padding: 0; display: grid; font-size: 15px; }
+.req-list li { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 12px; padding: 11px 0; border-top: 1px solid var(--line); }
+.req-list li span { color: var(--ink-3); font-size: 13px; }
+.req-list li em { font-style: normal; min-width: 0; }
+.code { background: #0C0C0E; }
+.code-bar { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px 10px 20px; border-bottom: 1px solid var(--line); font: 400 12px var(--mono); color: var(--ink-3); }
+.copy { font: 500 12px var(--kr); color: var(--ink-2); background: var(--surface-2); border: 0; border-radius: 999px; padding: 6px 14px; cursor: pointer; transition: color .5s var(--ease), background .5s var(--ease); }
+.copy:hover { color: var(--ink); }
+.code pre { margin: 0; padding: 20px 22px 24px; overflow-x: auto; font: 400 13.5px/1.75 var(--mono); color: var(--ink); }
+.code .cm { color: var(--ink-3); }
+.status { margin-top: clamp(56px, 7vw, 88px); border-top: 1px solid var(--line-2); }
+.status-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; padding: 22px 0 8px; }
+.status-h h3 { font-size: 18px; }
+.status-h span { color: var(--ink-3); font-size: 14px; }
+.status ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+.status li { display: grid; gap: 8px; align-content: start; padding: 18px; border-radius: 16px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
+.status li .chip { width: max-content; }
+.status li b { font-size: 15px; }
+.status li .d { font-size: 13px; color: var(--ink-3); }
+@media (max-width: 960px) { .start { grid-template-columns: minmax(0, 1fr); } .status ul { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 520px) { .status ul { grid-template-columns: minmax(0, 1fr); } .path .core { grid-template-columns: minmax(0, 1fr) auto; } .path b { grid-column: 1 / 3; } }
+
+footer { border-top: 1px solid var(--line); padding-block: 36px 52px; font-size: 13px; color: var(--ink-3); }
+footer .wrap { display: flex; flex-wrap: wrap; gap: 14px 32px; align-items: center; justify-content: space-between; }
+
+/* 스크롤 진입 — 접힌 아래 요소에만 붙는다 */
+.rv { opacity: 0; transform: translateY(2rem); transition: opacity .9s var(--ease), transform .9s var(--ease); transition-delay: calc(var(--i, 0) * 80ms); }
+.rv.in { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } *, *::before, *::after { animation: none !important; transition: none !important; } .rv { opacity: 1; transform: none; } }
+</style>
+</head>
+<body>
+
+<nav class="nav" aria-label="주요 메뉴">
+  <a class="logo" href="#top"><span class="logo-mark" aria-hidden="true">SW</span>Session Warrant</a>
+  <div class="nav-links">
+    <a href="#vs">비교</a>
+    <a href="#console">콘솔</a>
+    <a href="#how">구성</a>
+    <a href="#start">시작하기</a>
+    <a href="#faq">FAQ</a>
+  </div>
+  <a class="btn btn-light" href="https://github.com/session-warrant/session-warrant" target="_blank" rel="noopener">GitHub</a>
+</nav>
+
+<main id="top">
+
+<section class="hero">
+  <div class="orb a" aria-hidden="true"></div>
+  <div class="orb b" aria-hidden="true"></div>
+  <div class="wrap">
+    <div>
+      <span class="eyebrow">오픈소스 · eBPF LSM</span>
+      <h1>SSH 세션에 영장을 붙이고, <span>커널이 집행합니다.</span></h1>
+      <p class="lede">내 서비스의 서버에 직접 설치합니다. 승인한 범위와 기한을 리눅스 커널이 세션 끝까지 지킵니다.</p>
+      <div class="ctas">
+        <a class="btn btn-light" href="https://github.com/session-warrant/session-warrant" target="_blank" rel="noopener">GitHub에서 보기<span class="arr"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 12H20M14 18L20 12L14 6"/></svg></span></a>
+        <a class="btn btn-ghost" href="#start">시작하기</a>
+      </div>
+    </div>
+
+    <div class="exhibit" aria-label="영장과 그 영장으로 로그인한 세션">
+      <article class="deed">
+        <div class="deed-head"><div><span class="deed-label">영장</span><span class="deed-no">W-4821-3F</span></div><span class="state">유효</span></div>
+        <dl>
+          <dt>주체</dt><dd>김개발 · ec2-user</dd>
+          <dt>사유</dt><dd>INC-4821 · nginx 설정 롤백</dd>
+          <dt>대상</dt><dd><span class="tok">prod-web-01</span></dd>
+          <dt>유효</dt><dd class="mono">14:00 → 16:00</dd>
+          <dt>쓰기</dt><dd><span class="tok">/app</span> 이하</dd>
+          <dt>실행</dt><dd>셸 도구 · git · systemctl</dd>
+          <dt>접속</dt><dd><span class="tok">10.0.0.0/8</span></dd>
+        </dl>
+        <div class="deed-foot"><span>승인 김팀장</span><span>Ed25519 서명</span></div>
+      </article>
+      <div class="term" role="img" aria-label="세션 명령과 커널 판정">
+        <div class="tl" data-l><span class="t">14:03</span><span class="c">$ vi /app/config.yml</span><span class="r allow">ALLOW</span></div>
+        <div class="tl" data-l><span class="t">14:05</span><span class="c">$ <b>sudo</b> vi /etc/nginx/nginx.conf</span><span class="r deny">DENY</span><span class="why">uid 0이어도 거부</span></div>
+        <div class="tl" data-l><span class="t">14:07</span><span class="c">$ <b>sudo</b> cp tool /usr/local/bin/</span><span class="r deny">EPERM</span></div>
+        <div class="tl" data-l><span class="t">14:12</span><span class="c">$ curl https://185.220.101.7</span><span class="r deny">EPERM</span></div>
+        <div class="tl" data-l><span class="t">14:20</span><span class="c">$ nohup ./deploy.sh &amp;</span><span class="r allow">ALLOW</span><span class="why">자식 프로세스도 같은 영장</span></div>
+        <div class="tl exp" data-l><span class="t">16:00</span><span class="c">만료 · 세션 전체 권한 회수 <span class="cursor" aria-hidden="true"></span></span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="metrics" aria-label="실측 지표">
+  <div class="wrap">
+    <div class="m"><b>0.36<small>%</small></b><span>쓰기 포화 시 오버헤드</span></div>
+    <div class="m"><b>77<small>ns</small></b><span>판정 1회</span></div>
+    <div class="m"><b>0<small>µs</small></b><span>로그인 후 표식 공백</span></div>
+    <div class="m"><b>uid 0</b><span>에서도 같은 판정</span></div>
+  </div>
+  <div class="wrap metrics-note">Ubuntu 24.04 · 커널 6.8 · 커널 내부 측정</div>
+</section>
+
+<section id="vs">
+  <div class="wrap vs">
+    <div class="head">
+      <span class="eyebrow">비교</span>
+      <h2>게이트웨이가 끝나는 곳에서 시작합니다.</h2>
+      <p>지금 쓰는 게이트웨이는 그대로 둡니다.</p>
+    </div>
+    <div>
+      <div class="vs-cap"><span></span><span>게이트웨이</span><span>Session Warrant</span></div>
+      <div class="vs-rows">
+        <div class="vs-row" data-reveal><span class="k">우회 접속</span><span class="them">보이지 않음</span><span class="us"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path stroke-linejoin="round" d="M8.5 12.5L10.5 14.5L15.5 9.5"/></g></svg>호스트가 탐지</span></div>
+        <div class="vs-row" data-reveal><span class="k">sudo 이후</span><span class="them">uid 0</span><span class="us"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path stroke-linejoin="round" d="M8.5 12.5L10.5 14.5L15.5 9.5"/></g></svg>사람 이름</span></div>
+        <div class="vs-row" data-reveal><span class="k">세션 안</span><span class="them">화면 녹화</span><span class="us"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path stroke-linejoin="round" d="M8.5 12.5L10.5 14.5L15.5 9.5"/></g></svg>시스템 콜 판정</span></div>
+        <div class="vs-row" data-reveal><span class="k">기한 만료</span><span class="them">다음 접속부터</span><span class="us"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path stroke-linejoin="round" d="M8.5 12.5L10.5 14.5L15.5 9.5"/></g></svg>열린 세션에서 즉시</span></div>
+        <div class="vs-row" data-reveal><span class="k">중앙 장애</span><span class="them">통제 중단</span><span class="us"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path stroke-linejoin="round" d="M8.5 12.5L10.5 14.5L15.5 9.5"/></g></svg>커널이 계속 집행</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="shade" id="console">
+  <div class="wrap">
+    <div class="head">
+      <span class="eyebrow">감사 콘솔</span>
+      <h2>모든 SSH 세션을 사람 이름으로 봅니다.</h2>
+    </div>
+
+    <div class="bezel" data-reveal>
+      <div class="core" role="img" aria-label="감사 콘솔 개요 화면 예시">
+        <div class="frame-bar"><i></i><i></i><i></i><span>감사 콘솔</span><em>예시 데이터</em></div>
+        <div class="app">
+          <aside class="rail">
+            <div class="brand">Session Warrant</div>
+            <div class="lbl">감사</div>
+            <div class="it cur">개요</div>
+            <div class="it">감사 검색 <span class="n">33</span></div>
+            <div class="it">세션 타임라인</div>
+            <div class="it">무영장 세션 <span class="n hot">3</span></div>
+            <div class="lbl">발급</div>
+            <div class="it">영장 발급</div>
+            <div class="it">승인 큐 <span class="n">2</span></div>
+          </aside>
+          <div class="mainc">
+            <div class="topbar">
+              <h5>개요</h5>
+              <span class="seg"><span>1시간</span><span>3시간</span><span class="on">6시간</span></span>
+              <span class="sel">전체 노드 ▾</span>
+              <span class="now">기준 <span class="mono">09.06 16:10</span> · 노드 4대</span>
+            </div>
+            <div class="body">
+              <div class="tiles">
+                <div class="tile crit"><div class="l">무영장 세션</div><div class="v">3<small>세션</small></div><div class="f">critical 2</div></div>
+                <div class="tile crit"><div class="l">차단 판정</div><div class="v">33<small>건</small></div><div class="f">DENY 11 · WOULD_DENY 22</div></div>
+                <div class="tile gap"><div class="l">감사 유실</div><div class="v">3<small>구간</small></div><div class="f">167건 · seq 검증</div></div>
+                <div class="tile"><div class="l">활성 영장</div><div class="v">3<small>/ 4</small></div><div class="f">귀속 실행 144건</div></div>
+              </div>
+              <div class="panel">
+                <div class="ph"><b>판정 추이</b><span>5분 단위</span><span class="rt">빗금 = 유실 구간</span></div>
+                <div class="pb">
+                  <div class="chart" id="chart"></div>
+                  <div class="legend"><span><i class="sw allow"></i>ALLOW</span><span><i class="sw would"></i>WOULD_DENY</span><span><i class="sw deny"></i>DENY</span><span><i class="sw gap"></i>유실</span></div>
+                </div>
+              </div>
+              <div class="two">
+                <div class="panel"><div class="ph"><b>훅별 판정</b></div><div class="pb"><div class="hbars" id="hbars"></div></div></div>
+                <div class="panel">
+                  <div class="ph"><b>무영장 세션</b><span class="rt">최근 14분 전</span></div>
+                  <div class="pb wl">
+                    <div class="wl-it"><div class="h"><span class="chip crit">CRITICAL</span>prod-web-01 <span class="mono">session-419</span></div><div class="meta">14분 전 · 6건</div><div class="d">uid 0 · 10.0.3.5 · root 직접 로그인</div></div>
+                    <div class="wl-it"><div class="h"><span class="chip warn">WARNING</span>prod-db-01 <span class="mono">session-91</span></div><div class="meta">52분 전 · 12건</div><div class="d">uid 1002 · 에이전트 연결 실패</div></div>
+                    <div class="wl-it"><div class="h"><span class="chip crit">CRITICAL</span>prod-web-02 <span class="mono">session-53</span></div><div class="meta">88분 전 · 13건</div><div class="d">uid 1007 · 게이트웨이 기록 없음</div></div>
+                  </div>
+                </div>
+              </div>
+              <div class="panel">
+                <div class="ph" style="padding-bottom:10px"><b>최근 차단</b></div>
+                <div class="tablewrap">
+                  <table class="ev">
+                    <thead><tr><th>시각</th><th>노드</th><th>판정</th><th>주체</th><th>훅</th><th>대상</th></tr></thead>
+                    <tbody>
+                      <tr><td class="mono">16:10:00</td><td>stage-app-01</td><td><span class="chip deny">DENY</span></td><td>최보안 <small class="mono">W-4836-E2</small></td><td class="mono">inode_unlink</td><td class="obj">/etc/systemd/system/app.service</td></tr>
+                      <tr><td class="mono">16:06:09</td><td>stage-app-01</td><td><span class="chip deny">DENY</span></td><td>최보안 <small class="mono">W-4836-E2</small></td><td class="mono">file_open</td><td class="obj">/etc/hosts</td></tr>
+                      <tr><td class="mono">15:44:00</td><td>prod-web-01</td><td><span class="chip would">WOULD_DENY</span></td><td>김개발 <small class="mono">W-4821-3F</small></td><td class="mono">socket_connect</td><td class="obj">185.220.101.7:443</td></tr>
+                      <tr><td class="mono">15:39:00</td><td>stage-app-01</td><td><span class="chip deny">DENY</span></td><td>최보안 <small class="mono">W-4836-E2</small></td><td class="mono">bprm_check_security</td><td class="obj">/usr/sbin/bpftool</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="bento">
+      <div class="bezel" data-reveal>
+        <div class="core">
+          <span class="ico"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><circle cx="11.5" cy="11.5" r="9.5"/><path d="M18.2173 18.2178L21.9999 22.0004"/></g></svg></span>
+          <h3>근거는 커널이 연 바이너리</h3>
+          <p>명령 문자열은 위조할 수 있습니다. 판정 근거로 inode를 남깁니다.</p>
+          <div class="frag"><div class="frag-in">
+            <dl class="kv">
+              <dt>판정</dt><dd><span class="chip deny">DENY</span> bprm_check_security</dd>
+              <dt>바이너리</dt><dd class="strong">/usr/sbin/bpftool · 259:2 · ino 1062330</dd>
+              <dt>argv</dt><dd class="dim">sudo bpftool prog detach …</dd>
+              <dt>귀속</dt><dd>최보안 · uid 1004 → euid 0</dd>
+            </dl>
+          </div></div>
+        </div>
+      </div>
+      <div class="bezel narrow" data-reveal>
+        <div class="core">
+          <span class="ico"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"><path d="M12 8V12L14.5 14.5"/><path d="M4.33776 6.87052L5.60414 5.60414C9.10115 2.10713 14.7996 2.13576 18.3319 5.6681C21.8642 9.20044 21.8929 14.8988 18.3959 18.3959C14.8988 21.8929 9.20044 21.8642 5.6681 18.3319C3.57589 16.2397 2.71285 13.3876 3.08355 10.6831M4.32497 4.32497L4.33776 6.87052L6.88331 6.88331"/></g></svg></span>
+          <h3>영장 한 장의 계보</h3>
+          <p>요청부터 만료까지 한 줄로 봅니다.</p>
+          <div class="frag"><div class="frag-in">
+            <ol class="lineage">
+              <li class="key"><span class="t">13:56</span><span class="k">요청</span><span class="n">/app 쓰기 30분</span></li>
+              <li><span class="t">13:59</span><span class="k">승인</span><span class="n">김팀장</span></li>
+              <li><span class="t">14:01</span><span class="k">세션 연결</span><span class="n">cgroup 8213</span></li>
+              <li class="key"><span class="t">15:25</span><span class="k">연장 +60분</span><span class="n">상한 직전</span></li>
+            </ol>
+          </div></div>
+        </div>
+      </div>
+      <div class="bezel narrow" data-reveal>
+        <div class="core">
+          <span class="ico"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><path d="M3 10.4167C3 7.21907 3 5.62028 3.37752 5.08241C3.75503 4.54454 5.25832 4.02996 8.26491 3.00079L8.83772 2.80472C10.405 2.26824 11.1886 2 12 2C12.8114 2 13.595 2.26824 15.1623 2.80472L15.7351 3.00079C18.7417 4.02996 20.245 4.54454 20.6225 5.08241C21 5.62028 21 7.21907 21 10.4167C21 10.8996 21 11.4234 21 11.9914C21 17.6294 16.761 20.3655 14.1014 21.5273C13.38 21.8424 13.0193 22 12 22C10.9807 22 10.62 21.8424 9.89856 21.5273C7.23896 20.3655 3 17.6294 3 11.9914C3 11.4234 3 10.8996 3 10.4167Z"/><path d="M12 8V12"/><path stroke-linejoin="round" d="M12 15H12.0001"/></g></svg></span>
+          <h3>영장 없는 접속</h3>
+          <p>게이트웨이를 거치지 않은 로그인은 곧 경보입니다.</p>
+          <div class="frag"><div class="wl-it" style="background:var(--bg)"><div class="h"><span class="chip crit">CRITICAL</span>prod-web-02</div><div class="meta">13건 귀속</div><div class="d">192.168.40.12 · 게이트웨이 기록 없음</div></div></div>
+        </div>
+      </div>
+      <div class="bezel" data-reveal>
+        <div class="core">
+          <span class="ico"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"><path d="M2 8L8 10"/><path d="M6 4L8 7"/><path d="M11 6.56252L14.7001 2.93755C16.1597 1.50753 18.7629 1.73938 20.5145 3.4554C22.266 5.17142 22.5027 7.72176 21.043 9.15178L18.1358 12"/><path d="M15 15.5866L10.9653 20.001C9.57254 21.5247 7.0887 21.2777 5.41744 19.4492C3.74618 17.6207 3.52038 14.9032 4.91309 13.3795L6.17395 12"/></g></svg></span>
+          <h3>빈 구간을 숨기지 않습니다</h3>
+          <p>순번이 끊긴 자리를 표 안에 그대로 표시합니다.</p>
+          <div class="frag"><div class="frag-in" style="display:grid;gap:6px">
+            <div class="gaprow"><span class="t">15:00:41</span><span>ALLOW · git pull</span></div>
+            <div class="gaprow hatch"><span class="t">15:01</span><span>seq 41120 → 41208 · 88건 유실</span></div>
+            <div class="gaprow"><span class="t">15:03:12</span><span>ALLOW · systemctl reload nginx</span></div>
+          </div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="how">
+  <div class="wrap">
+    <div class="head">
+      <span class="eyebrow">구성</span>
+      <h2>모든 구성 요소를 직접 운영합니다.</h2>
+      <p>외부 서비스에 의존하지 않습니다. 판정하는 순간에는 네트워크도 타지 않습니다.</p>
+    </div>
+    <ol class="flow">
+      <li data-reveal><span class="n">01</span><h3>중앙 서버</h3><p>콘솔에서 영장을 신청 · 승인하고 서명합니다. 감사 기록을 모읍니다.</p><span class="where">Java · Spring Boot · PostgreSQL</span></li>
+      <li data-reveal><span class="n">02</span><h3>PAM 모듈</h3><p>로그인 순간 세션 cgroup을 영장과 묶습니다.</p><span class="where">C · pam_warrant.so</span></li>
+      <li data-reveal><span class="n">03</span><h3>노드 에이전트</h3><p>영장을 커널 맵에 적고 판정 기록을 올려 보냅니다.</p><span class="where">Go · warrantd</span></li>
+      <li data-reveal><span class="n">04</span><h3>BPF 프로그램</h3><p>실행 · 쓰기 · 접속마다 커널이 판정합니다.</p><span class="where">C · eBPF LSM</span></li>
+    </ol>
+  </div>
+</section>
+
+<section class="shade" id="tag">
+  <div class="wrap tag">
+    <div class="head">
+      <span class="eyebrow">표식</span>
+      <h2>sudo를 거쳐도 떨어지지 않습니다.</h2>
+      <p>영장은 계정이 아니라 로그인 세션에 붙습니다.</p>
+    </div>
+    <div style="overflow-x:auto;min-width:0" data-reveal>
+      <table class="prop">
+        <thead><tr><th>세션에서 한 일</th><th class="bit">cgroup</th><th class="bit">fork</th><th>결과</th></tr></thead>
+        <tbody>
+          <tr><td>nohup · setsid · &amp;</td><td class="bit">1</td><td class="bit">1</td><td class="ok">유지</td></tr>
+          <tr><td>sudo · su</td><td class="bit">1</td><td class="bit">1</td><td class="ok">유지</td></tr>
+          <tr><td>systemd-run --scope</td><td class="bit">0</td><td class="bit">1</td><td class="ok">유지</td></tr>
+          <tr><td>systemctl start</td><td class="bit">0</td><td class="bit">0</td><td class="cut">끊김 · 위임</td></tr>
+          <tr><td>docker exec</td><td class="bit">0</td><td class="bit">0</td><td class="cut">끊김 · 위임</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section id="rollout">
+  <div class="wrap">
+    <div class="head">
+      <span class="eyebrow">적용 순서</span>
+      <h2>막기 전에 먼저 봅니다.</h2>
+    </div>
+    <div class="track">
+      <div class="stage" data-reveal><div class="sn"><span>01</span><span class="chip allow">기록</span></div><h3>감사</h3><p>차단 없이 기록만 합니다.</p></div>
+      <div class="stage" data-reveal><div class="sn"><span>02</span><span class="chip crit">경보</span></div><h3>탐지</h3><p>영장 없는 접속을 찾습니다.</p></div>
+      <div class="stage" data-reveal><div class="sn"><span>03</span><span class="chip would">WOULD_DENY</span></div><h3>드라이런</h3><p>막혔을 판정만 기록합니다.</p></div>
+      <div class="stage last" data-reveal><div class="sn"><span>04</span><span class="chip deny">EPERM</span></div><h3>강제</h3><p>범위 밖은 커널이 거부합니다.</p></div>
+    </div>
+    <p class="track-note">감사와 강제는 같은 판정 함수를 씁니다.</p>
+  </div>
+</section>
+
+<section class="shade" id="start">
+  <div class="wrap start">
+    <div class="head">
+      <span class="eyebrow">시작하기</span>
+      <h2>먼저 커널부터 확인합니다.</h2>
+      <p>BPF LSM이 켜져 있어야 나머지가 동작합니다.</p>
+      <ul class="req-list">
+        <li><span>커널</span><em>5.15 이상 · BTF</em></li>
+        <li><span>LSM</span><em>부팅 옵션에 <code>bpf</code></em></li>
+        <li><span>systemd</span><em>cgroup v2 · logind</em></li>
+        <li><span>개발 기준</span><em>Ubuntu 24.04 · 커널 6.8</em></li>
+      </ul>
+    </div>
+    <div class="bezel" data-reveal>
+      <div class="core code">
+        <div class="code-bar"><span>shell</span><button class="copy" type="button" id="copy">복사</button></div>
+<pre id="quick"><span class="cm"># 받기</span>
+git clone https://github.com/session-warrant/session-warrant
+cd session-warrant
+
+<span class="cm"># 커널 · BTF · lsm · 툴체인 점검</span>
+./deploy/bootstrap.sh
+
+<span class="cm"># lsm 목록에 bpf 추가 (재부팅 필요)</span>
+sudo ./deploy/enable-bpf-lsm.sh
+
+<span class="cm"># BPF LSM 동작 확인</span>
+make -C bpf &amp;&amp; sudo ./bpf/smoke</pre>
+      </div>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div class="status" data-reveal>
+      <div class="status-h"><h3>지금 상태</h3><span>감사 모드까지 개발 중입니다.</span></div>
+      <ul>
+        <li><span class="chip allow">완료</span><b>커널 판정 코드</b><span class="d">훅 15개 · 자기보호 훅 포함</span></li>
+        <li><span class="chip allow">완료</span><b>PAM 모듈</b><span class="d">sshd 로그인에서 검증</span></li>
+        <li><span class="chip would">진행 중</span><b>노드 에이전트</b><span class="d">warrantd · 일부 패키지 구현</span></li>
+        <li><span class="chip would">진행 중</span><b>중앙 서버 · 콘솔</b><span class="d">스키마와 골격</span></li>
+        <li><span class="chip warn">이후</span><b>강제 모드</b><span class="d">자기보호 6종을 모두 켠 뒤</span></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section id="faq">
+  <div class="wrap">
+    <div class="head">
+      <span class="eyebrow">FAQ</span>
+      <h2>자주 묻는 질문</h2>
+    </div>
+    <div class="qa">
+      <div data-reveal><h3>기록이 외부로 나가나요?</h3><p>아닙니다. 중앙 서버까지 직접 운영하므로 기록은 내 인프라 안에만 남습니다.</p></div>
+      <div data-reveal><h3>모든 명령을 기록하나요?</h3><p>실행된 모든 프로세스를 사람에게 귀속시켜 기록합니다. 셸 내장 명령과 키 입력은 남지 않습니다.</p></div>
+      <div data-reveal><h3>에이전트나 중앙이 멈추면요?</h3><p>발급된 영장은 커널이 계속 집행합니다. 로그인 때 연결에 실패하면 접속은 허용하고 경보를 남깁니다.</p></div>
+      <div data-reveal><h3>막지 못하는 것은요?</h3><p>다른 데몬에 위임한 실행과 커널 익스플로잇입니다. 알려진 한계는 테스트 케이스로 리포지토리에 있습니다.</p></div>
+      <div data-reveal><h3>기존 게이트웨이와 같이 쓰나요?</h3><p>네. 게이트웨이는 그대로 두고 각 서버에 에이전트를 설치합니다.</p></div>
+      <div data-reveal><h3>root를 막나요?</h3><p>root가 하는 일에 사유와 기한을 붙입니다. 커널 익스플로잇 앞에서는 무력합니다.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="cta" id="contribute">
+  <div class="wrap">
+    <div>
+      <span class="eyebrow">함께 만들기</span>
+      <h2 style="margin-top:24px">내 서비스에 붙여 보고 알려 주세요.</h2>
+      <p class="sub">이슈, 실측 결과, 우회 경로 제보 모두 반깁니다.</p>
+    </div>
+    <div class="paths">
+      <a class="bezel path" href="https://github.com/session-warrant/session-warrant" target="_blank" rel="noopener"><span class="core"><b>코드</b><span>BPF · 에이전트 · PAM · 서버</span><span class="arr"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 12H20M14 18L20 12L14 6"/></svg></span></span></a>
+      <a class="bezel path" href="https://github.com/session-warrant/session-warrant/issues" target="_blank" rel="noopener"><span class="core"><b>이슈</b><span>버그 · 커널별 동작 차이 · 우회 경로</span><span class="arr"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 12H20M14 18L20 12L14 6"/></svg></span></span></a>
+      <a class="bezel path" href="https://github.com/session-warrant/session-warrant/tree/main/bench" target="_blank" rel="noopener"><span class="core"><b>벤치</b><span>내 커널에서 오버헤드 · 우회 테스트 돌리기</span><span class="arr"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 12H20M14 18L20 12L14 6"/></svg></span></span></a>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <a class="logo" href="#top"><span class="logo-mark" aria-hidden="true">SW</span>Session Warrant</a>
+    <a href="https://github.com/session-warrant/session-warrant" target="_blank" rel="noopener">github.com/session-warrant</a>
+  </div>
+</footer>
+
+<script>
+(function () {
+  "use strict";
+  var NS = "http://www.w3.org/2000/svg";
+  var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // 6시간 · 5분 버킷 [ALLOW, WOULD_DENY, DENY] — web/dashboard/data.js 목 데이터와 같은 값
+  var B = [[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[1,0,0],[1,0,0],[1,0,0],[0,1,0],[1,0,0],[1,0,0],[1,0,0],[1,0,0],[0,1,0],[1,0,0],[0,0,0],[2,0,0],[0,1,0],[1,0,0],[1,0,0],[0,0,0],[1,0,0],[1,0,0],[1,0,0],[1,0,0],[2,0,0],[2,1,0],[3,0,0],[2,0,0],[2,0,0],[1,1,0],[2,0,0],[4,0,0],[2,0,0],[0,0,0],[1,0,0],[0,0,0],[2,0,0],[1,0,0],[3,0,0],[3,0,0],[3,0,0],[3,1,0],[4,1,0],[4,1,0],[3,1,0],[4,1,0],[6,1,0],[5,0,2],[5,1,0],[9,1,1],[8,3,1],[7,0,1],[5,3,1],[6,0,0],[4,0,2],[7,0,0],[7,0,0],[2,2,1],[6,1,0],[5,0,0],[3,0,0],[4,0,0],[2,0,0],[3,0,2]];
+  var GAPS = [[118, 1], [71, 2], [33, 1]];
+
+  function el(tag, attrs, parent) {
+    var n = document.createElementNS(NS, tag);
+    for (var k in attrs) n.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(n);
+    return n;
+  }
+
+  // Draws the stacked verdict timeline into #chart.
+  function drawChart() {
+    var host = document.getElementById("chart");
+    var W = 720, H = 150, L = 26, R = 4, T = 8, Bm = 20, iw = W - L - R, ih = H - T - Bm, bw = iw / B.length, max = 14;
+    var svg = el("svg", { viewBox: "0 0 " + W + " " + H, role: "presentation" });
+    var pat = el("pattern", { id: "hatch", width: 6, height: 6, patternUnits: "userSpaceOnUse", patternTransform: "rotate(45)" }, el("defs", {}, svg));
+    el("line", { x1: 0, y1: 0, x2: 0, y2: 6, stroke: "#71717A", "stroke-width": 1.5, "stroke-opacity": .6 }, pat);
+    [0, 7, 14].forEach(function (v) {
+      var y = T + ih - (v / max) * ih;
+      el("line", { x1: L, x2: W - R, y1: y, y2: y, class: "grid" }, svg);
+      el("text", { x: L - 6, y: y + 3, "text-anchor": "end", class: "ax" }, svg).textContent = v;
+    });
+    GAPS.forEach(function (g) {
+      el("rect", { x: L + iw - (g[0] / 360) * iw, y: T, width: Math.max(4, (g[1] / 360) * iw), height: ih, fill: "url(#hatch)", stroke: "#71717A", "stroke-opacity": .5, "stroke-dasharray": "2 2" }, svg);
+    });
+    var col = ["var(--allow)", "var(--would)", "var(--accent)"];
+    B.forEach(function (b, i) {
+      var y = T + ih;
+      for (var k = 0; k < 3; k++) {
+        if (!b[k]) continue;
+        var h = (b[k] / max) * ih;
+        y -= h;
+        el("rect", { x: L + i * bw + 1, y: y, width: bw - 2, height: h, fill: col[k], rx: 1 }, svg);
+      }
+    });
+    ["10:10", "11:10", "12:10", "13:10", "14:10", "15:10", "16:10"].forEach(function (t, i) {
+      el("text", { x: L + (i / 6) * iw, y: H - 5, "text-anchor": i === 0 ? "start" : i === 6 ? "end" : "middle", class: "ax" }, svg).textContent = t;
+    });
+    host.appendChild(svg);
+  }
+
+  // Fills #hbars with per-hook verdict bars.
+  function drawHooks() {
+    var host = document.getElementById("hbars"), col = ["var(--allow)", "var(--would)", "var(--accent)"];
+    [["bprm_check_security", 141, 1, 2], ["file_open", 0, 11, 3], ["inode_unlink", 0, 0, 4], ["socket_connect", 18, 10, 2], ["lsm/bpf", 2, 0, 0]].forEach(function (r) {
+      var k = document.createElement("div"); k.className = "k"; k.textContent = r[0];
+      var bar = document.createElement("div"); bar.className = "bar";
+      for (var j = 1; j <= 3; j++) {
+        if (!r[j]) continue;
+        var i = document.createElement("i");
+        i.style.width = Math.max(1.5, (r[j] / 144) * 100) + "%";
+        i.style.background = col[j - 1];
+        bar.appendChild(i);
+      }
+      var tot = r[1] + r[2] + r[3], blk = r[2] + r[3];
+      var n = document.createElement("div"); n.className = "n";
+      n.innerHTML = tot + (blk ? " <small>(차단 " + blk + ")</small>" : "");
+      host.append(k, bar, n);
+    });
+  }
+
+  // Steps a highlight through the terminal lines.
+  function scanTerminal() {
+    if (reduce) return;
+    var lines = document.querySelectorAll("[data-l]"), i = 0;
+    setInterval(function () {
+      lines.forEach(function (l) { l.classList.remove("on"); });
+      lines[i++ % lines.length].classList.add("on");
+    }, 1600);
+  }
+
+  // Fades in below-the-fold [data-reveal] blocks as they enter the viewport.
+  function reveal() {
+    if (reduce || !("IntersectionObserver" in window)) return;
+    var io = new IntersectionObserver(function (es) {
+      es.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); } });
+    }, { rootMargin: "0px 0px -8% 0px" });
+    var groups = new Map();
+    document.querySelectorAll("[data-reveal]").forEach(function (n) {
+      if (n.getBoundingClientRect().top < innerHeight) return;
+      var idx = groups.get(n.parentNode) || 0;
+      groups.set(n.parentNode, idx + 1);
+      n.style.setProperty("--i", idx);
+      n.classList.add("rv");
+      io.observe(n);
+    });
+  }
+
+  // Copies the quick-start commands (comments stripped); selects the block if the clipboard is refused.
+  function wireCopy() {
+    var btn = document.getElementById("copy"), pre = document.getElementById("quick");
+    btn.addEventListener("click", function () {
+      var text = pre.textContent.split("\n").filter(function (l) { return l && l.charAt(0) !== "#"; }).join("\n");
+      var done = function () { btn.textContent = "복사됨"; setTimeout(function () { btn.textContent = "복사"; }, 1600); };
+      var select = function () { var r = document.createRange(); r.selectNodeContents(pre); var s = getSelection(); s.removeAllRanges(); s.addRange(r); };
+      if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, select); else select();
+    });
+  }
+
+  drawChart(); drawHooks(); scanTerminal(); reveal(); wireCopy();
+})();
+</script>
+</body>
+</html>
