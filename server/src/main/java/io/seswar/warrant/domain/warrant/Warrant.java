@@ -37,7 +37,7 @@ public class Warrant {
     /** 발급 1, 연장 · 취소마다 +1. 노드는 자기가 가진 것보다 큰 revision 만 적용한다(재생 방어). */
     private int revision;
 
-    /** 사람이 읽는 식별자. 예: {@code W-4821-3F}. Slack · 감사 리포트에 나온다. */
+    /** 사람이 읽는 식별자. 예: {@code W-4821-3F}. 콘솔 승인 큐 · 감사 리포트에 나온다. */
     private String displayId;
 
     /** 주체. {@code subject_id} 로 커널에 내려간다. */

@@ -20,7 +20,16 @@ public class WarrantExtensionService {
      */
     public void requestAutomatically(UUID warrantId, String detectedWorkload) {
         // 1. 이미 열려 있는 연장 요청이 있으면 중복 생성하지 않는다
-        // 2. 승인자에게 push (Slack). "무슨 작업이 돌고 있어서" 요청인지 함께 보낸다
+        // 2. autoApproveIfEligible() 에 걸리면 여기서 끝
+        // 3. lineage += EXTENSION_REQUESTED (detectedWorkload 를 basis 로) → 콘솔 승인 큐에 뜬다
+        throw new UnsupportedOperationException("미구현");
+    }
+
+    /** 영장 주체가 콘솔에서 직접 연장을 요청한다. 자동 요청과 같은 큐로 간다. */
+    public void request(UUID warrantId, Duration by, UUID requesterId, String reason) {
+        // 1. requesterId 가 영장 주체인지 확인
+        // 2. 이미 열려 있는 연장 요청이 있으면 중복 생성하지 않는다
+        // 3. lineage += EXTENSION_REQUESTED
         throw new UnsupportedOperationException("미구현");
     }
 

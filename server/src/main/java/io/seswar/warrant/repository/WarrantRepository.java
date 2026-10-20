@@ -13,4 +13,5 @@ public interface WarrantRepository /* extends JpaRepository<Warrant, UUID> */ {
     // findActiveBySubjectId(UUID)             — 일괄 회수
     // findExpiringWithin(Duration)            — T-5분 연장 요청 트리거 (실제 감지는 warrantd 가 한다)
     // findAllActive()                         — 노드 재연결 시 resync
+    // findAwaitingDecision()                  — 승인 큐. REQUESTED + 열린 연장 요청
 }

@@ -55,7 +55,3 @@ warrant:
 
   signing:
     key-path: ${WARRANT_SIGNING_KEY:/etc/warrant/signing.key}
-
-slack:
-  signing-secret: ${SLACK_SIGNING_SECRET:}
-  bot-token: ${SLACK_BOT_TOKEN:}

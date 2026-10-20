@@ -9,7 +9,8 @@ package io.seswar.warrant.config;
 public class SecurityConfig {
 
     // /api/**    → OIDC 인증 필요
-    // /slack/**  → 인증 제외. 대신 Slack 서명 검증이 필수다 (SlackInteractionController 주석 참조)
+    // /api/approvals/** POST → APPROVER. 콘솔은 세션 쿠키로 붙으므로 CSRF 보호를 끄지 말 것 —
+    //                          끄면 승인자가 연 다른 탭이 승인 버튼을 대신 누를 수 있다
     // /actuator/health → 공개, 나머지 actuator 는 보호
     //
     // 권한 분리:
