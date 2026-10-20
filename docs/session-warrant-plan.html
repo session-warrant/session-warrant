@@ -665,7 +665,7 @@
       <li><b>2개월 — 감사 모드</b> PAM 모듈 + cgroup 태깅 + exec/connect/file 이벤트에 영장 부착. 재부팅 불필요</li>
       <li><b>+1개월 — 영장 없는 접속 탐지</b> 그리고 조직 전체 SSH 접속 현황 리포트</li>
       <li><b>+2개월 — 강제</b> <code>bprm_check_security</code>, <code>file_open</code>, <code>socket_connect</code> 3종. 만료·취소 즉시 발효</li>
-      <li><b>승인 연동</b> Slack 승인 → 영장 발급까지. 이 흐름이 없으면 아무도 안 쓴다</li>
+      <li><b>승인 흐름</b> 콘솔 자체 신청 → 승인 큐 → 영장 발급까지. 외부 메신저 연동 없이 제품 안에서 닫는다. 이 흐름이 없으면 아무도 안 쓴다</li>
     </ul>
 
     <p>선행 검증이 필요한 건 세 가지다. <strong>PAM 스택에서 session scope가 확정되는 타이밍</strong>, <strong><code>file_open</code> 훅의 실측 오버헤드</strong>, <strong>inode 갱신 추적의 안정성</strong>. 이 중 두 번째가 가장 위험하므로 PoC는 여기서부터 시작한다.</p>
@@ -772,7 +772,7 @@
         <div class="step-tag">T0 · 발급</div>
         <div>
           <h3>승인 → 서명된 영장</h3>
-          <p>Slack 승인이 떨어지면 중앙이 <code>warrant_id</code>, 주체, 대상 호스트, 만료 시각, 정책을 담아 서명한다. 해당 호스트의 <code>warrantd</code>로 push되고, warrantd는 <strong>정책을 맵에 들어갈 형태로 컴파일</strong>한다 — 허용 바이너리는 inode 키로, 허용 대역은 LPM 트라이 엔트리로, 쓰기 가능 디렉터리는 warrantd가 직접 만들고 그 inode를 등록한다.</p>
+          <p>콘솔 승인 큐에서 승인이 떨어지면 중앙이 <code>warrant_id</code>, 주체, 대상 호스트, 만료 시각, 정책을 담아 서명한다. 해당 호스트의 <code>warrantd</code>로 push되고, warrantd는 <strong>정책을 맵에 들어갈 형태로 컴파일</strong>한다 — 허용 바이너리는 inode 키로, 허용 대역은 LPM 트라이 엔트리로, 쓰기 가능 디렉터리는 warrantd가 직접 만들고 그 inode를 등록한다.</p>
         </div>
       </div>
       <div class="step">
