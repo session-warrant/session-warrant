@@ -257,7 +257,7 @@ Ed25519 서명                      · 정책 → (dev,ino) 컴파일           
 | DB | — | PostgreSQL 18 (감사 이벤트는 선언적 파티셔닝) |
 | 대시보드 | TypeScript | React 19 · Vite — 또는 Grafana로 대체 |
 
-중앙 서버는 Spring Web MVC + 가상 스레드(WebFlux 불필요) · Testcontainers + JUnit 5 · Ed25519는 JDK 내장.
+중앙 서버는 Spring Web MVC + 가상 스레드(WebFlux 불필요) · Testcontainers + JUnit 5 · Ed25519는 JDK 내장 · Lombok(Boot BOM 관리, 1.18.46 — Java 25 지원 버전이어야 한다).
 
 **`server/` 빌드는 2026-09-01 에 실증됐다.** 52클래스가 Java 25(class major 69)로
 컴파일되고 `bootJar` 가 나온다. 고정한 버전이 실제 산출물과 일치한다 —
