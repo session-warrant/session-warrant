@@ -60,7 +60,7 @@ class AuditRepositoriesTest {
     }
 
     @Test
-    void nodeRoundTripsTextArrayAndIsFoundByFingerprint() {
+    void 노드의_훅_배열이_그대로_오가고_지문으로_찾는다() {
         node("cert-a");
         Node found = nodes.findByClientCertFingerprint("cert-a").orElseThrow();
         assertThat(ReflectionTestUtils.getField(found, "attachedHooks"))
@@ -68,7 +68,7 @@ class AuditRepositoriesTest {
     }
 
     @Test
-    void findExistingKeysSeesOnlyThisNodeAndEpoch() {
+    void 이미_있는_키는_이_노드와_이_epoch_것만_찾는다() {
         UUID nodeId = (UUID) ReflectionTestUtils.getField(node("cert-b"), "id");
         UUID other = (UUID) ReflectionTestUtils.getField(node("cert-b2"), "id");
         Instant t = Instant.parse("2026-10-20T00:00:00Z");
@@ -83,7 +83,7 @@ class AuditRepositoriesTest {
     }
 
     @Test
-    void summarizesUnwarrantedSessionsInHalfOpenRange() {
+    void 무영장_세션을_끝_시각_제외_구간으로_요약한다() {
         UUID nodeId = (UUID) ReflectionTestUtils.getField(node("cert-c"), "id");
         Instant t = Instant.parse("2026-10-20T00:00:00Z");
         long seq = 0;

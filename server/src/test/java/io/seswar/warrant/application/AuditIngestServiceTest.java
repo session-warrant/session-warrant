@@ -78,7 +78,7 @@ class AuditIngestServiceTest {
     }
 
     @Test
-    void storesEventGapAndUnwarrantedSession() {
+    void 이벤트_유실구간_무영장세션을_저장한다() {
         assertThat(ingest.ingest(nodeId, batch(1, 1))).isEqualTo(new Result(1, 1, 1));
         assertThat(count("audit_event")).isEqualTo(1);
         assertThat(count("audit_gap")).isEqualTo(1);
@@ -87,7 +87,7 @@ class AuditIngestServiceTest {
     }
 
     @Test
-    void replayOfSameBatchStoresNothingNew() {
+    void 같은_배치를_다시_보내면_아무것도_새로_저장하지_않는다() {
         ingest.ingest(nodeId, batch(1, 1));
         assertThat(ingest.ingest(nodeId, batch(1, 1))).isEqualTo(new Result(0, 0, 0));
         assertThat(count("audit_event")).isEqualTo(1);
@@ -96,7 +96,7 @@ class AuditIngestServiceTest {
     }
 
     @Test
-    void newEpochWithResetSeqIsANewSession() {
+    void epoch_가_바뀌면_seq_가_1로_돌아가도_새_세션이다() {
         ingest.ingest(nodeId, batch(1, 1));
         // bbolt 초기화 뒤 node_seq 가 1 로 돌아왔다. 유실 구간은 같은 것이라 건너뛴다
         assertThat(ingest.ingest(nodeId, batch(2, 1))).isEqualTo(new Result(1, 0, 1));
@@ -104,7 +104,7 @@ class AuditIngestServiceTest {
     }
 
     @Test
-    void duplicatesInsideOneBatchAreStoredOnce() {
+    void 한_배치_안의_중복은_한_번만_저장한다() {
         EventGap gap = EventGap.of(nodeId, T, T.plusSeconds(5), 3L, "CPU_SEQ_SKIP");
         Batch twice = new Batch(
                 List.of(unwarrantedEvent(1, 1), unwarrantedEvent(1, 1)),
@@ -114,7 +114,7 @@ class AuditIngestServiceTest {
     }
 
     @Test
-    void rejectsRowsFromAnotherNode() {
+    void 다른_노드의_행이_섞이면_거부한다() {
         Batch foreign = new Batch(List.of(), List.of(EventGap.of(UUID.randomUUID(), T, T, 0L, "AGENT_DOWN")), List.of());
         assertThatThrownBy(() -> ingest.ingest(nodeId, foreign)).isInstanceOf(IllegalArgumentException.class);
         assertThat(count("audit_gap")).isZero();
