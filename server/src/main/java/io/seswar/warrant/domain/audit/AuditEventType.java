@@ -28,5 +28,11 @@ public enum AuditEventType {
     DELEGATION_ATTEMPT,
 
     /** bash readline uprobe 로 잡은 명령줄. <b>보조 증거일 뿐</b>이다(§14). */
-    SHELL_COMMAND_LINE
+    SHELL_COMMAND_LINE,
+
+    /** sched_process_fork. 기본은 기록하지 않는다 — 디버깅용. */
+    FORK,
+
+    /** 유예 진입 · 종료 · 초과(§03). */
+    GRACE
 }

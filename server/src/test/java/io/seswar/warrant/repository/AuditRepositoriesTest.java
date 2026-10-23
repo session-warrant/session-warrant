@@ -60,7 +60,7 @@ class AuditRepositoriesTest {
     }
 
     @Test
-    void 노드의_훅_배열이_그대로_오가고_지문으로_찾는다() {
+    void 노드의_훅_목록이_그대로_저장되고_인증서_지문으로_찾을_수_있다() {
         node("cert-a");
         Node found = nodes.findByClientCertFingerprint("cert-a").orElseThrow();
         assertThat(ReflectionTestUtils.getField(found, "attachedHooks"))
@@ -68,7 +68,7 @@ class AuditRepositoriesTest {
     }
 
     @Test
-    void 이미_있는_키는_이_노드와_이_epoch_것만_찾는다() {
+    void 이미_저장된_기록을_찾을_때_다른_노드나_다른_세대_것은_섞이지_않는다() {
         UUID nodeId = (UUID) ReflectionTestUtils.getField(node("cert-b"), "id");
         UUID other = (UUID) ReflectionTestUtils.getField(node("cert-b2"), "id");
         Instant t = Instant.parse("2026-10-20T00:00:00Z");
@@ -83,7 +83,7 @@ class AuditRepositoriesTest {
     }
 
     @Test
-    void 무영장_세션을_끝_시각_제외_구간으로_요약한다() {
+    void 무영장_세션_요약은_끝_시각을_포함하지_않는다() {
         UUID nodeId = (UUID) ReflectionTestUtils.getField(node("cert-c"), "id");
         Instant t = Instant.parse("2026-10-20T00:00:00Z");
         long seq = 0;

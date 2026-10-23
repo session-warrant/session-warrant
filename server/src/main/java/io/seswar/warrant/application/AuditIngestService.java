@@ -23,6 +23,7 @@ import java.util.stream.Collectors;
 /**
  * 감사 이벤트 수집. 메시지 큐는 넣지 않는다 — gRPC 스트리밍에 백프레셔가 이미 있고,
  * 중앙이 잠깐 죽어도 warrantd 의 로컬 버퍼가 받아 준다(기술 스택 §07).
+ * AuditEvent를 DB에 작성
  */
 @Service
 @RequiredArgsConstructor
@@ -47,8 +48,7 @@ public class AuditIngestService {
     }
 
 
-    // Called by AuditIngestGrpcService for each AuditBatch, before it acks.
-    // Stores events, gaps and unwarranted sessions in one transaction, skipping rows already stored (server/README.md).
+    /** 배치 하나 저장*/
     @Transactional
     public Result ingest(UUID nodeId, Batch batch) {
         requireNode(nodeId, batch);

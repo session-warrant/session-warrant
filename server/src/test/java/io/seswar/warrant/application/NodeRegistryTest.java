@@ -80,7 +80,7 @@ class NodeRegistryTest {
     }
 
     @Test
-    void 처음_접속하면_노드를_만든다() {
+    void 처음_접속한_노드는_새로_등록된다() {
         Registration r = registry.register("dev:node-a", report("node-a", Set.of("HOOK_BPRM_CHECK_SECURITY"), 7));
 
         assertThat(r.created()).isTrue();
@@ -94,7 +94,7 @@ class NodeRegistryTest {
     }
 
     @Test
-    void 같은_신원이면_같은_노드다() {
+    void 같은_노드가_다시_접속하면_새로_만들지_않는다() {
         UUID first = registry.register("dev:node-a", report("node-a", Set.of(), 7)).nodeId();
         Registration again = registry.register("dev:node-a", report("node-a", Set.of(), 7));
 
@@ -104,7 +104,7 @@ class NodeRegistryTest {
     }
 
     @Test
-    void 다시_접속하면_신고값을_갱신한다() {
+    void 다시_접속하면_노드가_알려준_정보로_갱신된다() {
         UUID id = registry.register("dev:node-a", report("node-a", Set.of("HOOK_SCHED_PROCESS_FORK"), 7)).nodeId();
         clock.advance(Duration.ofMinutes(5));
         registry.register("dev:node-a", new Report("node-a-renamed", "7.0.1", false, "warrantd 0.2.0",
@@ -122,7 +122,7 @@ class NodeRegistryTest {
     }
 
     @Test
-    void seq_epoch_가_바뀌면_표시한다() {
+    void 노드의_로컬저장소가_초기화되면_알아챈다() {
         UUID id = registry.register("dev:node-a", report("node-a", Set.of(), 7)).nodeId();
 
         assertThat(registry.register("dev:node-a", report("node-a", Set.of(), 7)).epochChanged()).isFalse();
@@ -131,14 +131,14 @@ class NodeRegistryTest {
     }
 
     @Test
-    void hostname_이_같아도_신원이_다르면_다른_노드다() {
+    void 이름이_같아도_인증서가_다르면_다른_노드다() {
         UUID a = registry.register("dev:node-a", report("same-host", Set.of(), 1)).nodeId();
         UUID b = registry.register("dev:node-b", report("same-host", Set.of(), 1)).nodeId();
         assertThat(a).isNotEqualTo(b);  // hostname 이 같아도 신원이 다르면 다른 노드
     }
 
     @Test
-    void 하트비트를_보낸_노드는_끊긴_목록에서_빠진다() {
+    void 오래_소식이_없는_노드만_끊긴_노드로_나온다() {
         UUID quiet = registry.register("dev:quiet", report("quiet", Set.of(), 1)).nodeId();
         UUID alive = registry.register("dev:alive", report("alive", Set.of(), 1)).nodeId();
 
