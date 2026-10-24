@@ -1,0 +1,10 @@
+# deploy/grafana/dashboards/*.json 을 그대로 올린다. 화면에서 고쳐도 저장되지 않는다 — JSON 을 고칠 것.
+apiVersion: 1
+
+providers:
+  - name: warrant
+    folder: Session Warrant
+    type: file
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards
