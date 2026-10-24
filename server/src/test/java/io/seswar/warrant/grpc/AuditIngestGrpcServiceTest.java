@@ -34,6 +34,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 import java.time.Instant;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
@@ -270,5 +271,33 @@ class AuditIngestGrpcServiceTest {
         assertThat(rows("audit_event")).isEqualTo(3);  // 새 세대 기록은 한 건도 안 들어간다
         assertThat(jdbc.queryForObject("select current_seq_epoch from node where id = ?", Long.class, nodeId()))
                 .isEqualTo(7L);
+    }
+
+    @Test
+    void 연결_도중_노드_정보와_함께_번호_세대가_바뀌어도_연결을_끊는다() throws Exception {
+        Agent agent = connect();
+        agent.out.onNext(batch(hello("warrantd 0.1.0"), 7, 1, 3));
+        agent.nextAck();
+
+        // 노드 정보가 붙어 있다고 달라지지 않는다. 세대는 한 연결 안에서 바뀔 수 없다
+        agent.out.onNext(batch(hello("warrantd 0.2.0"), 8, 1, 2));
+
+        assertThat(agent.closedWith().getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT);
+        assertThat(agent.acks).isEmpty();
+        assertThat(rows("audit_event")).isEqualTo(3);
+        Map<String, Object> node = jdbc.queryForMap("select * from node where id = ?", nodeId());
+        assertThat(node.get("current_seq_epoch")).isEqualTo(7L);         // 노드 기록도 그대로
+        assertThat(node.get("agent_version")).isEqualTo("warrantd 0.1.0");
+    }
+
+    @Test
+    void 번호_세대가_비어_있으면_연결을_끊는다() throws Exception {
+        Agent agent = connect();
+        // 0 은 warrantd 가 세대를 안 채웠다는 뜻이다. 받아 주면 초기화 뒤 새 기록이 옛 기록으로 보여 버려진다
+        agent.out.onNext(batch(hello("warrantd 0.1.0"), 0, 1, 3));
+
+        assertThat(agent.closedWith().getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT);
+        assertThat(agent.acks).isEmpty();
+        assertThat(nodesNamedHost()).isZero();
     }
 }

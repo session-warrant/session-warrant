@@ -58,9 +58,11 @@ public class AuditIngestGrpcService extends AuditIngestServiceGrpc.AuditIngestSe
             }
         }
 
+        // The stream broke (cancel, network, shutdown). Stored batches are committed; warrantd resends the rest.
         @Override
         public void onError(Throwable t) {
-
+            closed = true;
+            log.debug("audit stream from node {} ended: {}", nodeId, Status.fromThrowable(t));
         }
 
         @Override
@@ -72,19 +74,27 @@ public class AuditIngestGrpcService extends AuditIngestServiceGrpc.AuditIngestSe
         }
 
 
+        // The first batch must carry NodeHello. Epoch is fixed for the stream: it only changes when bbolt
+        // is recreated, which means a restart and a new stream. 0 means warrantd never set it.
         private void identify(AuditBatch batch) {
             long epoch = batch.getSeqEpoch();
+            boolean first = nodeId == null;
+
+            if (epoch == 0) {
+                throw new IllegalArgumentException("seq_epoch is 0");
+            }
+            if (first && !batch.hasNode()) {
+                throw new IllegalArgumentException("first batch without NodeHello");
+            }
+            if (!first && epoch != seqEpoch) {
+                throw new IllegalArgumentException("seq_epoch changed mid-stream: " + seqEpoch + " -> " + epoch);
+            }
             if (batch.hasNode()) {
                 NodeRegistry.Report report = AuditProtoMapper.toReport(batch.getNode(), epoch);
-                if (identity == null) {
+                if (first) {
                     identity = DEV_IDENTITY_PREFIX + report.hostname();
                 }
                 nodeId = nodeRegistry.register(identity, report).nodeId();
-            } else if (nodeId == null) {
-                throw new IllegalArgumentException("first batch without NodeHello");
-            } else if (epoch != seqEpoch) {
-                throw new IllegalArgumentException("seq_epoch changed mid-stream without NodeHello: "
-                        + seqEpoch + " -> " + epoch);
             }
             seqEpoch = epoch;
         }
