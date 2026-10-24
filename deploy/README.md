@@ -52,16 +52,23 @@ sudo deploy/systemd/install.sh --uninstall             # 제거. pin 은 남긴�
 | 유닛 | 하는 일 |
 |---|---|
 | `warrant-bpf.service` | oneshot. `load-bpf.sh` 가 bpftool 로 `warrant.bpf.o` 를 올려 맵은 `/sys/fs/bpf/warrant`, 프로그램 · 링크는 `/sys/fs/bpf/warrant-progs` 에 pin 한다. **이미 pin 돼 있으면 건너뛴다.** `loader` 가 생기면 없어진다 |
-| `warrantd.service` | `Type=notify` — PAM 소켓을 연 뒤 `READY=1` 을 보낸다. `Before=ssh.socket ssh.service sshd.service`. `/run/warrantd` 0700, `Restart=always` |
+| `warrantd.service` | `Type=notify` — PAM 소켓을 연 뒤 `READY=1` 을 보낸다. `Before=ssh.service sshd.service`. `/run/warrantd` 0700, `Restart=always` |
 
 - **순서가 제품의 조건이다.** sshd 가 PAM 소켓보다 먼저 뜨면 그 사이 세션은 태그 없이 시작된다.
   `Type=simple` 이면 프로세스가 뜨자마자 started 가 되므로 notify 여야 한다.
-  Ubuntu 24.04 는 `ssh.socket` 이 sshd 를 깨우므로 `Before=ssh.socket` 이 실제로 걸리는 줄이다.
+  Ubuntu 24.04 는 `ssh.socket`(Accept=no)이 `ssh.service` 를 깨운다. 접속은 sshd 가 뜰 때까지 소켓에서 대기하므로
+  `Before=ssh.service` 면 충분하다.
+- **`Before=ssh.socket` 을 넣지 말 것 — 부팅이 깨진다.** ssh.socket 은 sockets.target → basic.target 보다 먼저이고,
+  이 서비스는 기본 의존성으로 basic.target 뒤라 순환이 생긴다. systemd 는 순환을 끊으려고 작업 하나를 **아무거나**
+  버린다. 2026-10-24 에 한 번은 sockets.target 을 버려 우연히 통과했고, 다음 부팅에서는 ssh.socket 을 버려
+  sshd 가 안 떠서 VM 에 못 들어갔다(Lima provision 스크립트로 복구). **유닛 순서를 바꾸면 재부팅한 뒤
+  `journalctl -b | grep -i "ordering cycle"` 이 비어 있는지 반드시 본다** — 서비스가 떴다는 것만으로는 모른다.
 - **pin 은 아무도 지우지 않는다.** warrantd 재시작 · 크래시 · `warrant-bpf` 재시작에도 맵(=태그)이 그대로다
   (2026-10-24 VM: 재시작 전후 맵 id 동일, `kill -9` 뒤 자동 재시작). 비우는 건 재부팅뿐이다.
-- **부팅 순서 실측(2026-10-24, Lima VM 재부팅):**
-  `warrant-bpf` Finished 16:55:15.999 → `warrantd` Started(READY) 16:55:16.915 → `ssh.socket` Listening 16:55:16.939.
-  sshd 가 소켓을 열기 24ms 전에 PAM 소켓이 준비돼 있었다. 중앙이 꺼져 있어도 warrantd 는 뜨고 업로드만 재시도한다.
+- **부팅 순서 실측(2026-10-24, Lima VM 재부팅, 순환 경고 0줄):**
+  `warrant-bpf` Finished 17:12:21.732 → `ssh.socket` Listening 22.612 → `warrantd` Started(READY) 22.703 →
+  `ssh.service` Started 23.019. 소켓은 먼저 열려도 sshd 는 PAM 소켓이 준비된 뒤에 뜬다.
+  중앙이 꺼져 있어도 warrantd 는 뜨고 업로드만 재시도한다.
 - **BPF 를 못 올리면 warrantd 도 안 뜨고, 로그인은 된다.** `Requires=` 는 warrantd 에만 걸고 ssh 에는 걸지 않는다 —
   PAM 은 소켓이 없으면 fail-open 한다(§17). 무영장 세션으로 기록되지 않는 구간이 생기므로 `warrant-bpf` 실패는 경보 대상이다.
 - 맵 · 프로그램 이름을 시험 하네스(`bpf/wtest.sh` · `warrantctl` 의 `wtest` · `wmaps`)와 다르게 써서 둘이 섞이지 않는다.
