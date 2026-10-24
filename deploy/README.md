@@ -1,6 +1,6 @@
 # deploy/
 
-노드 프로비저닝 · 부트 파라미터 · systemd 유닛.
+노드 프로비저닝 · 부트 파라미터 · systemd 유닛 · Grafana 화면.
 
 ## 개발 환경
 
@@ -56,3 +56,17 @@ ansible/     노드가 여러 대가 되는 시점에. 지금은 이르다
 - 스파이크 전 구간은 **감사 모드**다. LSM 훅은 `return 0` 만 한다.
   자기보호 6종(§16)을 붙이기 전에 `-EPERM` 을 켜면 자기 발을 쏜다.
 - 검증 대상 커널: 6.8(개발) · 7.0(Ubuntu 26.04) · Rocky 9 호환.
+
+## Grafana (`grafana/`)
+
+화면은 React(`web/`, 동결) 대신 Grafana 가 PostgreSQL 을 직접 읽는다. `server/compose.yaml` 이 띄운다.
+
+```sh
+docker compose -f server/compose.yaml up -d --wait    # http://localhost:3000 → 대시보드 「무영장 세션」
+```
+
+- `provisioning/datasources` — PostgreSQL 연결(uid `warrant-pg`). 로컬은 warrant 계정이다. **운영은 SELECT 만 가진 계정으로.**
+- `provisioning/dashboards` + `dashboards/*.json` — 대시보드는 파일이 원본이다. 화면에서 고쳐도 저장되지 않으니 JSON 을 고치고
+  `docker compose -f server/compose.yaml restart grafana`.
+- 사유(reason)마다 색이 고정이다(범주 색 1~6번 순서, 검증기 통과). 새 사유를 넣으면 다음 칸 색을 쓴다 — 기존 색을 바꾸지 말 것.
+- 「노드」 표의 마지막 등록은 감사 스트림을 연 시각이다. 하트비트가 붙기 전까지 '지금 살아 있음'을 뜻하지 않는다.
