@@ -44,25 +44,27 @@ SSH 세션에 범위·유효기간을 가진 **영장(warrant)** 을 붙이고, 
 하나라도 빠진 채 `-EPERM`을 켜면 verifier를 통과한 버그 하나로 자기 박스에서
 잠긴다. 이 순서는 일정과 무관하게 지킨다.
 
-## 현재 상태 (2026-10-06)
+## 현재 상태 (2026-10-24)
 
 **S0 · S1 · S2 · S3 전부 통과. 남은 스파이크는 S4 뿐이고, 그건 제품 코드와 병행 가능하다.**
 BPF LSM이 붙고 돌고, 쓰기 포화 조건에서 오버헤드가 **1% 미만**이며, 태그 두 겹이 §04 표대로 동작하고,
 PAM session 단계에서 `session-N.scope` 가 이미 확정돼 있다(태깅 공백 없음).
 실험 경위 전체는 `docs/experiments.md` 에 있다.
 
-**부품은 절반쯤 있고, 끝에서 끝까지 도는 경로는 아직 없다.** 4주 차 마일스톤
-("무영장 세션 한 건이 뜬다")의 경로에서 커널과 서버 끝만 돈다:
-커널 훅 ✔ → `loader` ✗ → `warrantd` ✗ → `upstream` ✗ → 서버 gRPC ✔ → DB ✔ → Grafana ✗
-(서버 gRPC · DB 는 `server` 브랜치, 2026-10-24 — 아직 main 에 머지하지 않았다)
+**무영장 세션 한 건이 DB 까지 간다 (2026-10-24, main).** 4주 차 마일스톤("무영장 세션 한 건이 뜬다")에서
+남은 건 화면(Grafana)뿐이다. 이 경로는 커널 ringbuf 를 거치지 않는다 — 무영장 판정은 PAM 쪽 binder 가 한다:
+SSH/PAM 세션 → `pam_warrant.so` ✔ → warrantd binder ✔ → `store.AuditQueue` ✔ → `upstream.StreamAudit` ✔ → 서버 gRPC ✔ → DB ✔ → Grafana ✗
+Lima VM 의 warrantd 가 맥에서 띄운 서버로 보내 `unwarranted_session` 행이 생기고, 서버를 `kill -9` 한 동안 생긴
+세션이 재시작 뒤 재전송으로 들어오는 것까지 확인했다. **커널 ringbuf 이벤트는 아직 안 올린다** — Gap 결함(시각 0 ·
+boot ns) 때문에 서버가 거절한다. `loader` 는 미구현이라 BPF 는 bpftool 로 올린다.
 
 | 계층 | 상태 |
 |---|---|
 | `bpf/` | 제품 판정 코드 `warrant.bpf.{c,h}` — **훅 15개**(자기보호 5훅 포함, 6번째는 warrantd 파일 `rule_write` DENY). `wtest.sh` 로 **29/29 통과**(커널 7.0 VM, bpftool 로 맵 직접 기록). `-EPERM` 은 영장 `mode=ENFORCE` 로만 열린다 — 발급 안 하면 감사 모드. 없음: `socket_sendmsg` · `file_open` 외 `kprobe` 미러. 알려진 구멍: `/dev/null` 쓰기가 막혀 `nohup` 이 죽는다(기본 허용 세트 필요) |
 | `proto/` | **확정** (2026-09-23) — `warrant` · `agent` · `audit` 3파일 |
 | `pam/` | `pam_warrant.c` 141줄 — Lima VM 에서 sshd 3단계까지 검증(2026-09-26). auth info 원문 전달 · 버퍼 8192 수정(`9e329dd`) 뒤 **sshd 재확인 남음** |
-| `agent/` | **8개 중 3개 구현** — `bpfmap` · `ringbuf`(A) · `pamsock`(C, 테스트 31건). `loader` · `policy`(A) · `store` · `upstream`(B) · `cmd/warrantd`(C) 는 `panic("미구현")`. 리눅스 전용 상수 때문에 **맥에서는 빌드 안 된다** — `GOOS=linux` 로 확인 |
-| `server/` | Java 55클래스. **감사 수집 경로가 끝까지 돈다**(`server` 브랜치, 2026-10-24) — `AuditIngestGrpcService`(감사 스트림 → 저장 → ack) · `AuditProtoMapper` · `AuditIngestService.ingest`(멱등) · `NodeRegistry`, 엔티티 4개(`Node` · `AuditEvent` · `UnwarrantedSession` · `EventGap`), Flyway V1 + V2. **테스트 35개 통과**(Testcontainers). `write_aggregates` 는 저장할 테이블이 없어 매퍼가 거부한다(받고 넘기면 ack 되어 노드가 지운다). 나머지 `api` · 발급/승인/연장/취소 `application` · `WarrantPushGrpcService` · `crypto` · 정책 · `Warrant` 엔티티는 본문 미구현. 신원은 mTLS 전까지 `"dev:" + hostname` |
+| `agent/` | 구현: `bpfmap` · `ringbuf` · `policy`(A) · `pamsock`(C) · `cmd/warrantd`(C, 맵 · PAM · ringbuf 로그 · `-upstream`). 일부: `store` 는 메모리 `AuditQueue` 만(bbolt `Store` 미구현, 재시작하면 ack 안 된 기록을 잃는다) · `upstream` 은 평문 `Dial` + `StreamAudit` 만(mTLS · 영장 Subscribe · Verify · ToKernel 미구현). 미구현: `loader`. 리눅스 전용 상수 때문에 **맥에서는 빌드 안 된다** — `GOOS=linux go vet` 로 확인하고, 테스트는 Lima VM `sw` 에서 돌린다 |
+| `server/` | Java 55클래스. **감사 수집 경로가 끝까지 돈다**(2026-10-24) — `AuditIngestGrpcService`(감사 스트림 → 저장 → ack) · `AuditProtoMapper` · `AuditIngestService.ingest`(멱등) · `NodeRegistry`, 엔티티 4개(`Node` · `AuditEvent` · `UnwarrantedSession` · `EventGap`), Flyway V1 + V2. **테스트 35개 통과**(Testcontainers). `write_aggregates` 는 저장할 테이블이 없어 매퍼가 거부한다(받고 넘기면 ack 되어 노드가 지운다). 나머지 `api` · 발급/승인/연장/취소 `application` · `WarrantPushGrpcService` · `crypto` · 정책 · `Warrant` 엔티티는 본문 미구현. 신원은 mTLS 전까지 `"dev:" + hostname` |
 | `deploy/` | `bootstrap.sh` · `enable-bpf-lsm.sh` — 동작. `systemd/` · `ansible/` 은 비어 있다 — warrantd 유닛(`Before=sshd.service` · `RuntimeDirectoryMode=0700`) 필요 |
 | `bench/overhead/` | S1 하네스 — 6차까지(읽기 감시 R · I · I2 포함). **최악 조건 1% 미만 — S1 통과** |
 | `bench/bypass/` | S2 §04 표 = bats 13케이스 + §18 4구멍(skip). **8 통과 · 0 실패**, 출력 커밋됨. 진짜 세션으로 재확인 남음 |
@@ -364,7 +366,7 @@ docker compose -f compose.yaml up -d --wait   # 로컬 PostgreSQL 18 · 호스�
 ./gradlew test --tests '*AuditIngestGrpcServiceTest'    # ← 테스트 클래스 하나만
 ```
 
-**`bootRun` 하면 :8080 과 gRPC :9090 이 같이 열린다**(`server` 브랜치, 2026-10-24 확인). 9090 에 붙는 우리
+**`bootRun` 하면 :8080 과 gRPC :9090 이 같이 열린다**(2026-10-24 확인). 9090 에 붙는 우리
 서비스는 감사 스트림(`AuditIngestService`) 하나뿐이고, `grpc.health.v1.Health` · `grpc.reflection.v1.ServerReflection`
 은 Spring gRPC 가 자동으로 붙인다. 영장 push 쪽 `WarrantPushGrpcService` 는 아직 빈이 아니다(`@Service` 주석).
 테스트는 Testcontainers 라 **Docker 가 떠 있어야 한다** — 꺼져 있으면 `initializationError` 로 실패한다.
@@ -380,6 +382,28 @@ docker compose -f compose.yaml up -d --wait   # 로컬 PostgreSQL 18 · 호스�
 세 언어 중 최소한 Java 쪽은 깨지지 않았는지 확인한다.** Go 는 `make -C agent proto`
 로 다시 뽑아 `agent/internal/pb` 를 커밋한다 — protoc 36.2 · 플러그인은 `agent/go.mod` 의 `tool`
 이 고정한다. C 생성물은 없다.
+
+### warrantd → 서버 (끝에서 끝까지)
+
+맥에서 서버(`bootRun`)를 띄우고, Lima VM `sw` 의 warrantd 를 붙인다. VM 에서 맥은 `host.lima.internal` 이다.
+
+```sh
+# VM 안. BPF 는 loader 대신 bpftool 로 올린다
+make -C bpf warrant.bpf.o && sudo bpftool prog loadall bpf/warrant.bpf.o /sys/fs/bpf/wtest pinmaps /sys/fs/bpf/wmaps autoattach
+cd agent && go build -o ../.cache/bin/warrantd ./cmd/warrantd && cd ..
+sudo systemd-run --unit=warrantd-e2e --collect $PWD/.cache/bin/warrantd \
+  -pin-dir /sys/fs/bpf/wmaps -pam-socket /tmp/warrant-test.sock -upstream host.lima.internal:9090
+cd pam && sudo make test-detached          # 무영장 세션 한 건 → unwarranted_session 행
+sudo journalctl -u warrantd-e2e -o cat      # binder · upstream 로그
+sudo systemctl stop warrantd-e2e && sudo rm -rf /sys/fs/bpf/wtest /sys/fs/bpf/wmaps   # 정리
+```
+
+- **keepalive 는 한 쌍이다.** warrantd 는 30초마다 핑한다(`upstream.keepaliveParams`). 서버
+  `spring.grpc.server.keepalive.permit.time`(20s)이 그보다 길면 서버가 `too_many_pings` 로 끊는다. 기본값은 5m 이다.
+- 서버를 SIGTERM 으로 내리면 Spring graceful shutdown 이 기존 스트림을 30초 살려 둔다 — 그 사이에도 저장 · ack 된다.
+  끊김 · 재전송을 시험하려면 `kill -9` 로 죽인다.
+- VM 안에서 `pkill -f warrantd` 를 `limactl shell ... bash -lc` 로 부르지 말 것 — 그 셸 자신의 명령줄과도 맞아서 셸이 죽는다(종료 코드 255).
+  위처럼 systemd 유닛으로 띄우고 `systemctl stop` 한다.
 
 ### 웹 (범위 밖, 동결)
 

@@ -31,13 +31,20 @@ bpf/                bpf2go 생성물 (커밋한다)
 **A ↔ B 의 경계는 gRPC 가 아니라 `bpfmap` 의 맵 레이아웃 하나다.** `upstream` 은 맵을 직접
 열지 않고 `bpfmap` 함수만 부른다. 값 구조체는 `proto/warrant.proto` 에서 나온다.
 
-## 상태
+## 상태 (2026-10-24)
 
-**골격만 있다.** 패키지와 시그니처·주석은 있고 본문은 전부 `panic("미구현")` 이다.
-의존성도 아직 없다 — `go.mod` 에 require 가 비어 있고 표준 라이브러리만 쓴다.
-`go build ./...` · `go vet ./...` 는 통과한다.
+| 패키지 | 상태 |
+|---|---|
+| `bpfmap` · `ringbuf` · `policy` | 구현 · 테스트 있음 (A) |
+| `pamsock` | 구현 · 테스트 있음 (C) |
+| `cmd/warrantd` | 맵 · PAM 소켓 · ringbuf(로그만) · `-upstream` 으로 무영장 세션 업로드 |
+| `store` | **메모리 `AuditQueue` 만.** bbolt `Store`(영장 캐시 · 감사 영속)는 `panic("미구현")`. 재시작하면 ack 안 된 기록을 잃고 새 seq_epoch 로 시작한다 |
+| `upstream` | **평문 `Dial` + `StreamAudit` 만.** mTLS · `Subscribe` · `Verify` · `ToKernel` · `Heartbeat` 등은 `panic("미구현")` |
+| `loader` | 미구현 — BPF 는 bpftool 로 올린다 |
 
-cilium/ebpf · grpc-go · bbolt 는 해당 패키지를 실제로 구현할 때 각자 추가한다.
+리눅스 전용 상수 때문에 맥에서는 `cmd/warrantd` · `upstream` · `bpfmap` 이 빌드되지 않는다.
+`GOOS=linux go vet ./...` 로 확인하고, 테스트는 Lima VM `sw` 에서 `go test -race ./...` 로 돌린다.
+`store` · `pamsock` · `pb` 는 맥에서도 테스트된다.
 
 ## 규칙
 
@@ -49,4 +56,6 @@ cilium/ebpf · grpc-go · bbolt 는 해당 패키지를 실제로 구현할 때 
   금지 규칙이 파일 inode 로 컴파일되면 **거부**한다 — 디렉터리 inode 여야 한다 (§15).
 - 재시작 중 태깅 공백이 생기면 안 된다. 맵·프로그램은 bpffs pin, systemd 유닛에 `Before=sshd.service`.
 - 감사 유실은 숨기지 않는다. `dropped` 카운터를 그대로 올려보내고 유실 구간을 명시한다 (§13).
+  `AuditQueue` 가 넘쳐 버린 구간도 `LOCAL_STORE_FULL` gap 으로 올린다.
+- **seq_epoch 는 0 이면 안 된다.** 서버가 "안 채웠다"로 보고 연결을 끊는다. 다른 세대의 ack 로는 지우지 않는다.
 - bpf2go 생성물은 **커밋한다.** 빌드 머신에 clang 이 없어도 `go build` 가 서야 한다.
