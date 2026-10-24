@@ -50,6 +50,12 @@ dependencies {
 
     // 영장 서명은 JDK 내장 Ed25519 (JDK 15+). BouncyCastle 을 넣을 이유가 없다.
 
+    // 버전은 Boot BOM 이 관리한다. Java 25 를 지원하는 버전이어야 한다 — Boot 를 올릴 때 같이 확인.
+    compileOnly             'org.projectlombok:lombok'
+    annotationProcessor     'org.projectlombok:lombok'
+    testCompileOnly         'org.projectlombok:lombok'
+    testAnnotationProcessor 'org.projectlombok:lombok'
+
     testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
     testImplementation 'org.springframework.boot:spring-boot-starter-data-jpa-test'
     testImplementation 'org.springframework.boot:spring-boot-starter-flyway-test'
@@ -80,9 +86,4 @@ protobuf {
 
 tasks.named('test') {
     useJUnitPlatform()
-
-    // Gradle 9 는 "발견된 테스트 0개" 를 빌드 실패로 다룬다. 지금은 실제로 0개다.
-    // 가짜 통과 테스트로 초록을 만들지 않는다 — WarrantServerApplicationTests 주석의
-    // 케이스 8개가 채워지는 순간 이 줄을 지운다.
-    failOnNoDiscoveredTests = false
 }

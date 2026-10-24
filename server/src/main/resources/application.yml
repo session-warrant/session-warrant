@@ -15,6 +15,11 @@ spring:
     hibernate:
       ddl-auto: validate     # 스키마는 Flyway 가 만든다. auto-ddl 로 만들지 않는다
     open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          batch_size: 100    # saveAll 을 INSERT 100건씩 묶어 보낸다. 감사 배치 적재 경로
+        order_inserts: true
 
   flyway:
     enabled: true
@@ -26,6 +31,15 @@ spring:
       servlet:
         enabled: false     # 서블릿(8080) 위가 아니라 별도 포트. mTLS 를 콘솔과 따로 건다
       # 노드 인증은 mTLS. 영장 스트림에는 정책 전체가 흐른다
+      # 감사 스트림은 며칠씩 열려 있다. 죽은 연결을 알아채려고 양쪽이 핑을 보낸다.
+      # 한 쌍이다: warrantd 핑 간격(upstream.keepaliveParams.Time 30s) >= permit.time.
+      # 어기면 서버가 GOAWAY(too_many_pings) 로 끊는다 — 기본 permit.time 은 5m 이다.
+      keepalive:
+        time: 1m
+        timeout: 20s
+        permit:
+          time: 20s
+          without-calls: true
 
 warrant:
   # 시간 정책의 핵심은 넉넉히 주는 게 아니라 짧게 주고 연장을 싸게 만드는 것이다(§03).

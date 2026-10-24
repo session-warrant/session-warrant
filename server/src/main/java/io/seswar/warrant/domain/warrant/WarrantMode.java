@@ -29,6 +29,11 @@ public enum WarrantMode {
 
     public static WarrantMode fromWire(int value) {
         // 알 수 없는 값이 오면 예외. 커널 구조체와 어긋난 상태로 조용히 넘어가면 안 된다.
-        throw new UnsupportedOperationException("미구현");
+        for (WarrantMode m : values()) {
+            if (m.wireValue == value) {
+                return m;
+            }
+        }
+        throw new IllegalArgumentException("unknown WarrantMode wire value: " + value);
     }
 }

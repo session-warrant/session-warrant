@@ -52,8 +52,9 @@ PAM session 단계에서 `session-N.scope` 가 이미 확정돼 있다(태깅 �
 실험 경위 전체는 `docs/experiments.md` 에 있다.
 
 **부품은 절반쯤 있고, 끝에서 끝까지 도는 경로는 아직 없다.** 4주 차 마일스톤
-("무영장 세션 한 건이 뜬다")의 경로에서 커널만 돈다:
-커널 훅 ✔ → `loader` ✗ → `warrantd` ✗ → `upstream` ✗ → 서버 gRPC ✗ → DB(스키마만) → Grafana ✗
+("무영장 세션 한 건이 뜬다")의 경로에서 커널과 서버 끝만 돈다:
+커널 훅 ✔ → `loader` ✗ → `warrantd` ✗ → `upstream` ✗ → 서버 gRPC ✔ → DB ✔ → Grafana ✗
+(서버 gRPC · DB 는 `server` 브랜치, 2026-10-24 — 아직 main 에 머지하지 않았다)
 
 | 계층 | 상태 |
 |---|---|
@@ -61,7 +62,7 @@ PAM session 단계에서 `session-N.scope` 가 이미 확정돼 있다(태깅 �
 | `proto/` | **확정** (2026-09-23) — `warrant` · `agent` · `audit` 3파일 |
 | `pam/` | `pam_warrant.c` 141줄 — Lima VM 에서 sshd 3단계까지 검증(2026-09-26). auth info 원문 전달 · 버퍼 8192 수정(`9e329dd`) 뒤 **sshd 재확인 남음** |
 | `agent/` | **8개 중 3개 구현** — `bpfmap` · `ringbuf`(A) · `pamsock`(C, 테스트 31건). `loader` · `policy`(A) · `store` · `upstream`(B) · `cmd/warrantd`(C) 는 `panic("미구현")`. 리눅스 전용 상수 때문에 **맥에서는 빌드 안 된다** — `GOOS=linux` 로 확인 |
-| `server/` | Java 51클래스 — 엔티티 · 리포지토리 · 설정 · Flyway V1 은 있고, `api` · `application` · `grpc` · `crypto` · `slack` 27클래스는 본문 미구현. **테스트 0개.** `bootRun` 이 뜬다(2026-10-20) — Flyway V1 실제 DDL 15테이블, `/actuator/health` UP. 엔티티는 아직 주석이라 `ddl-auto: validate` 가 검사할 대상이 없다 |
+| `server/` | Java 55클래스. **감사 수집 경로가 끝까지 돈다**(`server` 브랜치, 2026-10-24) — `AuditIngestGrpcService`(감사 스트림 → 저장 → ack) · `AuditProtoMapper` · `AuditIngestService.ingest`(멱등) · `NodeRegistry`, 엔티티 4개(`Node` · `AuditEvent` · `UnwarrantedSession` · `EventGap`), Flyway V1 + V2. **테스트 35개 통과**(Testcontainers). `write_aggregates` 는 저장할 테이블이 없어 매퍼가 거부한다(받고 넘기면 ack 되어 노드가 지운다). 나머지 `api` · 발급/승인/연장/취소 `application` · `WarrantPushGrpcService` · `crypto` · 정책 · `Warrant` 엔티티는 본문 미구현. 신원은 mTLS 전까지 `"dev:" + hostname` |
 | `deploy/` | `bootstrap.sh` · `enable-bpf-lsm.sh` — 동작. `systemd/` · `ansible/` 은 비어 있다 — warrantd 유닛(`Before=sshd.service` · `RuntimeDirectoryMode=0700`) 필요 |
 | `bench/overhead/` | S1 하네스 — 6차까지(읽기 감시 R · I · I2 포함). **최악 조건 1% 미만 — S1 통과** |
 | `bench/bypass/` | S2 §04 표 = bats 13케이스 + §18 4구멍(skip). **8 통과 · 0 실패**, 출력 커밋됨. 진짜 세션으로 재확인 남음 |
@@ -257,7 +258,7 @@ Ed25519 서명                      · 정책 → (dev,ino) 컴파일           
 | DB | — | PostgreSQL 18 (감사 이벤트는 선언적 파티셔닝) |
 | 대시보드 | TypeScript | React 19 · Vite — 또는 Grafana로 대체 |
 
-중앙 서버는 Spring Web MVC + 가상 스레드(WebFlux 불필요) · Testcontainers + JUnit 5 · Ed25519는 JDK 내장.
+중앙 서버는 Spring Web MVC + 가상 스레드(WebFlux 불필요) · Testcontainers + JUnit 5 · Ed25519는 JDK 내장 · Lombok(Boot BOM 관리, 1.18.46 — Java 25 지원 버전이어야 한다).
 
 **`server/` 빌드는 2026-09-01 에 실증됐다.** 52클래스가 Java 25(class major 69)로
 컴파일되고 `bootJar` 가 나온다. 고정한 버전이 실제 산출물과 일치한다 —
@@ -269,10 +270,12 @@ spring-security-oauth2 7.1.1 · hibernate 7.4.5. **Boot 버전을 올릴 때 이
 설치되지 않은 기계에서 `No matching toolchains found` 로 빌드가 시작조차 못 한다.
 맥북(편집)과 서브 PC(빌드)의 JDK 를 손으로 맞추지 않기 위한 장치다.
 
-테스트는 아직 0개다. Gradle 9 는 그걸 빌드 실패로 다루므로
-`failOnNoDiscoveredTests = false` 로 꺼 뒀다 — `WarrantServerApplicationTests` 주석에
-적힌 케이스 8개가 채워지는 순간 그 줄을 지운다. 가짜 통과 테스트로 초록을
-만들지 말 것.
+Gradle 9 는 발견된 테스트가 0개면 빌드를 실패시킨다. 테스트가 없던 동안 `failOnNoDiscoveredTests = false`
+로 꺼 뒀다가 2026-10-24 에 지웠다 — 그래서 `--tests` 필터를 잘못 주면 「0개 실행인데 초록」이 아니라
+`No tests found` 로 실패한다. 되살리지 말 것.
+`WarrantServerApplicationTests` 주석에 적힌 케이스 8개 중 채워진 건 「감사 이벤트 재전송이
+멱등하다」 하나뿐이고(`AuditIngestServiceTest` · `AuditIngestGrpcServiceTest`), 나머지 7개는
+발급 · 승인 쪽이라 아직이다. 가짜 통과 테스트로 초록을 만들지 말 것.
 
 **Spring Boot 4는 스타터 이름이 Boot 3과 다르다.** `spring-boot-starter-web` → `-webmvc`, oauth2 스타터 → `spring-boot-starter-security-oauth2-*`, Flyway는 전용 스타터, gRPC는 Boot가 spring-grpc를 흡수해 `spring-boot-starter-grpc-server`가 됐다 (`org.springframework.grpc` 스타터는 1.0.3에서 멈췄으니 그 BOM을 import하지 말 것). Boot 3 예제를 그대로 옮기면 "Could not find ..."로 실패한다.
 
@@ -358,12 +361,13 @@ docker compose -f compose.yaml up -d --wait   # 로컬 PostgreSQL 18 · 호스�
 ./gradlew bootRun                  # :8080 (health 만 공개) · Flyway 적용. OIDC 는 SPRING_PROFILES_ACTIVE=oidc
 ./gradlew build                    # 컴파일 + 테스트 + bootJar
 ./gradlew generateProto            # proto/*.proto → Java (protobuf + grpc)
-./gradlew test --tests '*WarrantServerApplicationTests'    # ← 테스트 하나만
+./gradlew test --tests '*AuditIngestGrpcServiceTest'    # ← 테스트 클래스 하나만
 ```
 
-**`bootRun` 은 뜨지만 아직 아무 일도 안 한다.** 엔티티 · 서비스 · gRPC 서비스가 전부 주석이라,
-gRPC 서비스 빈이 하나도 없어서 9090 이 열리지 않는다 — 첫 서비스(`AuditIngestGrpcService`)를 붙이면 열린다.
-테스트도 0개다 (`failOnNoDiscoveredTests = false`).
+**`bootRun` 하면 :8080 과 gRPC :9090 이 같이 열린다**(`server` 브랜치, 2026-10-24 확인). 9090 에 붙는 우리
+서비스는 감사 스트림(`AuditIngestService`) 하나뿐이고, `grpc.health.v1.Health` · `grpc.reflection.v1.ServerReflection`
+은 Spring gRPC 가 자동으로 붙인다. 영장 push 쪽 `WarrantPushGrpcService` 는 아직 빈이 아니다(`@Service` 주석).
+테스트는 Testcontainers 라 **Docker 가 떠 있어야 한다** — 꺼져 있으면 `initializationError` 로 실패한다.
 
 - **V1 은 한 번 적용되면 고치지 않는다.** 스키마 변경은 V2 부터. 로컬에서 V1 을 고쳤다면
   `docker compose -f compose.yaml down -v` 로 볼륨째 지운다.
