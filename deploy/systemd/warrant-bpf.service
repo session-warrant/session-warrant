@@ -1,0 +1,16 @@
+# BPF 프로그램을 올리고 bpffs 에 pin 한다. warrantd 의 기동 1·3단계(loader)가 생기기 전의 대역이다.
+# 이미 pin 돼 있으면 건너뛴다 — warrantd 를 재시작해도 훅과 맵(=태그)이 그대로 남는다.
+# 부팅하면 bpffs 가 비어 있으니 그때 다시 올린다. 멈춰도 pin 은 지우지 않는다(집행은 계속된다).
+[Unit]
+Description=Session Warrant BPF programs (bpftool, until warrantd has a loader)
+DefaultDependencies=no
+After=local-fs.target
+Before=warrantd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/warrant/load-bpf.sh
+
+[Install]
+WantedBy=multi-user.target

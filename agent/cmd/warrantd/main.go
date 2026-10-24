@@ -149,6 +149,11 @@ func run(pinDir, socketPath, upstreamEP string) error {
 
 	go func() { serveErr <- srv.Serve(ctx, b) }()
 
+	// The socket is bound by Listen, so sessions from here on are tagged. Only now may sshd start.
+	if err := sdNotify("READY=1"); err != nil {
+		log.Printf("warrantd: sd_notify: %v", err)
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
