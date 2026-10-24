@@ -71,6 +71,15 @@ sudo deploy/systemd/install.sh --uninstall             # 제거. pin 은 남긴�
   중앙이 꺼져 있어도 warrantd 는 뜨고 업로드만 재시도한다.
 - **BPF 를 못 올리면 warrantd 도 안 뜨고, 로그인은 된다.** `Requires=` 는 warrantd 에만 걸고 ssh 에는 걸지 않는다 —
   PAM 은 소켓이 없으면 fail-open 한다(§17). 무영장 세션으로 기록되지 않는 구간이 생기므로 `warrant-bpf` 실패는 경보 대상이다.
+- **실제 sshd 로 시험하는 법(2026-10-24 확인).** 원복 타이머를 먼저 건다 — 잘못돼서 못 들어가도 10분 뒤 저절로 빠진다.
+  ```sh
+  sudo systemd-run --unit=pam-deadman --on-active=10min /usr/bin/make -C $PWD/pam disable
+  sudo I_CAN_RECOVER=1 make -C pam enable-sshd TEST_SOCK=/run/warrantd/pam.sock
+  # 맥에서. Lima 의 다중화 연결은 새 PAM 세션을 열지 않는다
+  ssh -F ~/.lima/sw/ssh.config -o ControlPath=none -o ControlMaster=no lima-sw true
+  sudo make -C pam disable && sudo systemctl stop pam-deadman.timer
+  ```
+  `ExposeAuthInfo` 는 켜지 않아도 된다 — `SSH_AUTH_INFO_0` 은 꺼진 채로 open_session 에 와서 키 지문이 남는다.
 - 맵 · 프로그램 이름을 시험 하네스(`bpf/wtest.sh` · `warrantctl` 의 `wtest` · `wmaps`)와 다르게 써서 둘이 섞이지 않는다.
 
 `ansible/` 은 노드가 여러 대가 되는 시점에. 지금은 이르다.
