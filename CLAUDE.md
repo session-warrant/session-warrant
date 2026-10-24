@@ -51,9 +51,8 @@ BPF LSM이 붙고 돌고, 쓰기 포화 조건에서 오버헤드가 **1% 미만
 PAM session 단계에서 `session-N.scope` 가 이미 확정돼 있다(태깅 공백 없음).
 실험 경위 전체는 `docs/experiments.md` 에 있다.
 
-**무영장 세션 한 건이 DB 까지 간다 (2026-10-24, main).** 4주 차 마일스톤("무영장 세션 한 건이 뜬다")에서
-남은 건 화면(Grafana)뿐이다. 이 경로는 커널 ringbuf 를 거치지 않는다 — 무영장 판정은 PAM 쪽 binder 가 한다:
-SSH/PAM 세션 → `pam_warrant.so` ✔ → warrantd binder ✔ → `store.AuditQueue` ✔ → `upstream.StreamAudit` ✔ → 서버 gRPC ✔ → DB ✔ → Grafana ✗
+**4주 차 마일스톤 「무영장 세션 한 건이 뜬다」 — 끝에서 끝까지 돈다 (2026-10-24).** 이 경로는 커널 ringbuf 를 거치지 않는다 — 무영장 판정은 PAM 쪽 binder 가 한다:
+SSH/PAM 세션 → `pam_warrant.so` ✔ → warrantd binder ✔ → `store.AuditQueue` ✔ → `upstream.StreamAudit` ✔ → 서버 gRPC ✔ → DB ✔ → Grafana ✔
 Lima VM 의 warrantd 가 맥에서 띄운 서버로 보내 `unwarranted_session` 행이 생기고, 서버를 `kill -9` 한 동안 생긴
 세션이 재시작 뒤 재전송으로 들어오는 것까지 확인했다. **커널 ringbuf 이벤트는 아직 안 올린다** — Gap 결함(시각 0 ·
 boot ns) 때문에 서버가 거절한다. `loader` 는 미구현이라 BPF 는 bpftool 로 올린다.
@@ -70,7 +69,7 @@ boot ns) 때문에 서버가 거절한다. `loader` 는 미구현이라 BPF 는 
 | `bench/bypass/` | S2 §04 표 = bats 13케이스 + §18 4구멍(skip). **8 통과 · 0 실패**, 출력 커밋됨. 진짜 세션으로 재확인 남음 |
 | `bench/pamtiming/` | S3 하네스 — **통과**. sshd 11/11, 태깅 공백 없음 |
 | `bench/inode/` | S4 하네스 — fanotify 감시자 + 변형 카탈로그. **아직 안 돌렸다** |
-| Grafana | 없음 — 화면은 이걸로 대체하기로 했다 |
+| Grafana | `deploy/grafana` — compose 로 뜬다(:3000, 로그인 없이 보기 전용). 대시보드 「무영장 세션」: 건수 · 키 없음 · 유실 구간 · 노드 타일, 사유별 막대, 최근 세션 · 노드 · 유실 구간 표. PostgreSQL 을 직접 읽는다(로컬은 warrant 계정 — 운영은 SELECT 전용 계정으로) |
 | `web/` | **범위 밖, 동결.** 감사 4화면, React 19 + shadcn, 목 데이터 |
 
 각 디렉터리의 `README.md` 에 그 계층이 지켜야 할 제약이 적혀 있다. 작업 전에 해당 README를 먼저 읽을 것.
@@ -359,7 +358,7 @@ sudo make test-apt                             # 실제 패키지 재설치 포�
 
 ```sh
 cd server
-docker compose -f compose.yaml up -d --wait   # 로컬 PostgreSQL 18 · 호스트 5433
+docker compose -f compose.yaml up -d --wait   # 로컬 PostgreSQL 18(호스트 5433) + Grafana(:3000)
 ./gradlew bootRun                  # :8080 (health 만 공개) · Flyway 적용. OIDC 는 SPRING_PROFILES_ACTIVE=oidc
 ./gradlew build                    # 컴파일 + 테스트 + bootJar
 ./gradlew generateProto            # proto/*.proto → Java (protobuf + grpc)

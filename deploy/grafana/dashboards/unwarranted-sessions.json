@@ -1,0 +1,643 @@
+{
+  "uid": "warrant-audit",
+  "title": "무영장 세션",
+  "description": "영장 없이 열린 SSH 세션과 노드 · 유실 구간. 감사 모드 — 막지 않고 기록만 한다.",
+  "tags": [
+    "session-warrant",
+    "audit"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 41,
+  "editable": false,
+  "graphTooltip": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "무영장 세션",
+      "description": "선택한 기간에 영장 없이 열린 세션 수.",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 6,
+        "h": 5
+      },
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "warrant-pg"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT count(*) AS \"무영장 세션\"\nFROM unwarranted_session\nWHERE $__timeFilter(observed_at)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "그중 키 없음",
+      "description": "공개키 인증이 아니라(비밀번호 등) 키 지문이 없다. 사람을 역추적할 근거가 없는 접속이다.",
+      "gridPos": {
+        "x": 6,
+        "y": 0,
+        "w": 6,
+        "h": 5
+      },
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "warrant-pg"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT count(*) AS \"키 없음\"\nFROM unwarranted_session\nWHERE $__timeFilter(observed_at) AND reason = 'NO_KEY'"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "유실 구간",
+      "description": "기록이 빠졌다고 노드가 보고한 구간 수. 0 이 아니면 그 구간의 '조용함'은 믿을 수 없다 — 아래 유실 구간 표를 본다.",
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 6,
+        "h": 5
+      },
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "warrant-pg"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT count(*) AS \"유실 구간\"\nFROM audit_gap\nWHERE to_at >= $__timeFrom() AND from_at <= $__timeTo()"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              },
+              {
+                "color": "#ec835a",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "노드",
+      "description": "한 번이라도 감사 스트림을 연 노드 수.",
+      "gridPos": {
+        "x": 18,
+        "y": 0,
+        "w": 6,
+        "h": 5
+      },
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "warrant-pg"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT count(*) AS \"노드\" FROM node"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "무영장 세션 · 사유별",
+      "description": "구간마다 영장 없이 열린 세션 수. 색은 사유마다 고정이다.",
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 24,
+        "h": 8
+      },
+      "interval": "10m",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "warrant-pg"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT $__timeGroupAlias(observed_at, $__interval, 0), reason AS metric, count(*) AS value\nFROM unwarranted_session\nWHERE $__timeFilter(observed_at)\nGROUP BY 1, 2\nORDER BY 1"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "min": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#2a78d6"
+          },
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 100,
+            "lineWidth": 0,
+            "barAlignment": 0,
+            "gradientMode": "none",
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "axisPlacement": "auto",
+            "axisSoftMin": 0,
+            "axisLabel": "세션 수"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "NO_WARRANT"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#2a78d6"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "영장 없음 (NO_WARRANT)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "NO_KEY"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#eb6834"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "키 없음 (NO_KEY)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "KEY_MISMATCH"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#1baf7a"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "남의 영장 키 (KEY_MISMATCH)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "AGENT_UNREACHED"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#eda100"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "warrantd 불통 (AGENT_UNREACHED)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "CENTRAL_STALE"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#e87ba4"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "중앙 단절 (CENTRAL_STALE)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "PAM_ABSENT"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#6250d6"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "PAM 없이 생긴 세션 (PAM_ABSENT)"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": [
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "maxDataPoints": 48
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "최근 무영장 세션",
+      "description": "새 것부터. 키 지문이 있으면 그 키의 주인이 사람이다. cgroup 은 그 세션의 커널 기록과 맞춰 볼 때 쓴다.",
+      "gridPos": {
+        "x": 0,
+        "y": 13,
+        "w": 24,
+        "h": 10
+      },
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "warrant-pg"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT u.observed_at AS \"시각\",\n       n.hostname AS \"노드\",\n       u.login_account AS \"계정\",\n       coalesce(u.source_address, '—') AS \"출발지\",\n       u.reason AS \"사유\",\n       coalesce(u.ssh_key_fingerprint, '키 없음') AS \"키 지문\",\n       u.cgroup_id AS \"cgroup\"\nFROM unwarranted_session u\nJOIN node n ON n.id = u.node_id\nWHERE $__timeFilter(u.observed_at)\nORDER BY u.observed_at DESC\nLIMIT 500"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "시각"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "time:YYYY-MM-DD HH:mm:ss"
+              },
+              {
+                "id": "custom.width",
+                "value": 190
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cgroup"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.width",
+                "value": 110
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      }
+    },
+    {
+      "id": 7,
+      "type": "table",
+      "title": "노드",
+      "description": "노드가 감사 스트림을 열 때 알려 준 자기 정보. 마지막 등록은 스트림을 연 시각이다 — 하트비트가 붙기 전까지 '지금 살아 있음'을 뜻하지 않는다.",
+      "gridPos": {
+        "x": 0,
+        "y": 23,
+        "w": 24,
+        "h": 6
+      },
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "warrant-pg"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT hostname AS \"노드\",\n       agent_version AS \"warrantd\",\n       kernel_version AS \"커널\",\n       CASE WHEN bpf_lsm_enabled THEN '켜짐' ELSE '꺼짐' END AS \"BPF LSM\",\n       coalesce(nullif(array_to_string(attached_hooks, ', '), ''), '—') AS \"붙은 훅\",\n       last_seen_at AS \"마지막 등록\",\n       booted_at AS \"부팅\"\nFROM node\nORDER BY last_seen_at DESC NULLS LAST"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "마지막 등록"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "time:YYYY-MM-DD HH:mm:ss"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "부팅"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "time:YYYY-MM-DD HH:mm:ss"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "table",
+      "title": "유실 구간",
+      "description": "노드가 '이 구간은 기록이 빠졌다'고 보고한 곳. 빈 구간을 숨기지 않는다(§13).",
+      "gridPos": {
+        "x": 0,
+        "y": 29,
+        "w": 24,
+        "h": 6
+      },
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "warrant-pg"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT g.from_at AS \"시작\",\n       g.to_at AS \"끝\",\n       n.hostname AS \"노드\",\n       g.cause AS \"원인\",\n       coalesce(g.dropped_count::text, '모름') AS \"잃은 건수\"\nFROM audit_gap g\nJOIN node n ON n.id = g.node_id\nWHERE g.to_at >= $__timeFrom() AND g.from_at <= $__timeTo()\nORDER BY g.from_at DESC\nLIMIT 200"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          },
+          "noValue": "선택한 기간에 유실 없음"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "시작"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "time:YYYY-MM-DD HH:mm:ss"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "끝"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "time:YYYY-MM-DD HH:mm:ss"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      }
+    }
+  ]
+}
