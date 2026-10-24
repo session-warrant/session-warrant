@@ -62,7 +62,7 @@ PAM session 단계에서 `session-N.scope` 가 이미 확정돼 있다(태깅 �
 | `proto/` | **확정** (2026-09-23) — `warrant` · `agent` · `audit` 3파일 |
 | `pam/` | `pam_warrant.c` 141줄 — Lima VM 에서 sshd 3단계까지 검증(2026-09-26). auth info 원문 전달 · 버퍼 8192 수정(`9e329dd`) 뒤 **sshd 재확인 남음** |
 | `agent/` | **8개 중 3개 구현** — `bpfmap` · `ringbuf`(A) · `pamsock`(C, 테스트 31건). `loader` · `policy`(A) · `store` · `upstream`(B) · `cmd/warrantd`(C) 는 `panic("미구현")`. 리눅스 전용 상수 때문에 **맥에서는 빌드 안 된다** — `GOOS=linux` 로 확인 |
-| `server/` | Java 55클래스. **감사 수집 경로가 끝까지 돈다**(`server` 브랜치, 2026-10-24) — `AuditIngestGrpcService`(감사 스트림 → 저장 → ack) · `AuditProtoMapper` · `AuditIngestService.ingest`(멱등) · `NodeRegistry`, 엔티티 4개(`Node` · `AuditEvent` · `UnwarrantedSession` · `EventGap`), Flyway V1 + V2. **테스트 34개 통과**(Testcontainers). 나머지 `api` · 발급/승인/연장/취소 `application` · `WarrantPushGrpcService` · `crypto` · 정책 · `Warrant` 엔티티는 본문 미구현. 신원은 mTLS 전까지 `"dev:" + hostname` |
+| `server/` | Java 55클래스. **감사 수집 경로가 끝까지 돈다**(`server` 브랜치, 2026-10-24) — `AuditIngestGrpcService`(감사 스트림 → 저장 → ack) · `AuditProtoMapper` · `AuditIngestService.ingest`(멱등) · `NodeRegistry`, 엔티티 4개(`Node` · `AuditEvent` · `UnwarrantedSession` · `EventGap`), Flyway V1 + V2. **테스트 35개 통과**(Testcontainers). `write_aggregates` 는 저장할 테이블이 없어 매퍼가 거부한다(받고 넘기면 ack 되어 노드가 지운다). 나머지 `api` · 발급/승인/연장/취소 `application` · `WarrantPushGrpcService` · `crypto` · 정책 · `Warrant` 엔티티는 본문 미구현. 신원은 mTLS 전까지 `"dev:" + hostname` |
 | `deploy/` | `bootstrap.sh` · `enable-bpf-lsm.sh` — 동작. `systemd/` · `ansible/` 은 비어 있다 — warrantd 유닛(`Before=sshd.service` · `RuntimeDirectoryMode=0700`) 필요 |
 | `bench/overhead/` | S1 하네스 — 6차까지(읽기 감시 R · I · I2 포함). **최악 조건 1% 미만 — S1 통과** |
 | `bench/bypass/` | S2 §04 표 = bats 13케이스 + §18 4구멍(skip). **8 통과 · 0 실패**, 출력 커밋됨. 진짜 세션으로 재확인 남음 |
@@ -270,8 +270,9 @@ spring-security-oauth2 7.1.1 · hibernate 7.4.5. **Boot 버전을 올릴 때 이
 설치되지 않은 기계에서 `No matching toolchains found` 로 빌드가 시작조차 못 한다.
 맥북(편집)과 서브 PC(빌드)의 JDK 를 손으로 맞추지 않기 위한 장치다.
 
-`failOnNoDiscoveredTests = false` 는 테스트가 0개였을 때(Gradle 9 는 그걸 빌드 실패로
-다룬다) 넣은 줄이다. 이제 감사 수집 테스트가 있어서 그 이유는 사라졌다.
+Gradle 9 는 발견된 테스트가 0개면 빌드를 실패시킨다. 테스트가 없던 동안 `failOnNoDiscoveredTests = false`
+로 꺼 뒀다가 2026-10-24 에 지웠다 — 그래서 `--tests` 필터를 잘못 주면 「0개 실행인데 초록」이 아니라
+`No tests found` 로 실패한다. 되살리지 말 것.
 `WarrantServerApplicationTests` 주석에 적힌 케이스 8개 중 채워진 건 「감사 이벤트 재전송이
 멱등하다」 하나뿐이고(`AuditIngestServiceTest` · `AuditIngestGrpcServiceTest`), 나머지 7개는
 발급 · 승인 쪽이라 아직이다. 가짜 통과 테스트로 초록을 만들지 말 것.
