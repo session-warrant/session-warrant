@@ -4,8 +4,9 @@
 //   - PutWarrant · Warrants · DeleteWarrantsNotIn: 서명된 영장을 보관하고 재시작 때 돌려준다
 //   - AppendAudit · AckThrough: 아직 못 보낸 감사 이벤트를 쌓고, 서버가 받은 만큼 지운다
 //   - SeqEpoch · NextNodeSeq: 감사 이벤트 순번을 매긴다
+//   - AuditQueue (auditqueue.go): 감사 절반의 메모리 대역. bbolt 전까지 이걸 쓴다
 //
-// 부르는 쪽: cmd/warrantd 기동 2단계, upstream. 상태: 미구현 (B 담당).
+// 부르는 쪽: cmd/warrantd 기동 2단계, upstream. 상태: AuditQueue 만 구현, bbolt Store 는 미구현 (B 담당).
 package store
 
 type Store struct{}
