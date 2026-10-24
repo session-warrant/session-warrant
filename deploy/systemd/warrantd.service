@@ -1,0 +1,31 @@
+# 노드 에이전트. sshd 보다 먼저 떠서 PAM 소켓을 열어 둬야 한다 — 늦으면 그 사이 세션은 태그 없이 시작된다.
+# Type=notify: warrantd 가 소켓을 연 뒤 READY=1 을 보내야 started 가 되고, 그다음에 ssh 가 뜬다.
+# Ubuntu 24.04 는 ssh.socket 이 sshd 를 깨운다. 셋 다 건다(없는 이름은 무시된다).
+[Unit]
+Description=Session Warrant node agent
+Requires=warrant-bpf.service
+After=warrant-bpf.service network-online.target
+Wants=network-online.target
+Before=ssh.socket ssh.service sshd.service
+
+[Service]
+Type=notify
+EnvironmentFile=-/etc/default/warrantd
+ExecStart=/usr/local/sbin/warrantd -pin-dir /sys/fs/bpf/warrant -pam-socket /run/warrantd/pam.sock $WARRANTD_ARGS
+Restart=always
+RestartSec=1s
+TimeoutStartSec=30s
+
+# PAM 소켓 자리. 0700 — root 인 sshd 만 들어온다. 감사 큐 영속(bbolt) 자리는 StateDirectory.
+RuntimeDirectory=warrantd
+RuntimeDirectoryMode=0700
+StateDirectory=warrantd
+StateDirectoryMode=0700
+
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
