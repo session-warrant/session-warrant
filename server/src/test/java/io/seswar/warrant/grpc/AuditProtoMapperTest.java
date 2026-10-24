@@ -22,6 +22,7 @@ import io.seswar.warrant.proto.AuditProtos.Origin;
 import io.seswar.warrant.proto.AuditProtos.ProcessIdentity;
 import io.seswar.warrant.proto.AuditProtos.TagSource;
 import io.seswar.warrant.proto.AuditProtos.UnwarrantedSessionEvent;
+import io.seswar.warrant.proto.AuditProtos.WriteAggregate;
 import io.seswar.warrant.proto.WarrantProtos.Mode;
 import org.junit.jupiter.api.Test;
 
@@ -201,5 +202,19 @@ class AuditProtoMapperTest {
         assertThatThrownBy(() -> map(base(1).setOrigin(Origin.ORIGIN_UNSPECIFIED)
                 .setExec(ExecEvent.getDefaultInstance()).build()))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void 쓰기_허용_횟수가_실려_오면_아직_저장할_곳이_없어_거부된다() {
+        // 받고 넘어가면 ack 되어 노드가 지운다. 저장할 테이블이 생기기 전까지는 끊어서 드러낸다
+        AuditBatch batch = AuditBatch.newBuilder().setSeqEpoch(EPOCH).setLastNodeSeq(1)
+                .addEvents(unwarranted(1))
+                .addWriteAggregates(WriteAggregate.newBuilder()
+                        .setWarrantId(7).setBucketStartUnixNs(T_NS).setBucketNs(60_000_000_000L).setAllowedCount(12))
+                .build();
+
+        assertThatThrownBy(() -> AuditProtoMapper.toBatch(NODE, batch))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("write_aggregates");
     }
 }

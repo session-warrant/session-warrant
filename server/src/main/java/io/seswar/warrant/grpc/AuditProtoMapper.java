@@ -35,6 +35,11 @@ public final class AuditProtoMapper {
 
     /** AuditBatch를 서버에서 사용할 batch로 전환 */
     public static AuditIngestService.Batch toBatch(UUID nodeId, AuditBatch batch) {
+        // No table yet. Ignoring them would ack them and warrantd would delete them.
+        if (batch.getWriteAggregatesCount() > 0) {
+            throw new IllegalArgumentException("write_aggregates are not stored yet ("
+                    + batch.getWriteAggregatesCount() + " in batch)");
+        }
         long epoch = batch.getSeqEpoch();
         List<AuditEvent> events = new ArrayList<>();
         List<UnwarrantedSession> sessions = new ArrayList<>();
