@@ -6,10 +6,8 @@
 //	sudo ./warrantctl -pin-dir /sys/fs/bpf/wmaps -bind-cgroup 1234 -mode enforce \
 //	     -allow-exec /usr/bin/true,/bin/sh -allow-write /tmp/wt -deny-write /tmp/wt/secret
 //
-// 맵은 미리 만들어져 있어야 한다 (loader 가 아직 없으므로 bpftool 로):
-//
-//	sudo bpftool prog loadall bpf/warrant.bpf.o /sys/fs/bpf/wtest \
-//	     pinmaps /sys/fs/bpf/wmaps autoattach
+// 로드·attach·pin 은 internal/loader 가 한다 — bpftool 로 미리 올려둘 필요가
+// 없다. 끝날 때 태그는 떼고 훅은 붙여 둔다 (`-detach` 로 떼게 할 수 있다).
 package main
 
 import (
@@ -189,6 +187,17 @@ func run(pinDir string, o opts) error {
 			return err
 		}
 		logf(o.color, "  cgroup %d -> 영장 %d (mode=%s)", o.cgroup, warrantID, o.mode)
+
+		// 끝날 때 태그를 뗀다. 안 떼면 warrantctl 이 끝나도 그 세션은 계속
+		// 판정 아래 남는다 — 훅과 맵이 pin 으로 살아 있기 때문이다.
+		// enforce 로 실험하다 Ctrl-C 를 누르면 그 세션이 그대로 묶인다.
+		defer func() {
+			if err := m.UntagCgroup(o.cgroup); err != nil {
+				fmt.Fprintln(os.Stderr, "cgroup 태그 제거 실패:", err)
+			} else {
+				logf(o.color, "  cgroup %d 태그 제거", o.cgroup)
+			}
+		}()
 	}
 	if err := m.SetActive(o.active); err != nil {
 		return err

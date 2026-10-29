@@ -50,28 +50,51 @@ func LoadObject(objPath, pinDir string) (*Loader, error) {
 		return nil, fmt.Errorf("링크 디렉터리 %s: %w", linkDir, err)
 	}
 
-	spec, err := ebpf.LoadCollectionSpec(objPath)
-	if err != nil {
-		return nil, fmt.Errorf("오브젝트 %s: %w", objPath, err)
-	}
+	// 「없으면 만들어서 pin」 은 두 인스턴스가 겹치면 깨진다. 둘 다 pin 이
+	// 없는 것을 보고 각자 만든 뒤, 하나가 먼저 pin 하면 나머지가 EEXIST 로
+	// 죽는다. warrantd 가 재시작될 때 이전 인스턴스가 아직 내려가는 중이면
+	// 새 인스턴스가 못 뜬다는 뜻이다.
+	//
+	// 실측: 두 프로세스를 동시에 띄우면 10회 중 3회가
+	// "pin map to ...: file exists" 로 실패했다 (S5, 2026-10-26).
+	//
+	// create-or-open 경쟁이므로 처리도 정해져 있다 — EEXIST 면 다시 연다.
+	// 그때는 이미 pin 이 있으므로 재사용 경로로 들어간다. spec 은 매번 새로
+	// 읽는다. 로드가 spec 을 건드렸을 가능성을 남기지 않기 위해서다.
+	const attempts = 4
 
-	// 맵마다 「이름으로 pin」 을 켠다. C 쪽에 LIBBPF_PIN_BY_NAME 을 안 적어도
-	// 여기서 켜면 있으면 재사용, 없으면 만들어서 pin 한다.
-	for _, m := range spec.Maps {
-		if strings.HasPrefix(m.Name, ".") {
-			continue // .rodata 같은 내부 맵은 pin 하지 않는다
+	var spec *ebpf.CollectionSpec
+	var coll *ebpf.Collection
+	for i := 0; ; i++ {
+		var err error
+		spec, err = ebpf.LoadCollectionSpec(objPath)
+		if err != nil {
+			return nil, fmt.Errorf("오브젝트 %s: %w", objPath, err)
 		}
-		m.Pinning = ebpf.PinByName
-	}
 
-	coll, err := ebpf.NewCollectionWithOptions(spec, ebpf.CollectionOptions{
-		Maps: ebpf.MapOptions{PinPath: pinDir},
-	})
-	if err != nil {
+		// 맵마다 「이름으로 pin」 을 켠다. C 쪽에 LIBBPF_PIN_BY_NAME 을 안 적어도
+		// 여기서 켜면 있으면 재사용, 없으면 만들어서 pin 한다.
+		for _, m := range spec.Maps {
+			if strings.HasPrefix(m.Name, ".") {
+				continue // .rodata 같은 내부 맵은 pin 하지 않는다
+			}
+			m.Pinning = ebpf.PinByName
+		}
+
+		coll, err = ebpf.NewCollectionWithOptions(spec, ebpf.CollectionOptions{
+			Maps: ebpf.MapOptions{PinPath: pinDir},
+		})
+		if err == nil {
+			break
+		}
+
 		var ve *ebpf.VerifierError
 		if errors.As(err, &ve) {
 			// verifier 로그는 잘리면 원인을 못 찾는다. 통째로 넘긴다.
 			return nil, fmt.Errorf("verifier 거부:\n%+v", ve)
+		}
+		if errors.Is(err, os.ErrExist) && i < attempts-1 {
+			continue // 남이 먼저 pin 했다. 이제 열면 된다.
 		}
 		return nil, fmt.Errorf("로드: %w", err)
 	}
