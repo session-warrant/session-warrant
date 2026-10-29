@@ -383,7 +383,8 @@ int BPF_PROG(warrant_file_open, struct file *file, int ret)
 }
 
 /* 감사 미러. 같은 판정 함수를 부르고 반환값만 버린다 —
- * LSM 과 판정이 갈리면 그건 버그다 (proto AuditEvent.origin). */
+ * LSM 과 판정이 갈리면 그건 버그다. 나머지 미러는 파일 끝에 모여 있다
+ * (판정 함수들이 그 뒤에 정의되기 때문이다). */
 SEC("kprobe/security_file_open")
 int BPF_KPROBE(warrant_file_open_mirror, struct file *file)
 {
@@ -393,7 +394,8 @@ int BPF_KPROBE(warrant_file_open_mirror, struct file *file)
 
 /* ── inode_{create,unlink,rename,link,symlink} ───────────────────── */
 
-static __always_inline int inode_verdict(struct dentry *d, __u16 hook, __u8 op)
+static __always_inline int inode_verdict(struct dentry *d, __u16 hook, __u8 op,
+					 __u8 origin)
 {
 	__u64 wid = 0;
 	__u8 tag = WARRANT_TAG_NONE;
@@ -411,7 +413,7 @@ static __always_inline int inode_verdict(struct dentry *d, __u16 hook, __u8 op)
 	if (denied) {
 		pl.op = op;
 		emit(hook, verdict_of(w, denied), tag, wid, w,
-		     WARRANT_ORIGIN_LSM, &pl, sizeof(pl));
+		     origin, &pl, sizeof(pl));
 	}
 	return ret_of(w, denied);
 }
@@ -422,7 +424,8 @@ int BPF_PROG(warrant_inode_create, struct inode *dir, struct dentry *dentry,
 {
 	if (ret != 0)
 		return ret;
-	return inode_verdict(dentry, WARRANT_HOOK_INODE_CREATE, WARRANT_OP_CREATE);
+	return inode_verdict(dentry, WARRANT_HOOK_INODE_CREATE, WARRANT_OP_CREATE,
+			     WARRANT_ORIGIN_LSM);
 }
 
 SEC("lsm/inode_unlink")
@@ -430,7 +433,8 @@ int BPF_PROG(warrant_inode_unlink, struct inode *dir, struct dentry *dentry, int
 {
 	if (ret != 0)
 		return ret;
-	return inode_verdict(dentry, WARRANT_HOOK_INODE_UNLINK, WARRANT_OP_UNLINK);
+	return inode_verdict(dentry, WARRANT_HOOK_INODE_UNLINK, WARRANT_OP_UNLINK,
+			     WARRANT_ORIGIN_LSM);
 }
 
 /* 출발지와 도착지 양쪽이 허용이어야 한다.
@@ -441,10 +445,12 @@ int BPF_PROG(warrant_inode_rename, struct inode *old_dir, struct dentry *old_den
 {
 	if (ret != 0)
 		return ret;
-	int v = inode_verdict(old_dentry, WARRANT_HOOK_INODE_RENAME, WARRANT_OP_RENAME);
+	int v = inode_verdict(old_dentry, WARRANT_HOOK_INODE_RENAME, WARRANT_OP_RENAME,
+			      WARRANT_ORIGIN_LSM);
 	if (v != 0)
 		return v;
-	return inode_verdict(new_dentry, WARRANT_HOOK_INODE_RENAME, WARRANT_OP_RENAME);
+	return inode_verdict(new_dentry, WARRANT_HOOK_INODE_RENAME, WARRANT_OP_RENAME,
+			      WARRANT_ORIGIN_LSM);
 }
 
 SEC("lsm/inode_link")
@@ -453,7 +459,8 @@ int BPF_PROG(warrant_inode_link, struct dentry *old_dentry, struct inode *dir,
 {
 	if (ret != 0)
 		return ret;
-	return inode_verdict(new_dentry, WARRANT_HOOK_INODE_LINK, WARRANT_OP_LINK);
+	return inode_verdict(new_dentry, WARRANT_HOOK_INODE_LINK, WARRANT_OP_LINK,
+			      WARRANT_ORIGIN_LSM);
 }
 
 SEC("lsm/inode_symlink")
@@ -462,28 +469,34 @@ int BPF_PROG(warrant_inode_symlink, struct inode *dir, struct dentry *dentry,
 {
 	if (ret != 0)
 		return ret;
-	return inode_verdict(dentry, WARRANT_HOOK_INODE_SYMLINK, WARRANT_OP_SYMLINK);
+	return inode_verdict(dentry, WARRANT_HOOK_INODE_SYMLINK, WARRANT_OP_SYMLINK,
+			     WARRANT_ORIGIN_LSM);
 }
 
 /* ── bprm_check_security ─────────────────────────────────────────── */
 
 /* argv 는 1급 증거가 아니다 (exec -a 로 위조 가능 + 스택 제약으로 잘림).
  * 신뢰 근거는 커널이 실제로 연 바이너리의 inode 다 (§14). */
-SEC("lsm/bprm_check_security")
-int BPF_PROG(warrant_bprm, struct linux_binprm *bprm, int ret)
+/* LSM 과 kprobe 미러가 이 하나를 공유한다. 읽기는 전부 probe 로 한다 —
+ * kprobe 에서는 인자가 scalar 라 직접 접근이 막히고, exec 은 빈도가 낮아
+ * (S0: 71초에 51건대) LSM 경로에서 그 비용이 보이지 않는다. 두 경로가
+ * 같은 코드를 타야 판정이 갈릴 수 없다 (§15). */
+static __always_inline int bprm_verdict(struct linux_binprm *bprm, __u8 origin)
 {
-	if (ret != 0)
-		return ret;
-
 	__u64 wid = 0;
 	__u8 tag = WARRANT_TAG_NONE;
 	struct warrant *w = lookup_warrant(&wid, &tag);
-	if (!w)
+	if (!w || !bprm)
+		return 0;
+
+	struct file *f = NULL;
+	bpf_probe_read_kernel(&f, sizeof(f), &bprm->file);
+	if (!f)
 		return 0;
 
 	__u32 dev = 0;
 	__u64 ino = 0;
-	get_dev_ino(bprm->file, &dev, &ino);
+	get_dev_ino_probe(f, &dev, &ino);
 
 	__u8 val = validity(w);
 	__u8 denied;
@@ -504,11 +517,28 @@ int BPF_PROG(warrant_bprm, struct linux_binprm *bprm, int ret)
 	struct warrant_pl_exec pl = {};
 	pl.file.dev = dev;
 	pl.file.ino = ino;
-	pl.i_mode = bprm->file->f_inode->i_mode;   /* setuid 탐지 */
+
+	/* i_mode 는 umode_t = 2바이트다. 4바이트로 읽으면 옆 필드가 딸려 들어와
+	 * setuid 판정이 엉뚱해진다 — dev_t 때와 같은 함정이다. */
+	struct inode *in = NULL;
+	__u16 imode = 0;
+	bpf_probe_read_kernel(&in, sizeof(in), &f->f_inode);
+	if (in)
+		bpf_probe_read_kernel(&imode, sizeof(imode), &in->i_mode);
+	pl.i_mode = imode;                         /* setuid 탐지 */
+
 	emit(WARRANT_HOOK_BPRM_CHECK_SECURITY, verdict_of(w, denied), tag, wid, w,
-	     WARRANT_ORIGIN_LSM, &pl, sizeof(pl));
+	     origin, &pl, sizeof(pl));
 
 	return ret_of(w, denied);
+}
+
+SEC("lsm/bprm_check_security")
+int BPF_PROG(warrant_bprm, struct linux_binprm *bprm, int ret)
+{
+	if (ret != 0)
+		return ret;
+	return bprm_verdict(bprm, WARRANT_ORIGIN_LSM);
 }
 
 /* ── socket_connect ──────────────────────────────────────────────── */
@@ -549,12 +579,12 @@ static __always_inline __u8 net_allowed(__u32 policy_id, const __u8 addr[16],
 	return 0;
 }
 
-SEC("lsm/socket_connect")
-int BPF_PROG(warrant_connect, struct socket *sock, struct sockaddr *address,
-	     int addrlen, int ret)
+/* LSM 과 kprobe 미러가 공유한다. bprm 과 같은 이유로 읽기는 전부 probe 다 —
+ * connect 도 빈도가 낮다 (§13 이 허용까지 기록하는 근거와 같다). */
+static __always_inline int connect_verdict(struct sockaddr *address, __u8 origin)
 {
-	if (ret != 0)
-		return ret;
+	if (!address)
+		return 0;
 
 	__u64 wid = 0;
 	__u8 tag = WARRANT_TAG_NONE;
@@ -563,15 +593,18 @@ int BPF_PROG(warrant_connect, struct socket *sock, struct sockaddr *address,
 		return 0;
 
 	__u8 val = validity(w);
-	__u16 family = address->sa_family;
+
+	__u16 family = 0;
+	bpf_probe_read_kernel(&family, sizeof(family), &address->sa_family);
 
 	struct warrant_pl_connect pl = {};
 	__u8 denied = 0;
 
 	if (family == AF_INET_) {
-		struct sockaddr_in *sin = (struct sockaddr_in *)address;
-		__u32 daddr = sin->sin_addr.s_addr;      /* network order */
-		__u16 dport = bpf_ntohs(sin->sin_port);
+		struct sockaddr_in sin4 = {};
+		bpf_probe_read_kernel(&sin4, sizeof(sin4), address);
+		__u32 daddr = sin4.sin_addr.s_addr;      /* network order */
+		__u16 dport = bpf_ntohs(sin4.sin_port);
 
 		v4_mapped(pl.addr, daddr);
 		pl.family = AF_INET_;
@@ -582,10 +615,11 @@ int BPF_PROG(warrant_connect, struct socket *sock, struct sockaddr *address,
 				  : !net_allowed(w->policy_id, pl.addr, dport, 1);
 
 	} else if (family == AF_INET6_) {
-		struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)address;
-		__u16 dport = bpf_ntohs(sin6->sin6_port);
+		struct sockaddr_in6 sin6 = {};
+		bpf_probe_read_kernel(&sin6, sizeof(sin6), address);
+		__u16 dport = bpf_ntohs(sin6.sin6_port);
 
-		bpf_probe_read_kernel(pl.addr, 16, &sin6->sin6_addr);
+		__builtin_memcpy(pl.addr, &sin6.sin6_addr, 16);
 		pl.family = AF_INET6_;
 		pl.proto = 1;
 		pl.port = dport;
@@ -624,8 +658,17 @@ int BPF_PROG(warrant_connect, struct socket *sock, struct sockaddr *address,
 
 	/* connect 는 빈도가 낮아 허용도 기록한다 (§13). */
 	emit(WARRANT_HOOK_SOCKET_CONNECT, verdict_of(w, denied), tag, wid, w,
-	     WARRANT_ORIGIN_LSM, &pl, sizeof(pl));
+	     origin, &pl, sizeof(pl));
 	return ret_of(w, denied);
+}
+
+SEC("lsm/socket_connect")
+int BPF_PROG(warrant_connect, struct socket *sock, struct sockaddr *address,
+	     int addrlen, int ret)
+{
+	if (ret != 0)
+		return ret;
+	return connect_verdict(address, WARRANT_ORIGIN_LSM);
 }
 
 /* ── socket_sendmsg : connect 없는 UDP ───────────────────────────── */
@@ -863,4 +906,48 @@ int BPF_PROG(warrant_sp_modreq, char *kmod_name, int ret)
 	if (ret != 0)
 		return -EPERM;
 	return selfprotect(WARRANT_HOOK_KERNEL_MODULE_REQUEST);
+}
+
+/* ── 감사 미러 (kprobe) ──────────────────────────────────────────────
+ *
+ * 같은 판정 함수를 부르고 반환값만 버린다 — LSM 과 판정이 갈리면 그건
+ * 버그다 (proto AuditEvent.origin). §15 의 「감사 모드와 강제 모드가 판정
+ * 함수를 공유한다」를 구조가 아니라 실측으로 받치는 장치다. warrantctl 이
+ * 두 origin 을 짝지어 비교한다.
+ *
+ * 왜 이 넷만 미러하는가 —
+ *   · 인자 배치가 커널 버전에 흔들리지 않는 것만 고른다. security_inode_create
+ *     같은 것은 6.3 부터 앞에 mnt_idmap 이 붙어서, 엉뚱한 레지스터를 읽으면
+ *     미러가 거짓 판정을 보고한다. 그건 미러가 없는 것보다 나쁘다.
+ *     security_inode_unlink(dir, dentry) 는 그 변화를 안 탔고, 다섯 inode
+ *     훅이 같은 판정 함수를 쓰므로 하나만 걸어도 그 경로가 대조된다.
+ *   · 자기보호 5종은 미러하지 않는다. 규칙 조회가 없어 갈릴 판정 자체가 없다.
+ *   · socket_sendmsg 도 미러하지 않는다. 송신은 빈도가 높아 기록이 두 배가
+ *     되는 쪽이 더 해롭다 (§13).
+ *
+ * 미러가 안 붙어도 판정은 멈추지 않는다 — loader 가 kprobe 실패를 치명으로
+ * 보지 않고 목록으로 보고한다. 대조가 없다고 집행을 멈출 이유가 없다. */
+
+SEC("kprobe/security_bprm_check")
+int BPF_KPROBE(warrant_bprm_mirror, struct linux_binprm *bprm)
+{
+	bprm_verdict(bprm, WARRANT_ORIGIN_KPROBE);
+	return 0;
+}
+
+SEC("kprobe/security_socket_connect")
+int BPF_KPROBE(warrant_connect_mirror, struct socket *sock,
+	       struct sockaddr *address)
+{
+	connect_verdict(address, WARRANT_ORIGIN_KPROBE);
+	return 0;
+}
+
+SEC("kprobe/security_inode_unlink")
+int BPF_KPROBE(warrant_inode_unlink_mirror, struct inode *dir,
+	       struct dentry *dentry)
+{
+	inode_verdict(dentry, WARRANT_HOOK_INODE_UNLINK, WARRANT_OP_UNLINK,
+		      WARRANT_ORIGIN_KPROBE);
+	return 0;
 }

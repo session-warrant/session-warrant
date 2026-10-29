@@ -104,9 +104,14 @@ func run(pinDir string, o opts) error {
 	}
 	hooks := ld.AttachedHooks()
 	logf(o.color, "  프로그램 %d개 · attach %d개", ld.ProgramCount(), len(hooks))
-	if len(hooks) != ld.ProgramCount() {
+	missing := ld.MissingMirrors()
+	if len(hooks)+len(missing) != ld.ProgramCount() {
 		// 일부만 붙은 상태는 자기보호 하나가 빠진 채로 도는 것이다.
 		return fmt.Errorf("attach 누락: %d/%d", len(hooks), ld.ProgramCount())
+	}
+	for _, m := range missing {
+		// 미러가 없으면 그 훅은 LSM 판정만 있고 대조가 없다.
+		fmt.Fprintf(os.Stderr, "  %s 미러 미부착: %s\n", paint(o.color, cAmber, "경고"), m)
 	}
 	if o.detach {
 		defer func() {
