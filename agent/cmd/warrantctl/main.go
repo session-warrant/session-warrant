@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/session-warrant/session-warrant/agent/internal/bpfmap"
+	"github.com/session-warrant/session-warrant/agent/internal/loader"
 	"github.com/session-warrant/session-warrant/agent/internal/policy"
 	"github.com/session-warrant/session-warrant/agent/internal/ringbuf"
 )
@@ -47,6 +48,8 @@ func main() {
 		breakGlass = flag.Bool("break-glass", false, "자기보호를 푸는 비상용 영장")
 		active     = flag.Bool("active", true, "노드 전역 스위치")
 		mirror     = flag.Bool("mirror", false, "kprobe 미러 기록도 같이 찍는다")
+		obj        = flag.String("obj", loader.DefaultObjectPath, "BPF 오브젝트 경로")
+		detach     = flag.Bool("detach", false, "끝날 때 훅을 뗀다 (기본은 붙여둔 채로 끝낸다)")
 		noColor    = flag.Bool("no-color", false, "색 끄기")
 	)
 	flag.Parse()
@@ -60,6 +63,8 @@ func main() {
 		allowNet:   split(*allowNet),
 		expireIn:   *expireIn,
 		revokeIn:   *revokeIn,
+		obj:        *obj,
+		detach:     *detach,
 		breakGlass: *breakGlass,
 		active:     *active,
 		mirror:     *mirror,
@@ -72,13 +77,46 @@ func main() {
 
 type opts struct {
 	cgroup                                     uint64
-	mode                                       string
+	mode, obj                                  string
 	allowExec, allowWrite, denyWrite, allowNet []string
 	expireIn, revokeIn                         time.Duration
-	breakGlass, active, mirror, color          bool
+	breakGlass, active, mirror, detach, color  bool
 }
 
 func run(pinDir string, o opts) error {
+	// lsm/* 프로그램은 부팅 파라미터에 bpf LSM 이 들어가 있어야 붙는다.
+	// 런타임에 켤 수 없으므로 여기서 먼저 확인하고 분명한 말로 끝낸다.
+	if on, err := loader.BpfLsmEnabled(); err != nil {
+		return fmt.Errorf("bpf LSM 확인: %w", err)
+	} else if !on {
+		return fmt.Errorf("bpf LSM 이 꺼져 있다. deploy/enable-bpf-lsm.sh 를 돌리고 재부팅해야 한다")
+	}
+
+	ld, err := loader.LoadObject(o.obj, pinDir)
+	if err != nil {
+		return err
+	}
+	defer ld.Close()
+
+	if err := ld.AttachAll(); err != nil {
+		return err
+	}
+	hooks := ld.AttachedHooks()
+	logf(o.color, "  프로그램 %d개 · attach %d개", ld.ProgramCount(), len(hooks))
+	if len(hooks) != ld.ProgramCount() {
+		// 일부만 붙은 상태는 자기보호 하나가 빠진 채로 도는 것이다.
+		return fmt.Errorf("attach 누락: %d/%d", len(hooks), ld.ProgramCount())
+	}
+	if o.detach {
+		defer func() {
+			if err := ld.Detach(); err != nil {
+				fmt.Fprintln(os.Stderr, "훅 떼기 실패:", err)
+			} else {
+				logf(o.color, "  훅을 뗐다")
+			}
+		}()
+	}
+
 	m, err := bpfmap.Open(pinDir)
 	if err != nil {
 		return err
