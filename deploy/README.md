@@ -84,14 +84,6 @@ sudo deploy/systemd/install.sh --uninstall             # 제거. pin 은 남긴�
 
 `ansible/` 은 노드가 여러 대가 되는 시점에. 지금은 이르다.
 
-## 규칙
-
-- `/etc/pam.d/sshd` 를 건드리는 작업은 **물리 콘솔 접근이 가능한 상태에서만** 한다.
-  ssh 로만 붙어 있는 노드에서 PAM 을 깨면 복구 경로가 없다. 서브 PC 로 개발하는 이유이기도 하다.
-- 스파이크 전 구간은 **감사 모드**다. LSM 훅은 `return 0` 만 한다.
-  자기보호 6종(§16)을 붙이기 전에 `-EPERM` 을 켜면 자기 발을 쏜다.
-- 검증 대상 커널: 6.8(개발) · 7.0(Ubuntu 26.04) · Rocky 9 호환.
-
 ## Grafana (`grafana/`)
 
 화면은 React(`web/`, 동결) 대신 Grafana 가 PostgreSQL 을 직접 읽는다. `server/compose.yaml` 이 띄운다.
@@ -105,3 +97,25 @@ docker compose -f server/compose.yaml up -d --wait    # http://localhost:3000 �
   `docker compose -f server/compose.yaml restart grafana`.
 - 사유(reason)마다 색이 고정이다(범주 색 1~6번 순서, 검증기 통과). 새 사유를 넣으면 다음 칸 색을 쓴다 — 기존 색을 바꾸지 말 것.
 - 「노드」 표의 마지막 등록은 감사 스트림을 연 시각이다. 하트비트가 붙기 전까지 '지금 살아 있음'을 뜻하지 않는다.
+
+### 경보 (`provisioning/alerting/warrant.yaml`)
+
+| 규칙 | 울리는 조건 | 한 경보의 단위 |
+|---|---|---|
+| 무영장 접속 | 최근 10분 안에 무영장 세션이 있다 | 노드 · 계정 · 사유 · 출발지 · 키 지문 — 알림 한 통으로 누가 들어왔는지 안다 |
+| 감사 기록 유실 | 최근 10분 안에 유실 구간이 보고됐다 | 노드 · 원인 |
+
+- 1분마다 평가한다. 10분 창을 벗어나면 '해결됨'이 한 번 더 온다. 같은 경보는 4시간 동안 다시 보내지 않는다.
+- 받는 곳은 웹훅 하나다 — `GRAFANA_ALERT_WEBHOOK_URL`. 로컬 기본값은 compose 의 `alert-sink`(받은 요청을 로그로 찍는다):
+  `docker compose -f server/compose.yaml logs -f alert-sink`. 운영에서는 이 값을 사내 웹훅(Discord · Teams 등)으로 바꾼다.
+- 알림에 대시보드 링크(`panelURL`)가 실린다 — 「최근 무영장 세션」 표가 그 시간대로 열린다.
+- 확인(2026-10-29): VM 세션 → DB 16:17:06 → 웹훅 16:17:18 도착(firing). 규칙 쿼리가 깨지면 상태가 `error` 가 된다 —
+  `curl -u admin:admin localhost:3000/api/prometheus/grafana/api/v1/rules` 의 `health` 를 본다.
+
+## 규칙
+
+- `/etc/pam.d/sshd` 를 건드리는 작업은 **물리 콘솔 접근이 가능한 상태에서만** 한다.
+  ssh 로만 붙어 있는 노드에서 PAM 을 깨면 복구 경로가 없다. 서브 PC 로 개발하는 이유이기도 하다.
+- 스파이크 전 구간은 **감사 모드**다. LSM 훅은 `return 0` 만 한다.
+  자기보호 6종(§16)을 붙이기 전에 `-EPERM` 을 켜면 자기 발을 쏜다.
+- 검증 대상 커널: 6.8(개발) · 7.0(Ubuntu 26.04) · Rocky 9 호환.
