@@ -44,6 +44,7 @@ func main() {
 		expireIn   = flag.Duration("expire-in", 0, "이만큼 뒤에 만료. 0 이면 만료 없음")
 		revokeIn   = flag.Duration("revoke-in", 0, "이만큼 뒤에 취소")
 		breakGlass = flag.Bool("break-glass", false, "자기보호를 푸는 비상용 영장")
+		inspectUDP = flag.Bool("inspect-udp", false, "connect 없는 UDP 도 판정한다 (socket_sendmsg)")
 		active     = flag.Bool("active", true, "노드 전역 스위치")
 		mirror     = flag.Bool("mirror", false, "kprobe 미러 기록도 같이 찍는다")
 		obj        = flag.String("obj", loader.DefaultObjectPath, "BPF 오브젝트 경로")
@@ -64,6 +65,7 @@ func main() {
 		obj:        *obj,
 		detach:     *detach,
 		breakGlass: *breakGlass,
+		inspectUDP: *inspectUDP,
 		active:     *active,
 		mirror:     *mirror,
 		color:      !*noColor && isTTY(os.Stderr),
@@ -79,6 +81,7 @@ type opts struct {
 	allowExec, allowWrite, denyWrite, allowNet []string
 	expireIn, revokeIn                         time.Duration
 	breakGlass, active, mirror, detach, color  bool
+	inspectUDP                                 bool
 }
 
 func run(pinDir string, o opts) error {
@@ -134,6 +137,9 @@ func run(pinDir string, o opts) error {
 	if o.breakGlass {
 		w.BreakGlass = 1
 	}
+	if o.inspectUDP {
+		w.InspectUDP = 1
+	}
 	if o.expireIn > 0 {
 		now, err := bpfmap.BootNs()
 		if err != nil {
@@ -147,7 +153,7 @@ func run(pinDir string, o opts) error {
 
 	// 규칙은 policy 를 거친다. 경로→inode 변환도, 기본 허용 세트도,
 	// 위험한 조합 경고도 전부 거기 있다 — 여기서 맵에 직접 쓰지 않는다.
-	spec := policy.Spec{Name: "warrantctl"}
+	spec := policy.Spec{Name: "warrantctl", InspectUDP: o.inspectUDP}
 	for _, x := range o.allowExec {
 		spec.ExecRules = append(spec.ExecRules, policy.ExecRule{Path: x})
 	}
@@ -354,6 +360,14 @@ func target(r ringbuf.Record, names map[bpfmap.FileRef]string) string {
 	}
 	if i, ok := r.Inode(); ok {
 		return fmt.Sprintf("%s in %s", ringbuf.OpName(i.Op), name(i.Dir))
+	}
+	// SENDMSG 는 목적지 + 보낸 크기다. Connect() 로도 목적지는 읽히지만
+	// 크기가 빠지고, 그러면 로그에서 connect 와 구분이 안 된다.
+	if u, ok := r.UDPSend(); ok {
+		d := u.Destination
+		if d.Addr.IsValid() {
+			return fmt.Sprintf("%s:%d %dB", d.Addr, d.Port, u.Size)
+		}
 	}
 	if c, ok := r.Connect(); ok {
 		if c.UnixPath != "" {

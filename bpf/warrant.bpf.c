@@ -628,6 +628,97 @@ int BPF_PROG(warrant_connect, struct socket *sock, struct sockaddr *address,
 	return ret_of(w, denied);
 }
 
+/* ── socket_sendmsg : connect 없는 UDP ───────────────────────────── */
+
+/* §18 이 인정한 네 구멍 중 하나다. connect 를 안 하고 sendto 로 바로 보내면
+ * socket_connect 가 아예 안 불리므로 아웃바운드 통제를 그냥 빠져나간다.
+ * 여기서만 잡을 수 있다.
+ *
+ * 기본은 꺼져 있다 (Policy.inspect_udp → warrant.inspect_udp). UDP 송신은
+ * 빈도가 높고 그 비용을 모든 영장에 물릴 이유가 없다 — DNS 질의 하나 때문에
+ * 전 세션이 느려진다. 켠 정책만 낸다.
+ *
+ * connect 된 UDP 는 여기서 보지 않는다. 목적지가 socket_connect 에서 이미
+ * 판정됐고, 여기서 또 보면 같은 목적지를 패킷마다 다시 조회한다.
+ * 그 구분이 곧 msg_name 의 유무다.
+ *
+ * sock 은 쓰지 않는다. sk_protocol 로 UDP 를 가리려면 비트필드를 읽어야 하고
+ * 커널 버전마다 흔들린다. msg_name 이 붙은 송신은 사실상 비연결 데이터그램이고
+ * (TCP 는 주소를 무시한다), raw 소켓도 같이 걸리는 편이 맞다. */
+SEC("lsm/socket_sendmsg")
+int BPF_PROG(warrant_sendmsg, struct socket *sock, struct msghdr *msg,
+	     int size, int ret)
+{
+	if (ret != 0)
+		return ret;
+
+	__u64 wid = 0;
+	__u8 tag = WARRANT_TAG_NONE;
+	struct warrant *w = lookup_warrant(&wid, &tag);
+	if (!w || !w->inspect_udp)
+		return 0;
+
+	/* msg_name 이 없으면 connect 된 소켓이다 — socket_connect 가 이미 봤다. */
+	void *name = msg->msg_name;
+	int namelen = msg->msg_namelen;
+	if (!name || namelen < 2)
+		return 0;
+
+	/* msg_name 은 커널 스택 위의 sockaddr 이지만 타입이 void * 라 신뢰
+	 * 포인터가 아니다. 직접 따라가지 못하고 읽어 와야 한다. */
+	__u16 family = 0;
+	if (bpf_probe_read_kernel(&family, sizeof(family), name))
+		return 0;
+
+	struct warrant_pl_udp pl = {};
+
+	if (family == AF_INET_) {
+		struct sockaddr_in sin = {};
+
+		if (namelen < (int)sizeof(sin))
+			return 0;
+		if (bpf_probe_read_kernel(&sin, sizeof(sin), name))
+			return 0;
+
+		v4_mapped(pl.dst.addr, sin.sin_addr.s_addr);
+		pl.dst.family = AF_INET_;
+		pl.dst.port = bpf_ntohs(sin.sin_port);
+
+	} else if (family == AF_INET6_) {
+		struct sockaddr_in6 sin6 = {};
+
+		if (namelen < (int)sizeof(sin6))
+			return 0;
+		if (bpf_probe_read_kernel(&sin6, sizeof(sin6), name))
+			return 0;
+
+		__builtin_memcpy(pl.dst.addr, &sin6.sin6_addr, 16);
+		pl.dst.family = AF_INET6_;
+		pl.dst.port = bpf_ntohs(sin6.sin6_port);
+
+	} else {
+		/* AF_UNIX 로 보내는 건 socket_connect 가 본다. */
+		return 0;
+	}
+
+	pl.dst.proto = 2;                        /* PROTO_UDP */
+	pl.size = size > 0 ? (__u64)size : 0;
+
+	__u8 denied = validity(w) != 0
+			    ? 1
+			    : !net_allowed(w->policy_id, pl.dst.addr,
+					   pl.dst.port, 2);
+
+	/* 차단만 기록한다. connect 와 달리 송신은 패킷마다 불리므로 허용까지
+	 * 남기면 ringbuf 가 넘치고, 넘치면 정작 차단 기록이 밀려난다 (§13). */
+	if (!denied)
+		return 0;
+
+	emit(WARRANT_HOOK_SOCKET_SENDMSG, verdict_of(w, denied), tag, wid, w,
+	     WARRANT_ORIGIN_LSM, &pl, sizeof(pl));
+	return ret_of(w, denied);
+}
+
 /* ── sched_process_fork : 2차 태그 전파 ──────────────────────────── */
 
 SEC("tp_btf/sched_process_fork")

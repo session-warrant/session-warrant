@@ -55,14 +55,15 @@ PAM session 단계에서 `session-N.scope` 가 이미 확정돼 있다(태깅 �
 SSH/PAM 세션 → `pam_warrant.so` ✔ → warrantd binder ✔ → `store.AuditQueue` ✔ → `upstream.StreamAudit` ✔ → 서버 gRPC ✔ → DB ✔ → Grafana ✔
 Lima VM 의 warrantd 가 맥에서 띄운 서버로 보내 `unwarranted_session` 행이 생기고, 서버를 `kill -9` 한 동안 생긴
 세션이 재시작 뒤 재전송으로 들어오는 것까지 확인했다. **커널 ringbuf 이벤트는 아직 안 올린다** — Gap 결함(시각 0 ·
-boot ns) 때문에 서버가 거절한다. `loader` 는 미구현이라 BPF 는 bpftool 로 올린다.
+boot ns) 때문에 서버가 거절한다. `loader` 가 들어와서 BPF 는 `warrantctl` 하나로 올라간다 —
+`deploy/systemd/load-bpf.sh` 의 bpftool 대역은 이제 없어도 된다 (C 담당).
 
 | 계층 | 상태 |
 |---|---|
-| `bpf/` | 제품 판정 코드 `warrant.bpf.{c,h}` — **훅 15개**(자기보호 5훅 포함, 6번째는 warrantd 파일 `rule_write` DENY). `wtest.sh` 로 **29/29 통과**(커널 7.0 VM, bpftool 로 맵 직접 기록). `-EPERM` 은 영장 `mode=ENFORCE` 로만 열린다 — 발급 안 하면 감사 모드. 없음: `socket_sendmsg` · `file_open` 외 `kprobe` 미러. 알려진 구멍: `/dev/null` 쓰기가 막혀 `nohup` 이 죽는다(기본 허용 세트 필요) |
+| `bpf/` | 제품 판정 코드 `warrant.bpf.{c,h}` — **훅 16개**(자기보호 5훅 포함, 6번째는 warrantd 파일 `rule_write` DENY). `wtest.sh` 로 **29/29 통과** · `vsession.sh` 로 **진짜 `session-N.scope` 에서 28/28**(커널 7.0 VM). `-EPERM` 은 영장 `mode=ENFORCE` 로만 열린다 — 발급 안 하면 감사 모드. 없음: `file_open` 외 `kprobe` 미러. `socket_sendmsg` 는 붙었고 `inspect_udp` 가 켜진 영장만 판정한다 (§18 「connect 없는 UDP」). `/dev/null` · 로그인 셸 기본 허용은 `policy` 가 넣는다 |
 | `proto/` | **확정** (2026-09-23) — `warrant` · `agent` · `audit` 3파일 |
 | `pam/` | `pam_warrant.c` 141줄 — **실제 sshd 로그인으로 끝에서 끝까지 확인(2026-10-24)**: 맥 → Lima VM ssh 로그인 한 건이 `NO_WARRANT` · 키 지문(`SHA256:lraty…`, 접속에 쓴 키와 일치) · 출발지 · cgroup(= `session-N.scope` inode)으로 DB 와 Grafana 에 뜬다. `ExposeAuthInfo` 는 필요 없다(꺼진 채로 지문이 남는다). 평소에는 `/etc/pam.d/sshd` 에 넣어 두지 않는다 — 넣고 빼는 건 `pam/Makefile` |
-| `agent/` | 구현: `bpfmap` · `ringbuf` · `policy`(A) · `pamsock`(C) · `cmd/warrantd`(C, 맵 · PAM · ringbuf 로그 · `-upstream`). 일부: `store` 는 메모리 `AuditQueue` 만(bbolt `Store` 미구현, 재시작하면 ack 안 된 기록을 잃는다) · `upstream` 은 평문 `Dial` + `StreamAudit` 만(mTLS · 영장 Subscribe · Verify · ToKernel 미구현). 미구현: `loader`. 리눅스 전용 상수 때문에 **맥에서는 빌드 안 된다** — `GOOS=linux go vet` 로 확인하고, 테스트는 Lima VM `sw` 에서 돌린다 |
+| `agent/` | 구현: `bpfmap` · `ringbuf` · `policy`(A) · `pamsock`(C) · `cmd/warrantd`(C, 맵 · PAM · ringbuf 로그 · `-upstream`). `loader`(A — pin 재사용 · 링크 pin · 두 인스턴스 경쟁 재시도). 일부: `store` 는 메모리 `AuditQueue` 만(bbolt `Store` 미구현, 재시작하면 ack 안 된 기록을 잃는다) · `upstream` 은 평문 `Dial` + `StreamAudit` 만(mTLS · 영장 Subscribe · Verify · ToKernel 미구현). 리눅스 전용 상수 때문에 **맥에서는 빌드 안 된다** — `GOOS=linux go vet` 로 확인하고, 테스트는 Lima VM `sw` 에서 돌린다 |
 | `server/` | Java 55클래스. **감사 수집 경로가 끝까지 돈다**(2026-10-24) — `AuditIngestGrpcService`(감사 스트림 → 저장 → ack) · `AuditProtoMapper` · `AuditIngestService.ingest`(멱등) · `NodeRegistry`, 엔티티 4개(`Node` · `AuditEvent` · `UnwarrantedSession` · `EventGap`), Flyway V1 + V2. **테스트 35개 통과**(Testcontainers). `write_aggregates` 는 저장할 테이블이 없어 매퍼가 거부한다(받고 넘기면 ack 되어 노드가 지운다). 나머지 `api` · 발급/승인/연장/취소 `application` · `WarrantPushGrpcService` · `crypto` · 정책 · `Warrant` 엔티티는 본문 미구현. 신원은 mTLS 전까지 `"dev:" + hostname` |
 | `deploy/` | `bootstrap.sh` · `enable-bpf-lsm.sh` — 동작. `systemd/` — `warrant-bpf.service`(bpftool 로 pin, loader 대역) + `warrantd.service`(`Type=notify` · `Before=ssh.service` · `/run/warrantd` 0700) · `install.sh`. VM 에서 설치 · 세션 업로드 · 재시작 뒤 pin 유지 · **재부팅 순서**(BPF 로드 → warrantd READY → sshd, 순환 경고 0줄) 확인(2026-10-24). `Before=ssh.socket` 은 순서 순환을 만들어 sshd 가 안 뜬 적이 있다 — `deploy/README.md`. `ansible/` 비어 있다 |
 | `bench/overhead/` | S1 하네스 — 6차까지(읽기 감시 R · I · I2 포함). **최악 조건 1% 미만 — S1 통과** |

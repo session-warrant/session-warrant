@@ -84,7 +84,15 @@ struct warrant {
 	__u8  mode;         /* WARRANT_MODE_* */
 	__u8  on_expiry;    /* WARRANT_ON_EXPIRY_* */
 	__u8  break_glass;  /* 자기보호를 푸는 유일한 영장. 일반 발급 경로로는 못 켠다 */
-	__u8  _pad[4];
+
+	/* Policy.inspect_udp 의 사본이다. 원본은 정책 쪽 필드인데 커널에는 정책
+	 * 단위 플래그 맵이 없고, struct warrant 는 어차피 매 판정마다 읽으므로
+	 * 여기 두면 조회가 한 번도 늘지 않는다. warrantd 가 영장과 정책을 같이
+	 * 컴파일할 때 복사한다.
+	 *
+	 * 기존 패딩에서 한 바이트만 가져왔다 — 크기도 앞의 오프셋도 그대로다. */
+	__u8  inspect_udp;
+	__u8  _pad[3];
 };
 
 /* rule_exec · rule_write 의 키.
@@ -191,12 +199,19 @@ struct warrant_pl_inode {         /* INODE_{CREATE,UNLINK,RENAME,LINK,SYMLINK} *
 	__u8  _pad[7];
 };
 
-struct warrant_pl_connect {       /* SOCKET_CONNECT · SOCKET_SENDMSG */
+struct warrant_pl_connect {       /* SOCKET_CONNECT */
 	__u8  family;                 /* 1 UNIX · 2 INET · 10 INET6 */
 	__u8  proto;
 	__u16 port;                   /* host byte order */
 	__u32 _pad;
 	__u8  addr[16];               /* 네트워크 바이트 오더 */
+};
+
+/* SOCKET_SENDMSG. proto 의 UdpSendEvent 가 목적지 + 크기를 요구한다 —
+ * pl_connect 만으로는 크기가 빠진다. */
+struct warrant_pl_udp {
+	struct warrant_pl_connect dst;
+	__u64 size;                   /* sendmsg 의 바이트 수 */
 };
 
 struct warrant_pl_fork {          /* SCHED_PROCESS_FORK */
@@ -221,6 +236,7 @@ _Static_assert(sizeof(struct warrant_pl_exec)    == 32, "warrant_pl_exec");
 _Static_assert(sizeof(struct warrant_pl_write)   == 40, "warrant_pl_write");
 _Static_assert(sizeof(struct warrant_pl_inode)   == 40, "warrant_pl_inode");
 _Static_assert(sizeof(struct warrant_pl_connect) == 24, "warrant_pl_connect");
+_Static_assert(sizeof(struct warrant_pl_udp)     == 32, "warrant_pl_udp");
 _Static_assert(sizeof(struct warrant_pl_fork)    == 16, "warrant_pl_fork");
 
 #endif /* __WARRANT_BPF_H */

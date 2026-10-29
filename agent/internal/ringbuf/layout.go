@@ -75,6 +75,13 @@ type plConnect struct {
 	Addr   [16]byte // 네트워크 바이트 오더
 }
 
+// plUDP 는 SOCKET_SENDMSG 의 payload 다. 앞 24바이트가 plConnect 와 같아서
+// Connect() 는 그대로 목적지를 읽는다 — 크기까지 보려면 UDPSend() 를 쓴다.
+type plUDP struct {
+	Dst  plConnect
+	Size uint64
+}
+
 type plFork struct {
 	ParentTGID    uint32
 	ChildTGID     uint32
