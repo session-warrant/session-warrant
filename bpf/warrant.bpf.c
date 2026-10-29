@@ -670,7 +670,38 @@ int BPF_PROG(warrant_fork, struct task_struct *parent, struct task_struct *child
  * DENY 엔트리다 — policy 가 모든 정책에 강제로 끼워 넣는다.
  *
  * break_glass 영장만 이걸 통과한다. 일반 발급 경로로는 켤 수 없다.
+ *
+ * 다만 「무조건」이 두 훅에서는 너무 넓었다 (S5 7단계에서 실측):
+ * ptrace_access_check 와 task_kill 은 상대가 있는 훅이다. 상대가 같은 영장
+ * 안이면 권한 상승이 아닌데도 막혀서, 강제 모드에서 sudo · ps 와 자기 자식
+ * kill(Ctrl-C) 까지 죽는다. 그 둘만 상대를 본다.
  */
+
+/* 상대가 내 영장 밖인가. 1 = 밖(자기보호 적용) · 0 = 안(통과).
+ *
+ * cgroup 만 본다. task local storage 는 쓰지 않는다 — current 가 아닌 task 에
+ * 대해 bpf_task_storage_get 을 부르는 방식으로 먼저 구현했다가 박스가
+ * soft lockup 으로 잠겼다 (S5, 2026-10-26). 기전은 확인하지 못했고, 여기서
+ * 얻는 것에 비해 치르는 값이 너무 크다.
+ *
+ * 대가는 분명하다: cgroup 을 벗어난 같은 영장의 프로세스를 「밖」으로 본다.
+ * 즉 2차 방어선(task 태그)으로만 걸린 상대에게는 ptrace · kill 이 막힌다.
+ * 거부 쪽으로 치우친 오판이므로 자기보호는 약해지지 않는다.
+ *
+ * 상대의 cgroup id 는 cgrp->kn->id 다 — bpf_get_current_cgroup_id() 가
+ * 돌려주는 값과 같다. LSM 인자는 신뢰 포인터라 직접 따라간다. */
+static __always_inline __u8 peer_outside_warrant(struct task_struct *peer)
+{
+	__u64 self = 0;
+	struct warrant *w = lookup_warrant(&self, NULL);
+	if (!w)
+		return 0;        /* 내가 영장이 없으면 자기보호 대상이 아니다 */
+
+	__u64 cg = peer->cgroups->dfl_cgrp->kn->id;
+	__u64 *wid = bpf_map_lookup_elem(&cgroup_warrant, &cg);
+	return (!wid || *wid != self);
+}
+
 static __always_inline int selfprotect(__u16 hook)
 {
 	__u64 wid = 0;
@@ -707,6 +738,10 @@ int BPF_PROG(warrant_sp_kill, struct task_struct *p, struct kernel_siginfo *info
 {
 	if (ret != 0)
 		return -EPERM;
+	/* 같은 영장 안의 프로세스에 보내는 신호는 막지 않는다 — 자기 자식을
+	 * 못 죽이면 Ctrl-C 도 kill %1 도 안 된다. */
+	if (!peer_outside_warrant(p))
+		return 0;
 	return selfprotect(WARRANT_HOOK_TASK_KILL);
 }
 
@@ -723,6 +758,11 @@ int BPF_PROG(warrant_sp_ptrace, struct task_struct *child, unsigned int mode, in
 {
 	if (ret != 0)
 		return -EPERM;
+	/* 이 훅은 ptrace 뿐 아니라 /proc/<pid>/{maps,environ,exe} 처럼
+	 * PTRACE_MODE_READ 를 요구하는 평범한 읽기에도 발화한다. 무조건 거부하면
+	 * sudo 가 부모를 못 읽어 깨지고 ps · top 도 안 돈다. */
+	if (!peer_outside_warrant(child))
+		return 0;
 	return selfprotect(WARRANT_HOOK_PTRACE_ACCESS_CHECK);
 }
 
