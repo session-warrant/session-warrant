@@ -70,6 +70,13 @@ type WriteRule struct {
 	Effect    Effect
 }
 
+// proto/warrant.proto 의 enum Proto 와 값이 같다.
+const (
+	ProtoAny uint8 = 0
+	ProtoTCP uint8 = 1
+	ProtoUDP uint8 = 2
+)
+
 type NetRule struct {
 	CIDR  string
 	Port  uint16
@@ -284,6 +291,19 @@ func Compile(policyID uint32, spec any) (*Compiled, error) {
 	}
 	if len(s.NetRules) == 0 {
 		c.warn("네트워크 규칙이 없다 — 아웃바운드가 전면 차단된다 (§15)")
+	}
+
+	// UDP 규칙은 inspect_udp 가 켜져야 강제된다 (proto/warrant.proto NetRule).
+	// 꺼진 채로 UDP 규칙을 적으면 규칙이 조용히 아무 일도 안 한다 —
+	// 「막고 있다」고 믿는 게 제일 나쁜 상태다.
+	if !s.InspectUDP {
+		for _, r := range s.NetRules {
+			if r.Proto == ProtoUDP {
+				c.warn("UDP 규칙(%s)이 있는데 inspect_udp 가 꺼져 있다 — "+
+					"connect 없는 UDP 는 판정되지 않는다 (§18)", r.CIDR)
+				break
+			}
+		}
 	}
 
 	for _, p := range s.ReadWatchPaths {

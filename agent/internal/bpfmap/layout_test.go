@@ -42,6 +42,7 @@ func TestWarrantOffsets(t *testing.T) {
 		{"mode", unsafe.Offsetof(w.Mode), 25},
 		{"on_expiry", unsafe.Offsetof(w.OnExpiry), 26},
 		{"break_glass", unsafe.Offsetof(w.BreakGlass), 27},
+		{"inspect_udp", unsafe.Offsetof(w.InspectUDP), 28},
 	}
 	for _, c := range cases {
 		if c.got != c.want {
