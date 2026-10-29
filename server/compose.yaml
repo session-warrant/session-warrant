@@ -38,11 +38,20 @@ services:
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/unwarranted-sessions.json
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      # 경보를 받을 웹훅. 기본값은 아래 alert-sink — 운영에서는 이 값을 바꾼다.
+      GRAFANA_ALERT_WEBHOOK_URL: ${GRAFANA_ALERT_WEBHOOK_URL:-http://alert-sink:8080/grafana}
     ports:
       - "${GRAFANA_PORT:-3000}:3000"
     volumes:
       - ../deploy/grafana/provisioning:/etc/grafana/provisioning:ro
       - ../deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+
+  # 로컬 경보 수신기. 받은 웹훅을 본문째 로그로 찍는다: docker compose -f server/compose.yaml logs -f alert-sink
+  alert-sink:
+    image: mendhak/http-https-echo:42
+    environment:
+      HTTP_PORT: 8080
+      LOG_IGNORE_PATH: /healthz
 
 volumes:
   warrant-pg:
