@@ -634,3 +634,63 @@ else
 		                      || no "허용 규칙이 있는데 막혔다 (rc=$rc_allow) — UDP 는 전면 차단이 아니어야 한다"
 	fi
 fi
+
+# ── 9. 감사 미러 — 두 경로의 판정이 같은가 ────────────────────────
+step "9. 감사 미러 — lsm 과 kprobe 의 판정이 같은가"
+
+# 미러의 존재 이유는 §15 의 「감사 모드와 강제 모드가 판정 함수를 공유한다」를
+# 구조가 아니라 실측으로 받치는 것이다. 붙었다는 것과 판정이 같다는 것은
+# 다르므로, 여기서는 세 가지를 잰다.
+#   ① 미러가 전부 붙었는가 (warrantctl 이 못 붙은 것을 경고로 찍는다)
+#   ② 미러가 실제로 발화했는가 (kprobe origin 기록이 있는가)
+#   ③ 두 경로의 판정이 갈리지 않았는가
+#
+# ②가 없으면 ③은 아무것도 안 잰 것이다 — 비교할 짝이 없으면 불일치도 없다.
+WCTL_EXTRA="-mirror"
+start_warrant observe 9-mirror
+
+R "$TRUE" >/dev/null 2>&1                      # EXEC
+R "$ID" >/dev/null 2>&1                        # EXEC (허용 밖)
+# 금지 디렉터리에서 해야 한다. inode_verdict 는 차단일 때만 기록하므로
+# (§13 절제), 허용된 곳에서 지우면 훅은 지나가도 남는 게 없다 —
+# 그걸 「미러가 안 돈다」로 읽으면 틀린 실패다.
+# 금지 디렉터리에서 해야 한다. inode_verdict 는 차단일 때만 기록하므로,
+# 허용된 곳에서 지우면 훅은 지나가도 남는 게 없다. 그걸 "미러가 안 돈다"로
+# 읽으면 틀린 실패다 (실제로 한 번 그렇게 읽었다).
+R "echo x > $WORK/secret/m" >/dev/null 2>&1    # CREATE · WRITE (차단 기록)
+R "rm -f $WORK/secret/m" >/dev/null 2>&1       # UNLINK (차단 기록)
+[ -n "$PY" ] && R "$PY -c 'import socket
+try: socket.create_connection((\"127.0.0.1\", 9), 0.3)
+except OSError: pass'" >/dev/null 2>&1          # CONNECT
+sleep 0.8
+WCTL_EXTRA=""
+
+if grep -q '미러 미부착' "$LOG"; then
+	no "미러가 안 붙었다: $(grep -o '미러 미부착.*' "$LOG" | head -2 | tr '\n' ' ')"
+else
+	ok "감사 미러 4종이 전부 붙었다"
+fi
+
+n_kp=$(evts | LC_ALL=C grep -c 'kprobe$' || true)
+n_lsm=$(evts | LC_ALL=C grep -c 'lsm$' || true)
+printf '  기록 — lsm %s건 · kprobe %s건\n' "$n_lsm" "$n_kp"
+evts | LC_ALL=C grep 'kprobe$' | head -4 | sed 's/^/  /'
+
+if [ "${n_kp:-0}" -eq 0 ]; then
+	no "kprobe origin 기록이 하나도 없다 — 미러가 안 돈다. 9단계 버림"
+else
+	ok "미러가 실제로 발화했다 (kprobe 기록 ${n_kp}건)"
+
+	# 훅별로도 본다. EXEC 가 안 보이면 bprm 미러만 안 도는 것이다.
+	for h in EXEC UNLINK; do
+		seen " $h .*kprobe\$" && ok "$h 미러 발화" \
+		                     || no "$h 의 kprobe 기록이 없다"
+	done
+
+	if grep -q '판정 불일치' "$LOG"; then
+		no "FINDING: $(grep -o '판정 불일치.*' "$LOG" | head -1)"
+	else
+		ok "lsm 과 kprobe 의 판정이 갈리지 않았다 (§15)"
+	fi
+fi
+stop_warrant

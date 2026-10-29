@@ -31,6 +31,12 @@ type Loader struct {
 
 	links    map[string]link.Link // 프로그램 이름 → 링크
 	attached []string             // SEC 이름. 사람이 읽는 용도
+
+	// missing 은 안 붙은 감사 미러다 (SEC 이름 + 이유).
+	// 미러는 판정하지 않고 LSM 판정과 대조만 하므로, 못 붙어도 집행은
+	// 계속하는 게 맞다 — 다만 조용히 넘어가면 「대조했는데 안 갈렸다」와
+	// 「대조를 아예 안 했다」가 구분되지 않는다.
+	missing []string
 }
 
 // Load 는 이미 pin 된 맵이 있으면 새로 만들지 않고 재사용한다.
@@ -123,13 +129,33 @@ func (l *Loader) AttachAll() error {
 	sort.Strings(names)
 
 	for _, name := range names {
-		if err := l.attachOne(name); err != nil {
-			l.detachAll()
-			return fmt.Errorf("%s: %w", name, err)
+		err := l.attachOne(name)
+		if err == nil {
+			continue
 		}
+		// 미러(kprobe)는 못 붙어도 치명이 아니다. 커널마다 security_* 가
+		// 인라인되거나 이름이 달라질 수 있는데, 그것 때문에 판정까지
+		// 멈출 이유가 없다. LSM 훅이 하나라도 안 붙으면 그건 다르다 —
+		// 자기보호가 빠진 채로 도는 것이므로 전부 뗀다 (§16).
+		if l.spec.Programs[name].Type == ebpf.Kprobe {
+			l.missing = append(l.missing,
+				fmt.Sprintf("%s (%v)", l.spec.Programs[name].SectionName, err))
+			continue
+		}
+		l.detachAll()
+		return fmt.Errorf("%s: %w", name, err)
 	}
 	sort.Strings(l.attached)
+	sort.Strings(l.missing)
 	return nil
+}
+
+// MissingMirrors 는 안 붙은 감사 미러다. 비어 있어야 정상이고,
+// 비어 있지 않으면 그 훅은 LSM 판정만 있고 대조가 없다는 뜻이다.
+func (l *Loader) MissingMirrors() []string {
+	out := make([]string, len(l.missing))
+	copy(out, l.missing)
+	return out
 }
 
 func (l *Loader) attachOne(name string) error {
