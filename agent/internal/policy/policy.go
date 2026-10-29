@@ -49,6 +49,15 @@ type Spec struct {
 	NetRules       []NetRule
 	ReadWatchPaths []string
 	InspectUDP     bool
+
+	// NoDefaultExec 는 로그인 셸 기본 허용을 끈다.
+	//
+	// 기본값은 보안 불변식이 아니라 사용성 기본값이다 (DefaultDenyWrite 와
+	// 다르다). 「이 영장은 바이너리 하나만 돌린다」는 비대화형 영장까지 셸을
+	// 강제로 넣으면 그것도 약화이므로 끌 길을 둔다.
+	//
+	// 끄면 대화형 세션이 뜨지 않는다 — sshd 가 로그인 셸을 exec 못 한다.
+	NoDefaultExec bool
 }
 
 type ExecRule struct {
@@ -118,6 +127,60 @@ var DefaultAllowWrite = []string{
 	"/dev/pts", // 터미널. 디렉터리라 재귀로 들어간다
 }
 
+// LoginShellsPath 는 시스템이 스스로 선언한 로그인 셸 목록이다.
+// 테스트에서 갈아끼운다.
+var LoginShellsPath = "/etc/shells"
+
+// FallbackLoginShells 는 /etc/shells 를 못 읽을 때 쓴다.
+// 비어 있는 것보다 /bin/sh 하나라도 있는 편이 낫다 — 없으면 세션이 아예 안 뜬다.
+var FallbackLoginShells = []string{"/bin/sh"}
+
+// LoginShells 는 이 기계의 로그인 셸 경로를 돌려준다.
+//
+// 목록을 하드코딩하지 않는 이유: 배포판마다 다르다. Ubuntu 는 /usr/bin/dash 가
+// /bin/sh 이고 Rocky 는 아니다. 틀린 목록을 박아두면 그 기계에서 세션이 죽는다.
+// /etc/shells 는 그 판단을 시스템이 이미 해둔 것이다.
+//
+// 없는 경로와 일반 파일이 아닌 것은 버린다. 중복은 inode 가 아니라 경로로만
+// 거른다 — inode 중복 제거는 Compile 이 한다.
+func LoginShells() []string {
+	b, err := os.ReadFile(LoginShellsPath)
+	if err != nil {
+		return existingRegular(FallbackLoginShells)
+	}
+	var out []string
+	for _, ln := range strings.Split(string(b), "\n") {
+		ln = strings.TrimSpace(ln)
+		if ln == "" || strings.HasPrefix(ln, "#") {
+			continue
+		}
+		if !filepath.IsAbs(ln) {
+			continue
+		}
+		out = append(out, ln)
+	}
+	out = existingRegular(out)
+	if len(out) == 0 {
+		return existingRegular(FallbackLoginShells)
+	}
+	return out
+}
+
+func existingRegular(paths []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, p := range paths {
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		if st, err := os.Stat(p); err == nil && st.Mode().IsRegular() {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // DefaultDenyWrite 는 자기보호 6종의 여섯 번째다.
 // 나머지 다섯은 LSM 훅이고 이것만 규칙이다 — 영장 세션이 warrantd 자기 상태를
 // 고치지 못하게 한다 (§16).
@@ -155,22 +218,34 @@ func Compile(policyID uint32, spec any) (*Compiled, error) {
 
 	c := &Compiled{PolicyID: policyID}
 
+	// 로그인 셸을 먼저 깐다.
+	//
+	// sshd 는 세션 scope 안에서 명령마다 fork 한 뒤 로그인 셸을 exec 한다
+	// (S5 에서 실측: 로그에 sshd 자신이 영장 안으로 찍힌다). 그래서 셸이
+	// 허용 목록에 없으면 강제 모드에서 세션 자체가 뜨지 않는다 —
+	// /dev/null 과 같은 부류이고, 정책 작성자가 빠뜨릴 것이지 정할 것이 아니다.
+	//
+	// 셸을 허용해도 통제가 풀리지 않는다: 셸이 실행하는 모든 execve 가 여전히
+	// 훅을 탄다. 열리는 것은 내장 명령과 리다이렉션뿐이고, 리다이렉션은 쓰기
+	// 게이트가 본다.
+	if !s.NoDefaultExec {
+		shells := LoginShells()
+		for _, p := range shells {
+			if err := c.addExec(p, true); err != nil {
+				return nil, err
+			}
+		}
+		if len(shells) == 0 {
+			c.warn("로그인 셸을 하나도 못 찾았다 (%s) — 강제 모드에서 세션이 안 뜬다", LoginShellsPath)
+		}
+	} else {
+		c.warn("로그인 셸 기본 허용을 껐다 — 대화형 세션은 뜨지 않는다")
+	}
+
 	for _, r := range s.ExecRules {
-		st, err := os.Stat(r.Path)
-		if err != nil {
-			return nil, fmt.Errorf("실행 허용 %s: %w", r.Path, err)
-		}
-		if !st.Mode().IsRegular() {
-			return nil, fmt.Errorf("실행 허용 %s: %w", r.Path, ErrExecNotFile)
-		}
-		ref, err := c.resolve(r.Path, KindExec)
-		if err != nil {
+		if err := c.addExec(r.Path, false); err != nil {
 			return nil, err
 		}
-		if st.Mode()&os.ModeSetuid != 0 {
-			c.warn("%s 는 setuid 다 — 실행을 허용하면 영장 밖 권한으로 올라갈 수 있다", r.Path)
-		}
-		c.Exec = append(c.Exec, ref)
 	}
 
 	// 기본값을 먼저 깐다. 정책이 같은 경로를 다시 쓰면 뒤에 들어간 쪽이 이긴다 —
@@ -269,6 +344,53 @@ func (c *Compiled) resolve(path string, kind Kind) (bpfmap.FileRef, error) {
 	}
 	c.Sources = append(c.Sources, Source{Path: path, Ref: ref, Kind: kind})
 	return ref, nil
+}
+
+// addExec 의 optional 은 「없으면 건너뛴다」 다. 기본 목록에만 쓴다.
+//
+// 같은 inode 를 두 번 넣지 않는다 — 경로가 달라도 (심볼릭 링크 때문에) 같은
+// 파일일 수 있고, 그러면 Sources 에 중복이 쌓여 Watcher 가 같은 것을 두 번 센다.
+func (c *Compiled) addExec(path string, optional bool) error {
+	// 상대 경로는 중복 검사 전에 막는다. 뒤로 미루면 이미 들어간 것과 같은
+	// inode 일 때 조용히 통과한다.
+	if !filepath.IsAbs(path) {
+		return fmt.Errorf("%s: %w", path, ErrRelPath)
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		if optional && os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("실행 허용 %s: %w", path, err)
+	}
+	if !st.Mode().IsRegular() {
+		if optional {
+			return nil
+		}
+		return fmt.Errorf("실행 허용 %s: %w", path, ErrExecNotFile)
+	}
+
+	ref, err := bpfmap.FileRefOf(path)
+	if err != nil {
+		if optional {
+			return nil
+		}
+		return err
+	}
+	for _, e := range c.Exec {
+		if e == ref {
+			return nil
+		}
+	}
+
+	if _, err := c.resolve(path, KindExec); err != nil {
+		return err
+	}
+	if st.Mode()&os.ModeSetuid != 0 {
+		c.warn("%s 는 setuid 다 — 실행을 허용하면 영장 밖 권한으로 올라갈 수 있다", path)
+	}
+	c.Exec = append(c.Exec, ref)
+	return nil
 }
 
 // addWrite 의 optional 은 「없으면 건너뛴다」 다. 기본 목록에만 쓴다 —

@@ -124,11 +124,11 @@ ok "sudo 인증 유지 중"
 make -C "$ROOT/bpf" warrant.bpf.o >/dev/null || die "bpf 빌드 실패"
 ok "오브젝트 $(basename "$OBJ") ($(date -r "$OBJ" '+%H:%M:%S'))"
 
-if [ ! -x "$CTLBIN" ]; then
-	echo "  warrantctl 빌드"
-	( cd "$ROOT/agent" && go build -o warrantctl ./cmd/warrantctl ) || die "warrantctl 빌드 실패"
-fi
-ok "warrantctl"
+# 항상 빌드한다. 「없을 때만」으로 두면 Go 쪽을 고친 뒤 낡은 바이너리를 재는
+# 사고가 난다 — 실제로 policy 와 loader 수정이 둘 다 안 들어간 채로 돌았다.
+# go build 는 바뀐 게 없으면 캐시로 즉시 끝난다.
+( cd "$ROOT/agent" && go build -o warrantctl ./cmd/warrantctl ) || die "warrantctl 빌드 실패"
+ok "warrantctl ($(date -r "$CTLBIN" '+%H:%M:%S'))"
 
 # 이전 실행 잔재. 핀된 링크는 프로세스가 죽어도 훅에 붙은 채로 남는다 —
 # 그게 설계된 동작이지만(§10·§17), 중단된 실행이 남겨놓으면 다음 실행이
@@ -243,7 +243,7 @@ SUDO=$(readlink -f /usr/bin/sudo)
 ID=$(readlink -f /usr/bin/id)
 echo "  sh=$SH  bash=$BASH  true=$TRUE  sudo=$SUDO  sleep=$SLEEP  (허용 밖: id=$ID)"
 
-ALLOW_EXEC="$SH,$BASH,$TRUE,$SUDO,$SLEEP"
+ALLOW_EXEC="$TRUE,$SUDO,$SLEEP"   # 셸은 기본값이 넣어야 한다
 ALLOW_WRITE="$WORK/open"
 DENY_WRITE="$WORK/secret"
 
