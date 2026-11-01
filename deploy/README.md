@@ -49,10 +49,11 @@ sudo deploy/systemd/install.sh -upstream 중앙:9090     # 설치 · enable --no
 sudo deploy/systemd/install.sh --uninstall             # 제거. pin 은 남긴다
 ```
 
-| 유닛 | 하는 일 |
-|---|---|
-| `warrant-bpf.service` | oneshot. `load-bpf.sh` 가 bpftool 로 `warrant.bpf.o` 를 올려 맵은 `/sys/fs/bpf/warrant`, 프로그램 · 링크는 `/sys/fs/bpf/warrant-progs` 에 pin 한다. **이미 pin 돼 있으면 건너뛴다.** `loader` 가 생기면 없어진다 |
-| `warrantd.service` | `Type=notify` — PAM 소켓을 연 뒤 `READY=1` 을 보낸다. `Before=ssh.service sshd.service`. `/run/warrantd` 0700, `Restart=always` |
+`warrantd.service` 하나다. warrantd 가 기동할 때 `warrant.bpf.o` 를 직접 올려(`internal/loader`) 맵은
+`/sys/fs/bpf/warrant`, 링크는 `/sys/fs/bpf/warrant/links` 에 pin 한다. `Type=notify` — PAM 소켓을 연 뒤
+`READY=1` 을 보낸다. `Before=ssh.service sshd.service`, `/run/warrantd` 0700, `Restart=always`.
+`install.sh` 는 bpftool 로 올리던 옛 설치(`warrant-bpf.service` · `warrant-progs`)가 있으면 먼저 지운다 —
+남겨 두면 모든 훅에 프로그램이 두 벌 붙는다.
 
 - **순서가 제품의 조건이다.** sshd 가 PAM 소켓보다 먼저 뜨면 그 사이 세션은 태그 없이 시작된다.
   `Type=simple` 이면 프로세스가 뜨자마자 started 가 되므로 notify 여야 한다.
@@ -63,14 +64,20 @@ sudo deploy/systemd/install.sh --uninstall             # 제거. pin 은 남긴�
   버린다. 2026-10-24 에 한 번은 sockets.target 을 버려 우연히 통과했고, 다음 부팅에서는 ssh.socket 을 버려
   sshd 가 안 떠서 VM 에 못 들어갔다(Lima provision 스크립트로 복구). **유닛 순서를 바꾸면 재부팅한 뒤
   `journalctl -b | grep -i "ordering cycle"` 이 비어 있는지 반드시 본다** — 서비스가 떴다는 것만으로는 모른다.
-- **pin 은 아무도 지우지 않는다.** warrantd 재시작 · 크래시 · `warrant-bpf` 재시작에도 맵(=태그)이 그대로다
-  (2026-10-24 VM: 재시작 전후 맵 id 동일, `kill -9` 뒤 자동 재시작). 비우는 건 재부팅뿐이다.
-- **부팅 순서 실측(2026-10-24, Lima VM 재부팅, 순환 경고 0줄):**
-  `warrant-bpf` Finished 17:12:21.732 → `ssh.socket` Listening 22.612 → `warrantd` Started(READY) 22.703 →
-  `ssh.service` Started 23.019. 소켓은 먼저 열려도 sshd 는 PAM 소켓이 준비된 뒤에 뜬다.
+- **pin 은 아무도 지우지 않는다.** warrantd 재시작 · 크래시에도 맵(=태그)과 링크가 그대로다 — 재시작한 warrantd 는
+  pin 을 집어 들 뿐 새로 붙이지 않는다(2026-11-01 VM: 재시작 · `kill -9` 전후 맵 id · 링크 id 동일, 훅 15개 중복 없음).
+  비우는 건 재부팅뿐이다.
+- **그래서 새 `warrant.bpf.o` 는 재부팅해야 적용된다.** 재시작만 하면 pin 된 링크가 잡고 있는 옛 프로그램이 계속 돈다.
+  맵 구조가 바뀐 오브젝트는 옛 pin 과 맞지 않아 warrantd 가 뜨지 못한다. 역시 재부팅이 답이다.
+- **부팅 순서 실측(2026-11-01, Lima VM 재부팅, 순환 경고 0줄):**
+  `ssh.socket` Listening 08.583 → warrantd 훅 15개 10.358 → `warrantd` Started(READY) 10.359 →
+  `ssh.service` Started 10.399. 소켓은 먼저 열려도 sshd 는 PAM 소켓이 준비된 뒤에 뜬다.
   중앙이 꺼져 있어도 warrantd 는 뜨고 업로드만 재시도한다.
-- **BPF 를 못 올리면 warrantd 도 안 뜨고, 로그인은 된다.** `Requires=` 는 warrantd 에만 걸고 ssh 에는 걸지 않는다 —
-  PAM 은 소켓이 없으면 fail-open 한다(§17). 무영장 세션으로 기록되지 않는 구간이 생기므로 `warrant-bpf` 실패는 경보 대상이다.
+- **BPF 를 못 올리면 warrantd 는 안 뜨고, 로그인은 된다**(§17). ssh 쪽에 `Requires=` 를 걸지 않았다. 오브젝트를 치운 채
+  부팅해 ssh 로 들어가는 것을 확인했다(2026-11-01). warrantd 는 5번 재시도한 뒤 `failed` 로 멈추고, 원인을 고친 뒤
+  `sudo systemctl reset-failed warrantd && sudo systemctl restart warrantd` 를 해야 돈다.
+  **그동안 태깅도 무영장 기록도 없다** — `warrantd` 실패는 경보 대상이지만 아직 경보가 없다. 중앙은 `node.last_seen_at` 으로도
+  알 수 없다(하트비트 전).
 - **실제 sshd 로 시험하는 법(2026-10-24 확인).** 원복 타이머를 먼저 건다 — 잘못돼서 못 들어가도 10분 뒤 저절로 빠진다.
   ```sh
   sudo systemd-run --unit=pam-deadman --on-active=10min /usr/bin/make -C $PWD/pam disable
@@ -80,7 +87,7 @@ sudo deploy/systemd/install.sh --uninstall             # 제거. pin 은 남긴�
   sudo make -C pam disable && sudo systemctl stop pam-deadman.timer
   ```
   `ExposeAuthInfo` 는 켜지 않아도 된다 — `SSH_AUTH_INFO_0` 은 꺼진 채로 open_session 에 와서 키 지문이 남는다.
-- 맵 · 프로그램 이름을 시험 하네스(`bpf/wtest.sh` · `warrantctl` 의 `wtest` · `wmaps`)와 다르게 써서 둘이 섞이지 않는다.
+- pin 경로를 시험 하네스(`bpf/wtest.sh` · `warrantctl` 의 `wtest` · `wmaps`)와 다르게 써서 맵이 섞이지 않는다. 다만 훅은 커널 전체에 붙는다 — 하네스를 돌리면 프로그램이 한 벌 더 매달리니, 측정(`bench/`)할 때는 `install.sh --uninstall` 뒤 재부팅한다.
 
 `ansible/` 은 노드가 여러 대가 되는 시점에. 지금은 이르다.
 

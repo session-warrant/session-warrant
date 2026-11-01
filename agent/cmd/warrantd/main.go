@@ -1,7 +1,7 @@
 // warrantd — 노드 에이전트. 조립만 한다. 판정은 커널이 한다.
 //
 // 하는 일:
-//   - main.go: 맵 · PAM 소켓 · ringbuf 를 열고, 종료 신호까지 돌린다. 감사 레코드와 Gap 을 로그로 남긴다
+//   - main.go: BPF 를 올려 훅에 붙이고, 맵 · PAM 소켓 · ringbuf 를 열고, 종료 신호까지 돌린다. 감사 레코드와 Gap 을 로그로 남긴다
 //   - binder.go: PAM 세션이 열리면 무영장 사유(NO_WARRANT · NO_KEY)를 기록하고, 닫히면 태그를 뗀다
 //   - -upstream 이 있으면 무영장 세션을 메모리 큐에 쌓아 중앙으로 올린다 (store.AuditQueue → upstream.StreamAudit)
 //
@@ -12,7 +12,7 @@
 //  4. pamsock.Listen  여기 전에 로그인한 세션은 태그가 없다 (유닛에 Before=sshd.service)
 //  5. ringbuf · upstream  실패해도 죽지 않는다
 //
-// 지금은 4 · 5 만 붙어 있다. 1 · 3 은 bpftool 이 대신하고, 2 는 bbolt 대신 메모리 큐다.
+// 2 는 아직 없다 — 영장 복원은 bbolt 가 생기면 1 과 3 사이에 들어간다. 감사는 메모리 큐다.
 // 종료할 때 pin 은 지우지 않는다.
 package main
 
@@ -24,13 +24,13 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
 
 	"github.com/session-warrant/session-warrant/agent/internal/bpfmap"
+	"github.com/session-warrant/session-warrant/agent/internal/loader"
 	"github.com/session-warrant/session-warrant/agent/internal/pamsock"
 	"github.com/session-warrant/session-warrant/agent/internal/pb"
 	"github.com/session-warrant/session-warrant/agent/internal/ringbuf"
@@ -43,6 +43,7 @@ const agentVersion = "warrantd 0.1.0-dev"
 func main() {
 	var (
 		pinDir     = flag.String("pin-dir", "/sys/fs/bpf/warrant", "bpffs pin 경로")
+		objPath    = flag.String("bpf-obj", "/usr/lib/warrant/warrant.bpf.o", "BPF 오브젝트 경로")
 		socketPath = flag.String("pam-socket", "/run/warrantd/pam.sock", "pam_warrant.so 가 보내는 소켓")
 		statePath  = flag.String("state", "/var/lib/warrantd/state.db", "bbolt 경로")
 		upstreamEP = flag.String("upstream", "", "중앙 gRPC 엔드포인트. 비어 있으면 로컬 전용")
@@ -51,7 +52,7 @@ func main() {
 
 	_ = statePath
 
-	if err := run(*pinDir, *socketPath, *upstreamEP); err != nil {
+	if err := run(*pinDir, *objPath, *socketPath, *upstreamEP); err != nil {
 		log.Printf("warrantd: %v", err)
 		os.Exit(1)
 	}
@@ -84,16 +85,13 @@ func logGap(g ringbuf.Gap) {
 }
 
 // Sent as the first batch of every audit stream; the server registers the node from it.
-func nodeHello() *pb.NodeHello {
-	h := &pb.NodeHello{AgentVersion: agentVersion}
+func nodeHello(hooks []pb.Hook) *pb.NodeHello {
+	h := &pb.NodeHello{AgentVersion: agentVersion, AttachedHooks: hooks, BpfLsmEnabled: true}
 	h.Hostname, _ = os.Hostname()
 
 	var u unix.Utsname
 	if unix.Uname(&u) == nil {
 		h.KernelVersion = unix.ByteSliceToString(u.Release[:])
-	}
-	if lsm, err := os.ReadFile("/sys/kernel/security/lsm"); err == nil {
-		h.BpfLsmEnabled = strings.Contains(","+strings.TrimSpace(string(lsm))+",", ",bpf,")
 	}
 	var up unix.Timespec
 	if unix.ClockGettime(unix.CLOCK_BOOTTIME, &up) == nil {
@@ -103,15 +101,39 @@ func nodeHello() *pb.NodeHello {
 }
 
 // Starts all components and blocks until shutdown; returns so deferred Closes run.
-func run(pinDir, socketPath, upstreamEP string) error {
+func run(pinDir, objPath, socketPath, upstreamEP string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// lsm/* cannot attach without bpf in the boot LSM list; say so instead of a raw attach error.
+	if on, err := loader.BpfLsmEnabled(); err != nil {
+		return err
+	} else if !on {
+		return errors.New("bpf LSM is off: run deploy/enable-bpf-lsm.sh and reboot")
+	}
+
+	// Pinned maps are reused, so a restart keeps every session's tag. Close leaves the pins.
+	ld, err := loader.LoadObject(objPath, pinDir)
+	if err != nil {
+		return err
+	}
+	defer ld.Close()
 
 	maps, err := bpfmap.Open(pinDir)
 	if err != nil {
 		return fmt.Errorf("open maps %s: %w", pinDir, err)
 	}
 	defer maps.Close()
+
+	// Pinned links are picked up, so a restart never hangs a second copy on a hook.
+	if err := ld.AttachAll(); err != nil {
+		return fmt.Errorf("attach: %w", err)
+	}
+	attached := ld.AttachedHooks()
+	if len(attached) != ld.ProgramCount() {
+		return fmt.Errorf("attach: %d of %d programs", len(attached), ld.ProgramCount())
+	}
+	log.Printf("warrantd: %d hooks attached, pinned at %s", len(attached), pinDir)
 
 	srv, err := pamsock.Listen(socketPath)
 	if err != nil {
@@ -141,7 +163,7 @@ func run(pinDir, socketPath, upstreamEP string) error {
 			defer client.Close()
 			q := store.NewAuditQueue(10_000, 500)
 			b.audit = q
-			go client.StreamAudit(ctx, nodeHello(), q)
+			go client.StreamAudit(ctx, nodeHello(hooksFromSections(attached)), q)
 		}
 	}
 

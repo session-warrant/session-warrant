@@ -8,16 +8,29 @@
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-UNITS="warrant-bpf.service warrantd.service"
+UNIT=warrantd.service
 
 if [ "$(id -u)" != 0 ]; then
     echo "root 로 실행할 것: sudo $0 $*" >&2
     exit 1
 fi
 
+# Before warrantd had a loader, warrant-bpf.service pinned links in warrant-progs. loader looks in
+# warrant/links, so leaving them would hang a second copy of every program on every hook.
+remove_bpftool_install() {
+    systemctl disable --now warrant-bpf.service 2>/dev/null || true
+    rm -f /etc/systemd/system/warrant-bpf.service /usr/lib/warrant/load-bpf.sh
+    if [ -d /sys/fs/bpf/warrant-progs ]; then
+        systemctl stop "$UNIT" 2>/dev/null || true
+        rm -rf /sys/fs/bpf/warrant-progs /sys/fs/bpf/warrant
+        echo "옛 bpftool pin 을 지웠다 (warrant-progs · warrant)"
+    fi
+}
+
 if [ "${1:-}" = "--uninstall" ]; then
-    systemctl disable --now $UNITS 2>/dev/null || true
-    for u in $UNITS; do rm -f "/etc/systemd/system/$u"; done
+    remove_bpftool_install
+    systemctl disable --now "$UNIT" 2>/dev/null || true
+    rm -f "/etc/systemd/system/$UNIT"
     rm -f /usr/local/sbin/warrantd
     rm -rf /usr/lib/warrant
     systemctl daemon-reload
@@ -28,18 +41,18 @@ fi
 for f in "$ROOT/.cache/bin/warrantd" "$ROOT/bpf/warrant.bpf.o"; do
     [ -f "$f" ] || { echo "없다: $f — 위의 빌드 명령을 먼저" >&2; exit 1; }
 done
-command -v bpftool >/dev/null || { echo "bpftool 이 없다: ./deploy/bootstrap.sh --install" >&2; exit 1; }
+remove_bpftool_install
 
 install -m 0755 "$ROOT/.cache/bin/warrantd" /usr/local/sbin/warrantd
 install -d -m 0755 /usr/lib/warrant
 install -m 0644 "$ROOT/bpf/warrant.bpf.o" /usr/lib/warrant/warrant.bpf.o
-install -m 0755 "$ROOT/deploy/systemd/load-bpf.sh" /usr/lib/warrant/load-bpf.sh
-for u in $UNITS; do install -m 0644 "$ROOT/deploy/systemd/$u" "/etc/systemd/system/$u"; done
+install -m 0644 "$ROOT/deploy/systemd/$UNIT" "/etc/systemd/system/$UNIT"
 
 if [ ! -f /etc/default/warrantd ]; then
     printf '# warrantd 추가 인자. 예: -upstream central.example:9090\nWARRANTD_ARGS="%s"\n' "$*" > /etc/default/warrantd
 fi
 
 systemctl daemon-reload
-systemctl enable --now $UNITS
-systemctl --no-pager --lines=5 status warrantd.service || true
+systemctl enable "$UNIT"
+systemctl restart "$UNIT"
+systemctl --no-pager --lines=5 status "$UNIT" || true
