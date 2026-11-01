@@ -69,7 +69,7 @@ boot ns) 때문에 서버가 거절한다. `loader` 는 미구현이라 BPF 는 
 | `bench/bypass/` | S2 §04 표 = bats 13케이스 + §18 4구멍(skip). **8 통과 · 0 실패**, 출력 커밋됨. 진짜 세션으로 재확인 남음 |
 | `bench/pamtiming/` | S3 하네스 — **통과**. sshd 11/11, 태깅 공백 없음 |
 | `bench/inode/` | S4 하네스 — fanotify 감시자 + 변형 카탈로그. **아직 안 돌렸다** |
-| Grafana | `deploy/grafana` — compose 로 뜬다(:3000, 로그인 없이 보기 전용). 대시보드 「무영장 세션」: 건수 · 키 없음 · 유실 구간 · 노드 타일, 사유별 막대, 최근 세션 · 노드 · 유실 구간 표. PostgreSQL 을 직접 읽는다(로컬은 warrant 계정 — 운영은 SELECT 전용 계정으로) |
+| Grafana | `deploy/grafana` — compose 로 뜬다(:3000, 로그인 없이 보기 전용). 대시보드 「무영장 세션」: 건수 · 키 없음 · 유실 구간 · 노드 타일, 사유별 막대, 최근 세션 · 노드 · 유실 구간 표. PostgreSQL 을 직접 읽는다(로컬은 warrant 계정 — 운영은 SELECT 전용 계정으로). **경보**: 무영장 접속 · 감사 기록 유실 → 웹훅(`GRAFANA_ALERT_WEBHOOK_URL`, 로컬은 compose 의 `alert-sink`). 실제 세션으로 도착 확인(2026-10-29) |
 | `web/` | **범위 밖, 동결.** 감사 4화면, React 19 + shadcn, 목 데이터 |
 
 각 디렉터리의 `README.md` 에 그 계층이 지켜야 할 제약이 적혀 있다. 작업 전에 해당 README를 먼저 읽을 것.

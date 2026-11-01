@@ -1,0 +1,118 @@
+# 무영장 접속 · 유실 구간 경보. 화면을 지켜보지 않아도 알게 한다.
+# 받는 곳은 웹훅 하나 — GRAFANA_ALERT_WEBHOOK_URL (compose 기본값은 로컬 수신기 alert-sink).
+# 파일이 원본이다: 화면에서 고친 규칙은 저장되지 않는다.
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: warrant-webhook
+    receivers:
+      - uid: warrant-webhook
+        type: webhook
+        settings:
+          url: ${GRAFANA_ALERT_WEBHOOK_URL}
+          httpMethod: POST
+        disableResolveMessage: false
+
+policies:
+  - orgId: 1
+    receiver: warrant-webhook
+    # 같은 노드의 같은 규칙은 한 통으로 묶는다. 4시간 동안 같은 경보를 다시 보내지 않는다.
+    group_by: ['alertname', 'hostname']
+    group_wait: 10s
+    group_interval: 1m
+    repeat_interval: 4h
+
+groups:
+  - orgId: 1
+    name: 무영장 세션
+    folder: Session Warrant
+    interval: 1m
+    rules:
+      # 최근 10분 안에 생긴 무영장 세션. 노드 · 계정 · 사유 · 출발지 · 키마다 경보가 따로 뜬다 —
+      # 알림 한 통만 보고 누가 어디로 들어왔는지 알 수 있게. 10분이 지나면 '해결됨'으로 바뀐다.
+      - uid: warrant-unwarranted-session
+        title: 무영장 접속
+        condition: B
+        for: 0s
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: warrant-pg
+            model:
+              refId: A
+              format: table
+              rawQuery: true
+              editorMode: code
+              rawSql: |
+                SELECT n.hostname,
+                       u.login_account                         AS account,
+                       u.reason,
+                       coalesce(u.source_address, '—')         AS source,
+                       coalesce(u.ssh_key_fingerprint, '없음')  AS ssh_key,
+                       count(*)                                AS sessions
+                FROM unwarranted_session u
+                JOIN node n ON n.id = u.node_id
+                WHERE u.observed_at > now() - interval '10 minutes'
+                GROUP BY 1, 2, 3, 4, 5
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+        labels:
+          severity: warning
+          kind: unwarranted-session
+        annotations:
+          __dashboardUid__: warrant-audit
+          __panelId__: '6'
+          summary: '{{ $labels.account }}@{{ $labels.hostname }} 가 영장 없이 접속 ({{ $labels.reason }})'
+          description: >-
+            최근 10분 {{ index $values "A" }}건. 출발지 {{ $labels.source }}, 키 지문 {{ $labels.ssh_key }}.
+            키 지문이 없으면 사람을 특정할 수 없는 접속이다.
+
+      # 노드가 '이 구간 기록이 빠졌다'고 보고했다. 그 구간의 조용함은 믿을 수 없다(§13).
+      - uid: warrant-audit-gap
+        title: 감사 기록 유실
+        condition: B
+        for: 0s
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: warrant-pg
+            model:
+              refId: A
+              format: table
+              rawQuery: true
+              editorMode: code
+              rawSql: |
+                SELECT n.hostname,
+                       g.cause,
+                       count(*) AS gaps
+                FROM audit_gap g
+                JOIN node n ON n.id = g.node_id
+                WHERE g.to_at > now() - interval '10 minutes'
+                GROUP BY 1, 2
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+        labels:
+          severity: warning
+          kind: audit-gap
+        annotations:
+          __dashboardUid__: warrant-audit
+          __panelId__: '8'
+          summary: '{{ $labels.hostname }} 감사 기록 유실 ({{ $labels.cause }})'
+          description: '최근 10분 유실 구간 {{ index $values "A" }}개. 그 구간에 아무 일도 없었다고 읽으면 안 된다.'
