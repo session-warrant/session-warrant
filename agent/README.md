@@ -35,12 +35,11 @@ bpf/                bpf2go 생성물 (커밋한다)
 
 | 패키지 | 상태 |
 |---|---|
-| `bpfmap` · `ringbuf` · `policy` | 구현 · 테스트 있음 (A) |
+| `loader` · `bpfmap` · `ringbuf` · `policy` | 구현 · 테스트 있음 (A) |
 | `pamsock` | 구현 · 테스트 있음 (C) |
-| `cmd/warrantd` | 맵 · PAM 소켓 · ringbuf(로그만) · `-upstream` 으로 무영장 세션 업로드 |
+| `cmd/warrantd` | BPF 로드 · 훅 부착 · 맵 · PAM 소켓 · ringbuf(로그만) · `-upstream` 으로 무영장 세션 업로드 |
 | `store` | **메모리 `AuditQueue` 만.** bbolt `Store`(영장 캐시 · 감사 영속)는 `panic("미구현")`. 재시작하면 ack 안 된 기록을 잃고 새 seq_epoch 로 시작한다 |
 | `upstream` | **평문 `Dial` + `StreamAudit` 만.** mTLS · `Subscribe` · `Verify` · `ToKernel` · `Heartbeat` 등은 `panic("미구현")` |
-| `loader` | 미구현 — BPF 는 bpftool 로 올린다 |
 
 리눅스 전용 상수 때문에 맥에서는 `cmd/warrantd` · `upstream` · `bpfmap` 이 빌드되지 않는다.
 `GOOS=linux go vet ./...` 로 확인하고, 테스트는 Lima VM `sw` 에서 `go test -race ./...` 로 돌린다.
