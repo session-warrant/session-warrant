@@ -1,4 +1,4 @@
-# Grafana 가 PostgreSQL 을 직접 읽는다 — 화면은 이걸로 대체한다(web/ 동결).
+# Grafana 가 PostgreSQL 을 직접 읽는다 — React 목업(동결, session-warrant-web) 대신 이걸 쓴다.
 # 로컬 개발용: compose 의 warrant 계정을 그대로 쓴다. 운영에서는 SELECT 만 가진 계정으로 바꿀 것.
 apiVersion: 1
 

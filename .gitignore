@@ -40,10 +40,6 @@ server/bin/
 agent/warrantd
 agent/**/*.test
 
-# ── web ────────────────────────────────────────────────────────────
-web/node_modules/
-web/dist/
-
 # ── IDE · OS ───────────────────────────────────────────────────────
 .idea/
 .vscode/

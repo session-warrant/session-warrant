@@ -67,9 +67,8 @@ func (c *Client) Close() error {
 	return c.conn.Close()
 }
 
-// Subscribe 는 활성 집합 전체 → ResyncComplete → 변경분 순으로 받는다.
-// ResyncComplete 에서 집합 밖의 캐시 영장을 지운다.
 func (c *Client) Subscribe(ctx context.Context, apply Applier) error {
+
 	panic("미구현")
 }
 

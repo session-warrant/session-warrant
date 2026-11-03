@@ -93,7 +93,7 @@ sudo deploy/systemd/install.sh --uninstall             # 제거. pin 은 남긴�
 
 ## Grafana (`grafana/`)
 
-화면은 React(`web/`, 동결) 대신 Grafana 가 PostgreSQL 을 직접 읽는다. `server/compose.yaml` 이 띄운다.
+화면은 React 목업(동결, 별도 저장소 `session-warrant-web`) 대신 Grafana 가 PostgreSQL 을 직접 읽는다. `server/compose.yaml` 이 띄운다.
 
 ```sh
 docker compose -f server/compose.yaml up -d --wait    # http://localhost:3000 → 대시보드 「무영장 세션」

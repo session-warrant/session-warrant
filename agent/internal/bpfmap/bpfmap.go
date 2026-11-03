@@ -106,7 +106,6 @@ type Maps struct {
 	ncpu int
 }
 
-// Open 은 bpffs 에 pin 된 맵을 연다. 맵을 만들지는 않는다 — 그건 loader 몫이다.
 func Open(pinDir string) (*Maps, error) {
 	m := &Maps{}
 	for _, p := range []struct {

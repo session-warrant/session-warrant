@@ -207,7 +207,6 @@ agent/    Go · warrantd                                       ← bpfmap · rin
           cmd/warrantd/ · internal/{loader,bpfmap,pamsock,policy,ringbuf,upstream,store}/
 pam/      C · pam_warrant.so, 200줄 이내 유지                 ← sshd 까지 동작 (VM)
 server/   Java · Spring Boot 중앙 서버                        ← 엔티티 · Flyway, 서비스 구현 중
-web/      React 목업 대시보드 — 동결, Grafana 로 대체          ← 범위 밖
 deploy/   bootstrap.sh · enable-bpf-lsm.sh · systemd/ · ansible/ ← 스크립트 동작
 bench/    overhead/ (S1) · bypass/ (S2) · pamtiming/ (S3) · inode/ (S4) ← S1~S3 실행됨
 docs/     기획 문서, 실험 기록, 아키텍처 다이어그램

@@ -70,7 +70,7 @@ boot ns) 때문에 서버가 거절한다. BPF 는 warrantd 가 `loader` 로 직
 | `bench/pamtiming/` | S3 하네스 — **통과**. sshd 11/11, 태깅 공백 없음 |
 | `bench/inode/` | S4 하네스 — fanotify 감시자 + 변형 카탈로그. **아직 안 돌렸다** |
 | Grafana | `deploy/grafana` — compose 로 뜬다(:3000, 로그인 없이 보기 전용). 대시보드 「무영장 세션」: 건수 · 키 없음 · 유실 구간 · 노드 타일, 사유별 막대, 최근 세션 · 노드 · 유실 구간 표. PostgreSQL 을 직접 읽는다(로컬은 warrant 계정 — 운영은 SELECT 전용 계정으로). **경보**: 무영장 접속 · 감사 기록 유실 → 웹훅(`GRAFANA_ALERT_WEBHOOK_URL`, 로컬은 compose 의 `alert-sink`). 실제 세션으로 도착 확인(2026-10-29) |
-| `web/` | **범위 밖, 동결.** 감사 4화면, React 19 + shadcn, 목 데이터 |
+| 대시보드 목업 | **범위 밖, 동결.** 별도 저장소 `session-warrant/session-warrant-web`(비공개)로 분리(2026-11-01). 감사 4화면, React 19 + shadcn, 목 데이터 |
 
 각 디렉터리의 `README.md` 에 그 계층이 지켜야 할 제약이 적혀 있다. 작업 전에 해당 README를 먼저 읽을 것.
 
@@ -302,7 +302,7 @@ Gradle 9 는 발견된 테스트가 0개면 빌드를 실패시킨다. 테스트
 ## 명령
 
 계층마다 도구가 다르다. **BPF·bench 는 서브 PC(Linux, root)에서만 돈다.**
-`server/` 와 `web/` 는 맥북에서도 된다.
+`server/` 는 맥북에서도 된다.
 
 ### 환경 확인 — 막히면 여기부터
 
@@ -403,14 +403,6 @@ sudo deploy/systemd/install.sh --uninstall                        # 정리. 훅�
 - VM 안에서 `pkill -f warrantd` 를 `limactl shell ... bash -lc` 로 부르지 말 것 — 그 셸 자신의 명령줄과도 맞아서 셸이 죽는다(종료 코드 255).
   systemd 유닛으로 띄우고 `systemctl stop` 한다.
 
-### 웹 (범위 밖, 동결)
-
-```sh
-cd web && npm install
-npm run build                      # tsc -b && vite build
-npm run build:single               # 의존성 없는 단일 HTML (공유용)
-```
-
 ## 리포지토리 구조 (모노레포)
 
 ```
@@ -420,14 +412,13 @@ agent/    Go · warrantd
           cmd/warrantd/ · internal/{loader,bpfmap,pamsock,policy,ringbuf,upstream,store}/ · bpf/(bpf2go 생성물, 커밋한다)
 pam/      C · pam_warrant.so (200줄 이내로 유지)
 server/   Java · Spring Boot  ← 골격 있음
-web/      대시보드 — 이번 학기 범위 밖. Grafana 로 대체, 목 데이터 상태로 동결
 deploy/   bootstrap.sh · enable-bpf-lsm.sh · systemd/ · ansible/
 bench/    bypass/(§04 우회) · overhead/(훅별 실측) · pamtiming/(PAM 타이밍) · inode/(inode 안정성)
 ```
 
 ## 3인 분담 (2026-09-09 확정 → 2026-09-23 재배치)
 
-기술 스택 문서 §10 의 A·B·C 틀을 따르되, **프론트(`web/`)는 범위에서 뺀다.**
+기술 스택 문서 §10 의 A·B·C 틀을 따르되, **프론트(`session-warrant-web` 저장소)는 범위에서 뺀다.**
 화면은 Grafana 가 PostgreSQL 을 직접 읽는 걸로 대체하고, React 화면 4개는 목 데이터
 상태로 동결한다. C 가 화면 대신 warrantd 의 유저 공간 절반을 가져간다.
 

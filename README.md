@@ -231,7 +231,6 @@ agent/    Go · warrantd                                                     ←
           cmd/warrantd/ · internal/{loader,bpfmap,pamsock,policy,ringbuf,upstream,store}/
 pam/      C · pam_warrant.so, kept under 200 lines                          ← works through sshd (VM)
 server/   Java · Spring Boot central server                                 ← entities · Flyway; services in progress
-web/      React mock dashboard — frozen, replaced by Grafana                ← out of scope
 deploy/   bootstrap.sh · enable-bpf-lsm.sh · systemd/ · ansible/            ← scripts work
 bench/    overhead/ (S1) · bypass/ (S2) · pamtiming/ (S3) · inode/ (S4)      ← S1–S3 run
 docs/     planning documents (Korean), experiment log, architecture diagram
