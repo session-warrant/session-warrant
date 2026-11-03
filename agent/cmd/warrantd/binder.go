@@ -2,11 +2,11 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"strings"
 	"time"
 
-	"github.com/session-warrant/session-warrant/agent/internal/bpfmap"
 	"github.com/session-warrant/session-warrant/agent/internal/pamsock"
 	"github.com/session-warrant/session-warrant/agent/internal/pb"
 )
@@ -16,9 +16,17 @@ type auditSink interface {
 	Append(e *pb.AuditEvent) uint64
 }
 
+// cgroupTagger is *bpfmap.Maps.
+type cgroupTagger interface {
+	TagCgroup(cgroupID, warrantID uint64) error
+	UntagCgroup(cgroupID uint64) error
+}
+
 type binder struct {
-	maps  *bpfmap.Maps
-	audit auditSink
+	maps     cgroupTagger
+	audit    auditSink
+	warrants []*pb.Warrant    // installed at startup; read-only afterwards
+	now      func() time.Time // nil = time.Now
 }
 
 var _ pamsock.Binder = (*binder)(nil)
@@ -31,17 +39,40 @@ func (b *binder) Bind(ctx context.Context, r pamsock.Request) (uint64, error) {
 		log.Printf("binder: fingerprint cgroup %d account %q: %v", r.CgroupID, r.LoginAccount, err)
 		fp = ""
 	}
-	reason := pb.UnwarrantedSessionEvent_REASON_NO_WARRANT
-	if fp == "" {
-		reason = pb.UnwarrantedSessionEvent_REASON_NO_KEY
+	now := time.Now
+	if b.now != nil {
+		now = b.now
 	}
+
+	w, reason := matchWarrant(b.warrants, r.LoginAccount, fp, now())
+	if w != nil {
+		id := w.GetWarrantId()
+		if r.CgroupID == 0 {
+			log.Printf("binder: warrant %d matched but session %q has no cgroup id", id, r.SessionID)
+			b.unwarranted(r, fp, pb.UnwarrantedSessionEvent_REASON_NO_WARRANT, now())
+			return 0, nil
+		}
+		if err := b.maps.TagCgroup(r.CgroupID, id); err != nil {
+			b.unwarranted(r, fp, pb.UnwarrantedSessionEvent_REASON_NO_WARRANT, now())
+			return 0, fmt.Errorf("tag cgroup %d with warrant %d: %w", r.CgroupID, id, err)
+		}
+		log.Printf("binder: warranted session warrant=%d cgroup=%d session=%q account=%q rhost=%q key=%q",
+			id, r.CgroupID, r.SessionID, r.LoginAccount, r.RHost, fp)
+		return id, nil
+	}
+
+	b.unwarranted(r, fp, reason, now())
+	return 0, nil
+}
+
+// Called by Bind. The session runs untagged; log it and queue it for upstream.
+func (b *binder) unwarranted(r pamsock.Request, fp string, reason pb.UnwarrantedSessionEvent_Reason, now time.Time) {
 	log.Printf("binder: unwarranted session reason=%s cgroup=%d session=%q account=%q rhost=%q key=%q",
 		strings.TrimPrefix(reason.String(), "REASON_"), r.CgroupID, r.SessionID, r.LoginAccount, r.RHost, fp)
 
 	if b.audit != nil {
-		b.audit.Append(unwarrantedEvent(r, fp, reason, time.Now()))
+		b.audit.Append(unwarrantedEvent(r, fp, reason, now))
 	}
-	return 0, nil
 }
 
 // Called by Bind. Audit mode lets the login through, so the verdict is ALLOW with no warrant.
