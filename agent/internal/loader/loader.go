@@ -33,34 +33,19 @@ type Loader struct {
 	attached []string             // SEC 이름. 사람이 읽는 용도
 }
 
-// Load 는 이미 pin 된 맵이 있으면 새로 만들지 않고 재사용한다.
 func Load(pinDir string) (*Loader, error) { return LoadObject(DefaultObjectPath, pinDir) }
 
-// LoadObject 는 오브젝트 경로를 직접 받는다.
-//
-// 맵은 pin 이 있으면 그걸 열고 없으면 만들어서 pin 한다. warrantd 가 재시작해도
-// 맵이 살아 있어야 태깅 공백이 안 생긴다 — 그 사이에 로그인한 세션은 태그를
-// 못 받는다.
 func LoadObject(objPath, pinDir string) (*Loader, error) {
 	if err := os.MkdirAll(pinDir, 0o700); err != nil {
 		return nil, fmt.Errorf("pin 디렉터리 %s: %w", pinDir, err)
 	}
+
 	linkDir := filepath.Join(pinDir, linkSubdir)
+
 	if err := os.MkdirAll(linkDir, 0o700); err != nil {
 		return nil, fmt.Errorf("링크 디렉터리 %s: %w", linkDir, err)
 	}
 
-	// 「없으면 만들어서 pin」 은 두 인스턴스가 겹치면 깨진다. 둘 다 pin 이
-	// 없는 것을 보고 각자 만든 뒤, 하나가 먼저 pin 하면 나머지가 EEXIST 로
-	// 죽는다. warrantd 가 재시작될 때 이전 인스턴스가 아직 내려가는 중이면
-	// 새 인스턴스가 못 뜬다는 뜻이다.
-	//
-	// 실측: 두 프로세스를 동시에 띄우면 10회 중 3회가
-	// "pin map to ...: file exists" 로 실패했다 (S5, 2026-10-26).
-	//
-	// create-or-open 경쟁이므로 처리도 정해져 있다 — EEXIST 면 다시 연다.
-	// 그때는 이미 pin 이 있으므로 재사용 경로로 들어간다. spec 은 매번 새로
-	// 읽는다. 로드가 spec 을 건드렸을 가능성을 남기지 않기 위해서다.
 	const attempts = 4
 
 	var spec *ebpf.CollectionSpec
