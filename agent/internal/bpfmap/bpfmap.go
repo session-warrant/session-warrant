@@ -82,12 +82,23 @@ func FileRefOf(path string) (FileRef, error) {
 	if err := unix.Stat(path, &st); err != nil {
 		return FileRef{}, fmt.Errorf("stat %s: %w", path, err)
 	}
+	return FileRefFromStat(&st), nil
+}
+
+// FileRefFromStat 은 이미 떠 둔 stat 결과로 FileRef 를 만든다.
+//
+// 경로로 검사(디렉터리인가 · 일반 파일인가 · setuid 인가)를 하고 나서 inode 를
+// 다시 뜨면, 그 사이에 경로가 갈릴 수 있다. 그러면 **검사는 통과했는데 맵에는
+// 다른 inode 가 들어간다** — §15 의 「금지는 디렉터리 inode」 가 검사를 통과한
+// 채로 깨지는 길이다. 부르는 쪽은 stat 을 한 번만 뜨고 그 결과로 검사와 값을
+// 둘 다 만든다.
+func FileRefFromStat(st *unix.Stat_t) FileRef {
 	major := unix.Major(uint64(st.Dev))
 	minor := unix.Minor(uint64(st.Dev))
 	return FileRef{
 		Dev: uint32(major<<20 | minor),
 		Ino: st.Ino,
-	}, nil
+	}
 }
 
 // BootNs 는 커널 bpf_ktime_get_boot_ns() 와 같은 시계를 읽는다.
