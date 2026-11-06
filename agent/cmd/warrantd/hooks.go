@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"log"
 	"slices"
 	"strings"
 
@@ -23,4 +25,16 @@ func hooksFromSections(sections []string) []pb.Hook {
 	}
 	slices.Sort(hooks)
 	return slices.Compact(hooks)
+}
+
+// Called by run after AttachAll. A missing kprobe mirror only loses the cross-check;
+// any other gap means a hook (maybe self-protection) is not running, so warrantd stops (§16).
+func checkAttached(attached, missingMirrors []string, total int) error {
+	if len(attached)+len(missingMirrors) != total {
+		return fmt.Errorf("attach: %d of %d programs", len(attached), total)
+	}
+	for _, m := range missingMirrors {
+		log.Printf("warrantd: mirror not attached, lsm verdict only: %s", m)
+	}
+	return nil
 }

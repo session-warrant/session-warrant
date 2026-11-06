@@ -135,8 +135,8 @@ func run(pinDir, objPath, socketPath, upstreamEP, warrantsPath string) error {
 		return fmt.Errorf("attach: %w", err)
 	}
 	attached := ld.AttachedHooks()
-	if len(attached) != ld.ProgramCount() {
-		return fmt.Errorf("attach: %d of %d programs", len(attached), ld.ProgramCount())
+	if err := checkAttached(attached, ld.MissingMirrors(), ld.ProgramCount()); err != nil {
+		return err
 	}
 	log.Printf("warrantd: %d hooks attached, pinned at %s", len(attached), pinDir)
 
