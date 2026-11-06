@@ -59,7 +59,7 @@ boot ns) 때문에 서버가 거절한다. BPF 는 warrantd 가 `loader` 로 직
 
 | 계층 | 상태 |
 |---|---|
-| `bpf/` | 제품 판정 코드 `warrant.bpf.{c,h}` — **훅 15개**(자기보호 5훅 포함, 6번째는 warrantd 파일 `rule_write` DENY). `wtest.sh` 로 **29/29 통과**(커널 7.0 VM, bpftool 로 맵 직접 기록). `-EPERM` 은 영장 `mode=ENFORCE` 로만 열린다 — 발급 안 하면 감사 모드. 없음: `socket_sendmsg` · `file_open` 외 `kprobe` 미러. 알려진 구멍: `/dev/null` 쓰기가 막혀 `nohup` 이 죽는다(기본 허용 세트 필요) |
+| `bpf/` | 제품 판정 코드 `warrant.bpf.{c,h}` — **프로그램 19개** — LSM 15 + `tp_btf/sched_process_fork` + **kprobe 감사 미러 4종**(`file_open` · `bprm_check` · `socket_connect` · `inode_unlink`). `wtest.sh` 로 **29/29 통과** · `vsession.sh` 로 **진짜 `session-N.scope` 에서 통과**(커널 7.0 VM). `-EPERM` 은 영장 `mode=ENFORCE` 로만 열린다 — 발급 안 하면 감사 모드. `socket_sendmsg` 는 `inspect_udp` 가 켜진 영장만 판정한다 (§18 「connect 없는 UDP」). 미러는 인자 배치가 커널 버전에 안 흔들리는 훅만 건다 — `inode_create` 류는 6.3 부터 `mnt_idmap` 이 앞에 붙어서 엉뚱한 레지스터를 읽으면 거짓 판정을 보고한다. 미러가 안 붙어도 집행은 계속된다(`loader` 가 목록으로 보고). `/dev/null` · 로그인 셸 기본 허용은 `policy` 가 넣는다 |
 | `proto/` | **확정** (2026-09-23) — `warrant` · `agent` · `audit` 3파일 |
 | `pam/` | `pam_warrant.c` 141줄 — **실제 sshd 로그인으로 끝에서 끝까지 확인(2026-10-24)**: 맥 → Lima VM ssh 로그인 한 건이 `NO_WARRANT` · 키 지문(`SHA256:lraty…`, 접속에 쓴 키와 일치) · 출발지 · cgroup(= `session-N.scope` inode)으로 DB 와 Grafana 에 뜬다. `ExposeAuthInfo` 는 필요 없다(꺼진 채로 지문이 남는다). 평소에는 `/etc/pam.d/sshd` 에 넣어 두지 않는다 — 넣고 빼는 건 `pam/Makefile` |
 | `agent/` | 구현: `loader` · `bpfmap` · `ringbuf` · `policy`(A) · `pamsock`(C) · `cmd/warrantd`(C, BPF 로드 · 맵 · PAM · ringbuf 로그 · `-upstream`). 일부: `store` 는 메모리 `AuditQueue` 만(bbolt `Store` 미구현, 재시작하면 ack 안 된 기록을 잃는다) · `upstream` 은 평문 `Dial` + `StreamAudit` 만(mTLS · 영장 Subscribe · Verify · ToKernel 미구현). 리눅스 전용 상수 때문에 **맥에서는 빌드 안 된다** — `GOOS=linux go vet` 로 확인하고, 테스트는 Lima VM `sw` 에서 돌린다 |
