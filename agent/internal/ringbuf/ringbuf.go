@@ -106,9 +106,18 @@ type ForkPayload struct {
 }
 
 // Gap 은 감사 기록이 끊긴 구간이다. 숨기지 않고 그대로 올려보낸다 (§13).
+//
+// **시각은 boot 기준이다 (`bpf_ktime_get_boot_ns`).** 커널이 줄 수 있는 게 그것뿐이고,
+// 벽시계 변환은 warrantd 가 한다 — layout.go 의 BootTsNs 와 같은 규칙이다.
+// proto 의 GapReport 는 `from_unix_ns` · `to_unix_ns` 라 **그대로 넣으면 안 된다.**
+// 부르는 쪽이 offset 을 더해 넣는다.
+//
+// 구간은 [마지막으로 본 레코드, 번호가 건너뛴 레코드] 다. 양 끝은 실제로 받은
+// 레코드의 시각이므로, 유실된 것들은 그 사이 어딘가에 있다. 한쪽을 0 으로 두면
+// "언제부터인지 모르는 구간"이 되어 서버가 쓸 수 없다.
 type Gap struct {
-	FromUnixNs   uint64
-	ToUnixNs     uint64
+	FromBootNs   uint64
+	ToBootNs     uint64
 	DroppedCount uint64
 	Known        bool
 	Cause        string // RINGBUF_OVERFLOW · AGENT_DOWN · LOCAL_STORE_FULL · CPU_SEQ_SKIP
@@ -121,9 +130,10 @@ type Consumer struct {
 
 	dropped atomic.Uint64
 
-	mu    sync.Mutex
-	next  map[uint32]uint64 // cpu → 다음에 올 cpu_seq
-	onGap func(Gap)
+	mu     sync.Mutex
+	next   map[uint32]uint64 // cpu → 다음에 올 cpu_seq
+	lastTs map[uint32]uint64 // cpu → 마지막으로 본 레코드의 boot ns. Gap 의 시작점
+	onGap  func(Gap)
 }
 
 func Open(pinDir string) (*Consumer, error) {
@@ -136,7 +146,12 @@ func Open(pinDir string) (*Consumer, error) {
 		_ = m.Close()
 		return nil, fmt.Errorf("ringbuf reader: %w", err)
 	}
-	return &Consumer{rd: rd, m: m, next: make(map[uint32]uint64)}, nil
+	return &Consumer{
+		rd:     rd,
+		m:      m,
+		next:   make(map[uint32]uint64),
+		lastTs: make(map[uint32]uint64),
+	}, nil
 }
 
 // OnGap 은 유실 구간을 받을 콜백을 단다. Run 전에 부른다.
@@ -184,8 +199,13 @@ func (c *Consumer) Close() error {
 // checkGap 은 (cpu, cpu_seq) 의 연속성을 본다.
 func (c *Consumer) checkGap(r Record) {
 	c.mu.Lock()
+	if c.lastTs == nil {
+		c.lastTs = make(map[uint32]uint64)
+	}
 	want, seen := c.next[r.CPU]
+	from := c.lastTs[r.CPU]
 	c.next[r.CPU] = r.CPUSeq + 1
+	c.lastTs[r.CPU] = r.BootTsNs
 	c.mu.Unlock()
 
 	if !seen || r.CPUSeq < want {
@@ -197,8 +217,11 @@ func (c *Consumer) checkGap(r Record) {
 	}
 	c.dropped.Add(missing)
 	if c.onGap != nil {
+		// from 은 이 CPU 에서 마지막으로 **받은** 레코드의 시각이다. seen 이 참이면
+		// 그 레코드를 이미 봤으므로 0 이 아니다 — 커널이 0 을 보냈을 때만 0 이 된다.
 		c.onGap(Gap{
-			ToUnixNs:     r.BootTsNs,
+			FromBootNs:   from,
+			ToBootNs:     r.BootTsNs,
 			DroppedCount: missing,
 			Known:        true,
 			Cause:        "CPU_SEQ_SKIP",

@@ -80,8 +80,9 @@ func logRecord(r ringbuf.Record) {
 // Called by cons.Run when cpu_seq skips.
 // Logs the lost range; a gap must never look like a quiet period (§13).
 func logGap(g ringbuf.Gap) {
-	log.Printf("ringbuf: GAP dropped=%d cause=%s known=%t from=%d to=%d",
-		g.DroppedCount, g.Cause, g.Known, g.FromUnixNs, g.ToUnixNs)
+	// from/to 는 boot 기준 ns 다. 벽시계로 옮기는 건 서버로 올릴 때 한다.
+	log.Printf("ringbuf: GAP dropped=%d cause=%s known=%t from_boot_ns=%d to_boot_ns=%d",
+		g.DroppedCount, g.Cause, g.Known, g.FromBootNs, g.ToBootNs)
 }
 
 // Sent as the first batch of every audit stream; the server registers the node from it.
