@@ -135,10 +135,10 @@ func TestGapDetection(t *testing.T) {
 	var gaps []Gap
 	c.OnGap(func(g Gap) { gaps = append(gaps, g) })
 
-	c.checkGap(Record{CPU: 0, CPUSeq: 10}) // 첫 레코드 — 기준만 잡는다
-	c.checkGap(Record{CPU: 0, CPUSeq: 11}) // 연속
-	c.checkGap(Record{CPU: 0, CPUSeq: 15}) // 12·13·14 유실
-	c.checkGap(Record{CPU: 1, CPUSeq: 99}) // 다른 CPU 는 따로 센다
+	c.checkGap(Record{CPU: 0, CPUSeq: 10, BootTsNs: 1000}) // 첫 레코드 — 기준만 잡는다
+	c.checkGap(Record{CPU: 0, CPUSeq: 11, BootTsNs: 2000}) // 연속
+	c.checkGap(Record{CPU: 0, CPUSeq: 15, BootTsNs: 9000}) // 12·13·14 유실
+	c.checkGap(Record{CPU: 1, CPUSeq: 99, BootTsNs: 9500}) // 다른 CPU 는 따로 센다
 
 	if len(gaps) != 1 {
 		t.Fatalf("gap %d건, 기대 1건: %+v", len(gaps), gaps)
@@ -148,6 +148,57 @@ func TestGapDetection(t *testing.T) {
 	}
 	if c.DroppedTotal() != 3 {
 		t.Errorf("누적 유실 %d, 기대 3", c.DroppedTotal())
+	}
+}
+
+// 구간의 양 끝이 다 차 있어야 한다.
+//
+// 한쪽이 0 이면 서버가 "언제부터인지 모르는 구간"으로 보고 거절한다. 실제로
+// FromBootNs 를 아무도 안 넣어서 0 으로 올라갔고, 그래서 커널 이벤트가 서버에
+// 한 건도 안 들어갔다 (2026-11-06).
+func TestGapHasBothEnds(t *testing.T) {
+	c := &Consumer{next: make(map[uint32]uint64)}
+	var gaps []Gap
+	c.OnGap(func(g Gap) { gaps = append(gaps, g) })
+
+	c.checkGap(Record{CPU: 0, CPUSeq: 1, BootTsNs: 111})
+	c.checkGap(Record{CPU: 0, CPUSeq: 2, BootTsNs: 222}) // 마지막으로 받은 것
+	c.checkGap(Record{CPU: 0, CPUSeq: 7, BootTsNs: 888}) // 3~6 유실
+
+	if len(gaps) != 1 {
+		t.Fatalf("gap %d건: %+v", len(gaps), gaps)
+	}
+	g := gaps[0]
+	if g.FromBootNs != 222 {
+		t.Errorf("FromBootNs=%d, 기대 222 (이 CPU 에서 마지막으로 받은 레코드)", g.FromBootNs)
+	}
+	if g.ToBootNs != 888 {
+		t.Errorf("ToBootNs=%d, 기대 888 (번호가 건너뛴 레코드)", g.ToBootNs)
+	}
+	if g.FromBootNs == 0 || g.ToBootNs == 0 {
+		t.Error("구간의 한쪽이 0 이다 — 서버가 거절한다")
+	}
+	if g.FromBootNs > g.ToBootNs {
+		t.Errorf("구간이 뒤집혔다: %d → %d", g.FromBootNs, g.ToBootNs)
+	}
+}
+
+// CPU 마다 구간이 따로 간다. 한 CPU 의 시각이 다른 CPU 의 구간에 새면
+// 유실 구간이 엉뚱하게 넓어지거나 뒤집힌다.
+func TestGapPerCPUTimestamps(t *testing.T) {
+	c := &Consumer{next: make(map[uint32]uint64)}
+	var gaps []Gap
+	c.OnGap(func(g Gap) { gaps = append(gaps, g) })
+
+	c.checkGap(Record{CPU: 0, CPUSeq: 1, BootTsNs: 100})
+	c.checkGap(Record{CPU: 1, CPUSeq: 1, BootTsNs: 500})
+	c.checkGap(Record{CPU: 0, CPUSeq: 5, BootTsNs: 900}) // CPU0 만 유실
+
+	if len(gaps) != 1 {
+		t.Fatalf("gap %d건: %+v", len(gaps), gaps)
+	}
+	if gaps[0].FromBootNs != 100 {
+		t.Errorf("FromBootNs=%d, 기대 100 — CPU1 의 500 이 샜다", gaps[0].FromBootNs)
 	}
 }
 
