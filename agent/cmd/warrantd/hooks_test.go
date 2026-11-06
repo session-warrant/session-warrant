@@ -55,3 +55,28 @@ func TestHooksFromSectionsSkipsUnknownSections(t *testing.T) {
 		t.Fatalf("hooks = %v, want [HOOK_BPF]", got)
 	}
 }
+
+// 미러(kprobe)가 안 붙은 건 대조만 빠지는 것이라 뜬다. 그 밖의 누락은 훅 하나가 빠진 채로 도는 것이라 멈춘다.
+func TestCheckAttached(t *testing.T) {
+	cases := []struct {
+		name     string
+		attached int
+		missing  []string
+		total    int
+		ok       bool
+	}{
+		{"전부 붙음", 19, nil, 19, true},
+		{"미러 하나 안 붙음", 18, []string{"kprobe/security_inode_unlink (not found)"}, 19, true},
+		{"미러 말고 하나 빠짐", 18, nil, 19, false},
+		{"미러 빼고도 하나 더 빠짐", 17, []string{"kprobe/security_file_open (not found)"}, 19, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			attached := make([]string, c.attached)
+			err := checkAttached(attached, c.missing, c.total)
+			if (err == nil) != c.ok {
+				t.Fatalf("checkAttached(%d, %v, %d) = %v, want ok=%t", c.attached, c.missing, c.total, err, c.ok)
+			}
+		})
+	}
+}

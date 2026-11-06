@@ -1,0 +1,21 @@
+[{
+  "warrant_id": "101",
+  "display_id": "W-LOCAL-1",
+  "subject_id": 42,
+  "login_account": "ec2-user",
+  "ssh_key_fingerprints": ["SHA256:jboFL1JPH9fffG2ASuLTLJfvaA7inV9SPlWM5gciBjs"],
+  "target_hosts": ["lima-sw"],
+  "reason": "로컬 시험",
+  "expires_at_unix_ns": "1793000000000000000",
+  "mode": "MODE_DRYRUN",
+  "policy_id": 9001,
+  "policy": {
+    "name": "local-example",
+    "exec_rules": [{"path": "/usr/bin/bash"}, {"path": "/usr/bin/ls"}],
+    "write_rules": [
+      {"path": "/tmp", "recursive": true, "effect": "EFFECT_ALLOW"},
+      {"path": "/etc", "recursive": true, "effect": "EFFECT_DENY"}
+    ],
+    "net_rules": [{"cidr": "10.0.0.0/8", "port": 443, "proto": "PROTO_TCP"}]
+  }
+}]

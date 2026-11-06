@@ -26,10 +26,10 @@ RuntimeDirectoryMode=0700
 StateDirectory=warrantd
 StateDirectoryMode=0700
 
+# PrivateTmp · ProtectHome 은 넣지 말 것. 정책의 경로를 (dev, ino) 로 바꾸는 게 warrantd 라서 세션과
+# 같은 파일시스템을 봐야 한다 — 넣으면 /tmp · /home 규칙이 warrantd 전용 tmpfs 의 inode 로 컴파일된다(2026-11-03).
 NoNewPrivileges=yes
 ProtectSystem=full
-ProtectHome=yes
-PrivateTmp=yes
 
 [Install]
 WantedBy=multi-user.target

@@ -89,6 +89,22 @@ sudo deploy/systemd/install.sh --uninstall             # 제거. pin 은 남긴�
   `ExposeAuthInfo` 는 켜지 않아도 된다 — `SSH_AUTH_INFO_0` 은 꺼진 채로 open_session 에 와서 키 지문이 남는다.
 - pin 경로를 시험 하네스(`bpf/wtest.sh` · `warrantctl` 의 `wtest` · `wmaps`)와 다르게 써서 맵이 섞이지 않는다. 다만 훅은 커널 전체에 붙는다 — 하네스를 돌리면 프로그램이 한 벌 더 매달리니, 측정(`bench/`)할 때는 `install.sh --uninstall` 뒤 재부팅한다.
 
+### 로컬 영장 (`/etc/warrantd/warrants.json`)
+
+중앙 발급이 붙기 전까지 영장은 이 파일에서 온다. 형식은 `proto/warrant.proto` 의 `Warrant` 를 JSON 배열로 — 예시는
+`systemd/warrants.example.json`. warrantd 가 **시작할 때 한 번** 읽는다. 고친 뒤에는 `sudo systemctl restart warrantd`.
+
+- 영장을 하나라도 설치하면 `active_flag` 를 켜고, 하나도 없으면 끈다. 시작 로그 `warrants: N installed … active=…` 로 확인한다.
+- 세션은 **계정(`login_account`) + 키 지문(`ssh_key_fingerprints`)** 이 둘 다 맞아야 붙는다. 계정은 맞는데 키가 다르면
+  `KEY_MISMATCH`, 키가 없으면 `NO_KEY` 무영장으로 기록된다. 여럿이 맞으면 늦게 끝나는 영장.
+- 거부하고 건너뛰는 것: `target_hosts` 에 이 노드 hostname 이 없음 · 만료 없음 · `MODE_ENFORCE` · `break_glass`.
+  정책 경로가 없어도 그 영장만 건너뛴다. 파일이 깨져도 warrantd 는 영장 없이 뜬다(§17).
+- 파일에서 지운 영장은 맵에 남는다(이미 붙은 세션은 계속 그 영장). 지우려면 `"revoked": true` 로 남겨 두거나 재부팅한다.
+- `/etc/warrantd` 는 자기보호 쓰기 금지 디렉터리(`policy.DefaultDenyWrite`)라 영장 세션 안에서는 이 파일을 못 고친다.
+- **2026-11-03 VM 확인:** 맞는 세션 → `warrant=101` 태그, 허용 밖 실행 · 쓰기 → `EXEC`/`WRITE DRY-DENY`, 허용 쓰기는 기록 없음,
+  남의 키 → `KEY_MISMATCH`, 다른 계정 → `NO_WARRANT`, CLOSE 뒤 `cgroup_warrant` 비어 있음, 영장 없는 프로세스 기록 0건.
+  PAM 은 `systemd-run --scope` 에 OPEN 한 줄을 직접 보내 흉내 냈다 — 실제 sshd 로그인으로는 아직 안 해 봤다.
+
 `ansible/` 은 노드가 여러 대가 되는 시점에. 지금은 이르다.
 
 ## Grafana (`grafana/`)

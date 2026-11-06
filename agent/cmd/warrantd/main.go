@@ -2,17 +2,18 @@
 //
 // 하는 일:
 //   - main.go: BPF 를 올려 훅에 붙이고, 맵 · PAM 소켓 · ringbuf 를 열고, 종료 신호까지 돌린다. 감사 레코드와 Gap 을 로그로 남긴다
-//   - binder.go: PAM 세션이 열리면 무영장 사유(NO_WARRANT · NO_KEY)를 기록하고, 닫히면 태그를 뗀다
+//   - warrants.go: -warrants 파일의 영장을 정책 → 규칙 → 영장 순으로 맵에 넣고 active_flag 를 켠다
+//   - binder.go: PAM 세션이 열리면 계정 · 키가 맞는 영장을 cgroup 에 붙이고, 없으면 무영장 사유를 기록한다. 닫히면 태그를 뗀다
 //   - -upstream 이 있으면 무영장 세션을 메모리 큐에 쌓아 중앙으로 올린다 (store.AuditQueue → upstream.StreamAudit)
 //
 // 기동 순서 (바꾸지 말 것):
 //  1. loader.Load     pin 된 맵이 있으면 재사용
-//  2. store.Open      캐시된 영장을 맵에 복원
+//  2. 영장 설치       지금은 -warrants 로컬 파일. 나중에 store.Open 이 캐시된 영장을 복원한다
 //  3. loader.AttachAll
 //  4. pamsock.Listen  여기 전에 로그인한 세션은 태그가 없다 (유닛에 Before=sshd.service)
 //  5. ringbuf · upstream  실패해도 죽지 않는다
 //
-// 2 는 아직 없다 — 영장 복원은 bbolt 가 생기면 1 과 3 사이에 들어간다. 감사는 메모리 큐다.
+// 중앙 발급(upstream.Subscribe)과 bbolt 캐시는 아직 없다. 감사는 메모리 큐다.
 // 종료할 때 pin 은 지우지 않는다.
 package main
 
@@ -33,6 +34,7 @@ import (
 	"github.com/session-warrant/session-warrant/agent/internal/loader"
 	"github.com/session-warrant/session-warrant/agent/internal/pamsock"
 	"github.com/session-warrant/session-warrant/agent/internal/pb"
+	"github.com/session-warrant/session-warrant/agent/internal/policy"
 	"github.com/session-warrant/session-warrant/agent/internal/ringbuf"
 	"github.com/session-warrant/session-warrant/agent/internal/store"
 	"github.com/session-warrant/session-warrant/agent/internal/upstream"
@@ -47,12 +49,13 @@ func main() {
 		socketPath = flag.String("pam-socket", "/run/warrantd/pam.sock", "pam_warrant.so 가 보내는 소켓")
 		statePath  = flag.String("state", "/var/lib/warrantd/state.db", "bbolt 경로")
 		upstreamEP = flag.String("upstream", "", "중앙 gRPC 엔드포인트. 비어 있으면 로컬 전용")
+		warrantsAt = flag.String("warrants", "/etc/warrantd/warrants.json", "로컬 영장 파일 (Warrant JSON 배열). 없으면 영장 없이 돈다")
 	)
 	flag.Parse()
 
 	_ = statePath
 
-	if err := run(*pinDir, *objPath, *socketPath, *upstreamEP); err != nil {
+	if err := run(*pinDir, *objPath, *socketPath, *upstreamEP, *warrantsAt); err != nil {
 		log.Printf("warrantd: %v", err)
 		os.Exit(1)
 	}
@@ -102,7 +105,7 @@ func nodeHello(hooks []pb.Hook) *pb.NodeHello {
 }
 
 // Starts all components and blocks until shutdown; returns so deferred Closes run.
-func run(pinDir, objPath, socketPath, upstreamEP string) error {
+func run(pinDir, objPath, socketPath, upstreamEP, warrantsPath string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -126,13 +129,15 @@ func run(pinDir, objPath, socketPath, upstreamEP string) error {
 	}
 	defer maps.Close()
 
+	warrants, specs, compiled := setupWarrants(maps, warrantsPath)
+
 	// Pinned links are picked up, so a restart never hangs a second copy on a hook.
 	if err := ld.AttachAll(); err != nil {
 		return fmt.Errorf("attach: %w", err)
 	}
 	attached := ld.AttachedHooks()
-	if len(attached) != ld.ProgramCount() {
-		return fmt.Errorf("attach: %d of %d programs", len(attached), ld.ProgramCount())
+	if err := checkAttached(attached, ld.MissingMirrors(), ld.ProgramCount()); err != nil {
+		return err
 	}
 	log.Printf("warrantd: %d hooks attached, pinned at %s", len(attached), pinDir)
 
@@ -153,7 +158,15 @@ func run(pinDir, objPath, socketPath, upstreamEP string) error {
 		log.Printf("ringbuf: open %s: %v", pinDir, err)
 	}
 
-	b := &binder{maps: maps}
+	b := &binder{maps: maps, warrants: warrants}
+
+	if len(compiled) > 0 {
+		if w, err := watchPolicies(maps, specs, compiled); err != nil {
+			log.Printf("warrants: watcher: %v", err)
+		} else {
+			defer w.Close()
+		}
+	}
 
 	// Upstream failing never stops warrantd: tagging and the kernel keep working (§17).
 	if upstreamEP != "" {
@@ -191,4 +204,44 @@ func run(pinDir, objPath, socketPath, upstreamEP string) error {
 		}
 	}
 
+}
+
+// Called by run before attach. Turns active_flag on only when a warrant is installed.
+func setupWarrants(maps *bpfmap.Maps, path string) ([]*pb.Warrant, map[uint32]policy.Spec, []*policy.Compiled) {
+	host, _ := os.Hostname()
+	ws, err := loadWarrants(path, host)
+	if err != nil {
+		log.Printf("warrants: %v (running without warrants)", err)
+	}
+	installed, specs, compiled := installWarrants(maps, ws)
+
+	if err := maps.SetActive(len(installed) > 0); err != nil {
+		log.Printf("warrants: %v", err)
+	}
+	log.Printf("warrants: %d installed from %s, active=%t", len(installed), path, len(installed) > 0)
+	return installed, specs, compiled
+}
+
+// Called by run. Recompiles a policy when a rule's file is replaced, or its rules silently stop matching (S4).
+func watchPolicies(maps *bpfmap.Maps, specs map[uint32]policy.Spec, compiled []*policy.Compiled) (*policy.Watcher, error) {
+	w, err := policy.NewWatcher()
+	if err != nil {
+		return nil, err
+	}
+	_ = w.OnChange(func(id uint32) {
+		c, err := policy.Compile(id, specs[id])
+		if err == nil {
+			err = c.Apply(maps)
+		}
+		if err != nil {
+			log.Printf("warrants: policy %d changed on disk, recompile: %v", id, err)
+			return
+		}
+		log.Printf("warrants: policy %d changed on disk, recompiled", id)
+		_ = w.Watch(c)
+	})
+	for _, c := range compiled {
+		_ = w.Watch(c)
+	}
+	return w, nil
 }
