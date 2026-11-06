@@ -18,6 +18,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/session-warrant/session-warrant/agent/internal/bpfmap"
 )
 
@@ -362,8 +364,18 @@ func (c *Compiled) resolve(path string, kind Kind) (bpfmap.FileRef, error) {
 	if err != nil {
 		return bpfmap.FileRef{}, err
 	}
-	c.Sources = append(c.Sources, Source{Path: path, Ref: ref, Kind: kind})
+	c.record(path, ref, kind)
 	return ref, nil
+}
+
+// record 는 Watcher 가 감시할 목록에 넣는다.
+//
+// **맵에 넣은 바로 그 ref 를 넣어야 한다.** 여기서 경로를 다시 stat 하면 맵이
+// 든 inode 와 감시하는 inode 가 달라질 수 있고, 그러면 규칙 inode 는 아무도 안
+// 보고 감시자는 커널이 모르는 inode 를 본다. S4 가 잡으려는 게 정확히 inode 가
+// 바뀌는 상황인데 그 감시가 엉뚱한 데를 보게 된다.
+func (c *Compiled) record(path string, ref bpfmap.FileRef, kind Kind) {
+	c.Sources = append(c.Sources, Source{Path: path, Ref: ref, Kind: kind})
 }
 
 // addExec 의 optional 은 「없으면 건너뛴다」 다. 기본 목록에만 쓴다.
@@ -376,37 +388,31 @@ func (c *Compiled) addExec(path string, optional bool) error {
 	if !filepath.IsAbs(path) {
 		return fmt.Errorf("%s: %w", path, ErrRelPath)
 	}
-	st, err := os.Stat(path)
-	if err != nil {
-		if optional && os.IsNotExist(err) {
+	// stat 은 한 번만 뜬다. 일반 파일인지 · setuid 인지 보는 것과 맵에 넣을
+	// inode 가 같은 stat 에서 나와야 한다 (bpfmap.FileRefFromStat).
+	var st unix.Stat_t
+	if err := unix.Stat(path, &st); err != nil {
+		if optional && errors.Is(err, unix.ENOENT) {
 			return nil
 		}
 		return fmt.Errorf("실행 허용 %s: %w", path, err)
 	}
-	if !st.Mode().IsRegular() {
+	if st.Mode&unix.S_IFMT != unix.S_IFREG {
 		if optional {
 			return nil
 		}
 		return fmt.Errorf("실행 허용 %s: %w", path, ErrExecNotFile)
 	}
 
-	ref, err := bpfmap.FileRefOf(path)
-	if err != nil {
-		if optional {
-			return nil
-		}
-		return err
-	}
+	ref := bpfmap.FileRefFromStat(&st)
 	for _, e := range c.Exec {
 		if e == ref {
 			return nil
 		}
 	}
 
-	if _, err := c.resolve(path, KindExec); err != nil {
-		return err
-	}
-	if st.Mode()&os.ModeSetuid != 0 {
+	c.record(path, ref, KindExec)
+	if st.Mode&unix.S_ISUID != 0 {
 		c.warn("%s 는 setuid 다 — 실행을 허용하면 영장 밖 권한으로 올라갈 수 있다", path)
 	}
 	c.Exec = append(c.Exec, ref)
@@ -419,23 +425,24 @@ func (c *Compiled) addWrite(path string, allow, recursive, optional bool) error 
 	if !filepath.IsAbs(path) {
 		return fmt.Errorf("%s: %w", path, ErrRelPath)
 	}
-	st, err := os.Stat(path)
-	if err != nil {
-		if optional && os.IsNotExist(err) {
+	// stat 은 한 번만 뜬다. 아래 디렉터리 검사와 맵에 넣을 inode 가 **같은**
+	// stat 에서 나와야 한다 — 따로 뜨면 그 사이에 경로가 갈려서 검사를 통과한
+	// 채로 파일 inode 가 금지 규칙으로 들어갈 수 있다 (§15).
+	var st unix.Stat_t
+	if err := unix.Stat(path, &st); err != nil {
+		if optional && errors.Is(err, unix.ENOENT) {
 			return nil
 		}
 		return fmt.Errorf("쓰기 규칙 %s: %w", path, err)
 	}
 
 	// 금지를 파일 inode 에 걸면 mv 후 재생성으로 뚫린다. 반드시 디렉터리여야 한다 (§15).
-	if !allow && !st.IsDir() {
+	if !allow && st.Mode&unix.S_IFMT != unix.S_IFDIR {
 		return fmt.Errorf("쓰기 금지 %s: %w", path, ErrDenyOnFile)
 	}
 
-	ref, err := c.resolve(path, KindWrite)
-	if err != nil {
-		return err
-	}
+	ref := bpfmap.FileRefFromStat(&st)
+	c.record(path, ref, KindWrite)
 	c.Write = append(c.Write, WriteEntry{Ref: ref, Allow: allow, Recursive: recursive})
 	return nil
 }
