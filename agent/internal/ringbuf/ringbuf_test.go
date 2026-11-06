@@ -159,3 +159,54 @@ func TestGapIgnoresRestart(t *testing.T) {
 		t.Errorf("되돌아간 번호를 유실로 셌다: %d", c.DroppedTotal())
 	}
 }
+
+// connect 없는 UDP 는 payload 가 plConnect 뒤에 크기가 더 붙는다.
+// 앞 24바이트가 같으므로 Connect() 도 그대로 목적지를 읽어야 한다 —
+// 둘이 어긋나면 로그에 목적지가 하나씩 밀려 찍힌다.
+func TestDecodeUDPSend(t *testing.T) {
+	h := evtHeader{Hook: HookSocketSendmsg, CPUSeq: 1}
+	pl := plUDP{Size: 512}
+	pl.Dst.Family = 2
+	pl.Dst.Proto = 2
+	pl.Dst.Port = 53
+	pl.Dst.Addr[10], pl.Dst.Addr[11] = 0xff, 0xff
+	copy(pl.Dst.Addr[12:], []byte{8, 8, 8, 8})
+
+	r, err := decode(build(t, h, pl))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	u, ok := r.UDPSend()
+	if !ok {
+		t.Fatal("UDPSend() 가 안 풀렸다")
+	}
+	if u.Size != 512 {
+		t.Errorf("size=%d, 기대 512", u.Size)
+	}
+	if got := u.Destination.Addr.String(); got != "8.8.8.8" {
+		t.Errorf("addr=%s, 기대 8.8.8.8", got)
+	}
+	if u.Destination.Port != 53 || u.Destination.Proto != 2 {
+		t.Errorf("port=%d proto=%d", u.Destination.Port, u.Destination.Proto)
+	}
+
+	// 같은 레코드를 Connect() 로 읽어도 목적지가 같아야 한다.
+	c, ok := r.Connect()
+	if !ok {
+		t.Fatal("Connect() 가 안 풀렸다")
+	}
+	if c.Addr != u.Destination.Addr || c.Port != u.Destination.Port {
+		t.Errorf("Connect() 와 UDPSend() 의 목적지가 다르다: %v vs %v", c, u.Destination)
+	}
+
+	// 다른 훅이 UDPSend 로 풀리면 안 된다.
+	h2 := evtHeader{Hook: HookSocketConnect, CPUSeq: 2}
+	r2, err := decode(build(t, h2, plConnect{Family: 2, Port: 443}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := r2.UDPSend(); ok {
+		t.Error("connect 레코드가 UDPSend() 로 풀렸다")
+	}
+}

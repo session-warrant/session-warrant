@@ -124,11 +124,11 @@ ok "sudo 인증 유지 중"
 make -C "$ROOT/bpf" warrant.bpf.o >/dev/null || die "bpf 빌드 실패"
 ok "오브젝트 $(basename "$OBJ") ($(date -r "$OBJ" '+%H:%M:%S'))"
 
-if [ ! -x "$CTLBIN" ]; then
-	echo "  warrantctl 빌드"
-	( cd "$ROOT/agent" && go build -o warrantctl ./cmd/warrantctl ) || die "warrantctl 빌드 실패"
-fi
-ok "warrantctl"
+# 항상 빌드한다. 「없을 때만」으로 두면 Go 쪽을 고친 뒤 낡은 바이너리를 재는
+# 사고가 난다 — 실제로 policy 와 loader 수정이 둘 다 안 들어간 채로 사흘을 돌았다.
+# go build 는 바뀐 게 없으면 캐시로 즉시 끝난다.
+( cd "$ROOT/agent" && go build -o warrantctl ./cmd/warrantctl ) || die "warrantctl 빌드 실패"
+ok "warrantctl ($(date -r "$CTLBIN" '+%H:%M:%S'))"
 
 # 이전 실행 잔재. 핀된 링크는 프로세스가 죽어도 훅에 붙은 채로 남는다 —
 # 그게 설계된 동작이지만(§10·§17), 중단된 실행이 남겨놓으면 다음 실행이
@@ -241,9 +241,15 @@ TRUE=$(readlink -f /usr/bin/true)
 SLEEP=$(readlink -f /usr/bin/sleep)   # 7단계 프로브가 쓴다
 SUDO=$(readlink -f /usr/bin/sudo)
 ID=$(readlink -f /usr/bin/id)
+# 8단계 프로브. 없으면 그 단계는 「측정 안 됨」으로 적는다.
+PY=""
+if command -v python3 >/dev/null 2>&1; then PY=$(readlink -f "$(command -v python3)"); fi
 echo "  sh=$SH  bash=$BASH  true=$TRUE  sudo=$SUDO  sleep=$SLEEP  (허용 밖: id=$ID)"
 
-ALLOW_EXEC="$SH,$BASH,$TRUE,$SUDO,$SLEEP"
+# 셸($SH · $BASH)을 일부러 안 넣는다. policy 의 기본 허용 세트가 넣어야 하고,
+# 안 넣으면 sshd 가 로그인 셸을 exec 못 해 세션이 통째로 죽는다 — 여기 적어두면
+# 그 기본값이 사라져도 아무도 모른다.
+ALLOW_EXEC="$TRUE,$SUDO,$SLEEP${PY:+,$PY}"
 ALLOW_WRITE="$WORK/open"
 DENY_WRITE="$WORK/secret"
 
@@ -259,7 +265,7 @@ start_warrant() {
 	# 명령을 로그에 먼저 적는다. 로그가 비는 일이 없어야 「왜 죽었는지
 	# 모르겠다」가 안 나온다.
 	WCTL_ARGS="-pin-dir $PIN -obj $OBJ -bind-cgroup $TCG -mode $mode \
--allow-exec $ALLOW_EXEC -allow-write $ALLOW_WRITE -deny-write $DENY_WRITE -no-color"
+-allow-exec $ALLOW_EXEC -allow-write $ALLOW_WRITE -deny-write $DENY_WRITE -no-color ${WCTL_EXTRA:-}"
 	echo "\$ sudo -n $CTLBIN $WCTL_ARGS" >> "$LOG"
 	# shellcheck disable=SC2086
 	sudo -n "$CTLBIN" $WCTL_ARGS >>"$LOG" 2>&1 &
@@ -565,3 +571,126 @@ else
 	fi
 fi
 kill "$OUT_PID" 2>/dev/null
+
+# ── 8. connect 없는 UDP (§18 의 구멍) ─────────────────────────────
+step "8. connect 없는 UDP 가 판정되는가"
+
+# 핵심은 connect 를 안 하고 sendto 로 바로 보내는 것이다. bash 의 /dev/udp 는
+# 내부에서 connect 를 하므로 socket_connect 로 가버리고 이 훅을 안 탄다 —
+# 그걸로 재면 아무것도 안 잰다. python3 의 sendto 가 진짜 비연결 송신이다.
+#
+# 목적지는 127.0.0.1:9 다. 8.8.8.8 로 보내면 VM 에 경로가 없을 때
+# ENETUNREACH 로 실패하는데, 그걸 「막혔다」로 읽게 된다.
+#
+# 세 가지를 잰다. 가운데가 본론이고 양쪽은 그게 진짜인지 받쳐준다.
+#   ① inspect_udp 꺼짐  → 통과해야 한다 (기본이 꺼짐이고, 프로브가 돈다는 증거)
+#   ② inspect_udp 켜짐 · 규칙 없음 → 막혀야 한다 (구멍이 닫혔다)
+#   ③ inspect_udp 켜짐 · 규칙 허용 → 통과해야 한다 (전면 차단이 아니다)
+udp_probe() {
+	R "$PY -c 'import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.sendto(b\"x\", (\"127.0.0.1\", 9))'" >/dev/null 2>&1
+	echo $?
+}
+
+if [ -z "$PY" ]; then
+	printf '  \033[33m측정안됨\033[0m  python3 가 없다. bash /dev/udp 는 connect 를 해서 이 훅을 안 탄다\n'
+else
+	WCTL_EXTRA=""
+	start_warrant enforce 8-udp-off
+	rc_off=$(udp_probe); sleep 0.4
+	rec_off=no; seen ' SENDMSG ' && rec_off=yes
+	stop_warrant
+
+	WCTL_EXTRA="-inspect-udp"
+	start_warrant enforce 8-udp-on
+	rc_on=$(udp_probe); sleep 0.4
+	rec_on=no; seen ' SENDMSG +DENY ' && rec_on=yes
+	stop_warrant
+
+	WCTL_EXTRA="-inspect-udp -allow-net 127.0.0.1/32"
+	start_warrant enforce 8-udp-allow
+	rc_allow=$(udp_probe); sleep 0.4
+	stop_warrant
+	WCTL_EXTRA=""
+
+	printf '  %-34s rc=%s  SENDMSG 기록=%s\n' "① inspect_udp 꺼짐 (통과해야)" "$rc_off"   "$rec_off"
+	printf '  %-34s rc=%s  SENDMSG DENY=%s\n'  "② 켜짐 · 규칙 없음 (막혀야)"   "$rc_on"    "$rec_on"
+	printf '  %-34s rc=%s\n'                   "③ 켜짐 · 규칙 허용 (통과해야)" "$rc_allow"
+
+	# 프로브가 애초에 도는지부터. 안 돌면 뒤의 판정이 전부 무의미하다.
+	if [ "$rc_off" -ne 0 ]; then
+		no "inspect_udp 가 꺼졌는데도 실패했다 (rc=$rc_off) — 프로브가 깨졌다. 8단계 버림"
+	elif [ "$rec_off" = "yes" ]; then
+		no "inspect_udp 가 꺼졌는데 SENDMSG 가 찍혔다 — 기본 꺼짐이 안 지켜진다"
+	else
+		ok "inspect_udp 가 꺼져 있으면 판정하지 않는다 (기본값)"
+
+		[ "$rc_on" -ne 0 ] && ok "켜면 connect 없는 UDP 가 막힌다 (rc=$rc_on)" \
+		                   || no "FINDING: 켰는데 통과했다 — §18 구멍이 그대로다"
+		[ "$rec_on" = "yes" ] && ok "SENDMSG DENY 가 기록된다" \
+		                      || no "차단은 됐는데 기록이 없다 — 훅이 아니라 다른 이유로 막혔을 수 있다"
+		[ "$rc_allow" -eq 0 ] && ok "규칙으로 허용하면 통과한다" \
+		                      || no "허용 규칙이 있는데 막혔다 (rc=$rc_allow) — UDP 는 전면 차단이 아니어야 한다"
+	fi
+fi
+
+# ── 9. 감사 미러 — 두 경로의 판정이 같은가 ────────────────────────
+step "9. 감사 미러 — lsm 과 kprobe 의 판정이 같은가"
+
+# 미러의 존재 이유는 §15 의 「감사 모드와 강제 모드가 판정 함수를 공유한다」를
+# 구조가 아니라 실측으로 받치는 것이다. 붙었다는 것과 판정이 같다는 것은
+# 다르므로, 여기서는 세 가지를 잰다.
+#   ① 미러가 전부 붙었는가 (warrantctl 이 못 붙은 것을 경고로 찍는다)
+#   ② 미러가 실제로 발화했는가 (kprobe origin 기록이 있는가)
+#   ③ 두 경로의 판정이 갈리지 않았는가
+#
+# ②가 없으면 ③은 아무것도 안 잰 것이다 — 비교할 짝이 없으면 불일치도 없다.
+WCTL_EXTRA="-mirror"
+start_warrant observe 9-mirror
+
+R "$TRUE" >/dev/null 2>&1                      # EXEC
+R "$ID" >/dev/null 2>&1                        # EXEC (허용 밖)
+# 금지 디렉터리에서 해야 한다. inode_verdict 는 차단일 때만 기록하므로
+# (§13 절제), 허용된 곳에서 지우면 훅은 지나가도 남는 게 없다 —
+# 그걸 「미러가 안 돈다」로 읽으면 틀린 실패다.
+# 금지 디렉터리에서 해야 한다. inode_verdict 는 차단일 때만 기록하므로,
+# 허용된 곳에서 지우면 훅은 지나가도 남는 게 없다. 그걸 "미러가 안 돈다"로
+# 읽으면 틀린 실패다 (실제로 한 번 그렇게 읽었다).
+R "echo x > $WORK/secret/m" >/dev/null 2>&1    # CREATE · WRITE (차단 기록)
+R "rm -f $WORK/secret/m" >/dev/null 2>&1       # UNLINK (차단 기록)
+[ -n "$PY" ] && R "$PY -c 'import socket
+try: socket.create_connection((\"127.0.0.1\", 9), 0.3)
+except OSError: pass'" >/dev/null 2>&1          # CONNECT
+sleep 0.8
+WCTL_EXTRA=""
+
+if grep -q '미러 미부착' "$LOG"; then
+	no "미러가 안 붙었다: $(grep -o '미러 미부착.*' "$LOG" | head -2 | tr '\n' ' ')"
+else
+	ok "감사 미러 4종이 전부 붙었다"
+fi
+
+n_kp=$(evts | LC_ALL=C grep -c 'kprobe$' || true)
+n_lsm=$(evts | LC_ALL=C grep -c 'lsm$' || true)
+printf '  기록 — lsm %s건 · kprobe %s건\n' "$n_lsm" "$n_kp"
+evts | LC_ALL=C grep 'kprobe$' | head -4 | sed 's/^/  /'
+
+if [ "${n_kp:-0}" -eq 0 ]; then
+	no "kprobe origin 기록이 하나도 없다 — 미러가 안 돈다. 9단계 버림"
+else
+	ok "미러가 실제로 발화했다 (kprobe 기록 ${n_kp}건)"
+
+	# 훅별로도 본다. EXEC 가 안 보이면 bprm 미러만 안 도는 것이다.
+	for h in EXEC UNLINK; do
+		seen " $h .*kprobe\$" && ok "$h 미러 발화" \
+		                     || no "$h 의 kprobe 기록이 없다"
+	done
+
+	if grep -q '판정 불일치' "$LOG"; then
+		no "FINDING: $(grep -o '판정 불일치.*' "$LOG" | head -1)"
+	else
+		ok "lsm 과 kprobe 의 판정이 갈리지 않았다 (§15)"
+	fi
+fi
+stop_warrant

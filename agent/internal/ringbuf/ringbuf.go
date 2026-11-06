@@ -84,6 +84,12 @@ type InodePayload struct {
 	Op     uint8
 }
 
+// UDPSendPayload 는 proto 의 UdpSendEvent 와 같다 — 목적지 + 보낸 크기.
+type UDPSendPayload struct {
+	Destination ConnectPayload
+	Size        uint64
+}
+
 type ConnectPayload struct {
 	Family uint8
 	Proto  uint8
@@ -315,6 +321,23 @@ func (r Record) Connect() (ConnectPayload, bool) {
 }
 
 // Fork 는 SCHED_PROCESS_FORK 의 payload 를 푼다.
+// UDPSend 는 connect 없는 UDP 송신이다 (§18 의 구멍).
+// Connect() 로도 목적지는 읽히지만 보낸 바이트 수는 여기에만 있다.
+func (r Record) UDPSend() (UDPSendPayload, bool) {
+	if r.Hook != HookSocketSendmsg {
+		return UDPSendPayload{}, false
+	}
+	var p plUDP
+	if !unpack(r.PayloadRaw, &p) {
+		return UDPSendPayload{}, false
+	}
+	dst, ok := r.Connect()
+	if !ok {
+		return UDPSendPayload{}, false
+	}
+	return UDPSendPayload{Destination: dst, Size: p.Size}, true
+}
+
 func (r Record) Fork() (ForkPayload, bool) {
 	var p plFork
 	if r.Hook != HookSchedProcessFork || !unpack(r.PayloadRaw, &p) {

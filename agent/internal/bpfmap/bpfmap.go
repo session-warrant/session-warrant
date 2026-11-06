@@ -52,8 +52,15 @@ type Warrant struct {
 	Revoked    uint8
 	Mode       uint8
 	OnExpiry   uint8
-	BreakGlass uint8   // 자기보호 5종을 통과하는 유일한 영장. 일반 발급 경로로는 못 켠다
-	_          [4]byte // C 구조체와 크기를 맞추는 패딩
+	BreakGlass uint8 // 자기보호 5종을 통과하는 유일한 영장. 일반 발급 경로로는 못 켠다
+
+	// InspectUDP 는 Policy.inspect_udp 의 사본이다. 원본은 정책 쪽 필드인데
+	// 커널에는 정책 단위 플래그 맵이 없고, struct warrant 는 어차피 매 판정마다
+	// 읽으므로 여기 두면 조회가 한 번도 늘지 않는다.
+	// 켜야 lsm/socket_sendmsg 가 판정한다 — 끄면 connect 없는 UDP 가 통제를
+	// 그냥 빠져나간다 (§18).
+	InspectUDP uint8
+	_          [3]byte // C 구조체와 크기를 맞추는 패딩
 }
 
 // FileRef 는 rule_* 키의 뒷부분. inode 번호는 파일시스템 안에서만 유일하므로 dev 를 빼면 안 된다.
