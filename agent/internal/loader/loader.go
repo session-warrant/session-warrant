@@ -2,6 +2,7 @@
 package loader
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -11,12 +12,14 @@ import (
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
+
+	bpfobj "github.com/session-warrant/session-warrant/agent/bpf"
 )
 
-// DefaultObjectPath 는 컴파일된 BPF 오브젝트의 기본 위치다.
+// DefaultObjectPath 는 파일에서 읽을 때의 기본 위치다.
 //
-// 지금은 파일에서 읽는다. agent/bpf/ 에 bpf2go 생성물이 들어오면 임베드된 것을
-// 쓰도록 바꾼다 — 그래야 빌드 머신에 clang 이 없어도 go build 가 선다.
+// 제품 경로는 이게 아니다 — Load 가 바이너리에 임베드된 것을 쓴다. 이 경로는
+// 갓 컴파일한 .o 를 다시 임베드하지 않고 바로 시험할 때만 쓴다 (warrantctl -obj).
 var DefaultObjectPath = "bpf/warrant.bpf.o"
 
 // linkSubdir 은 pin 디렉터리 안에서 링크를 두는 곳이다.
@@ -39,9 +42,29 @@ type Loader struct {
 	missing []string
 }
 
-func Load(pinDir string) (*Loader, error) { return LoadObject(DefaultObjectPath, pinDir) }
+// Load 는 바이너리에 임베드된 오브젝트를 올린다. 제품 경로다.
+func Load(pinDir string) (*Loader, error) {
+	return load(pinDir, "임베드된 오브젝트", func() (*ebpf.CollectionSpec, error) {
+		return ebpf.LoadCollectionSpecFromReader(bytes.NewReader(bpfobj.Object))
+	})
+}
 
+// LoadObject 는 파일에서 올린다.
+//
+// objPath 가 비어 있으면 임베드된 것을 쓴다 — 부르는 쪽은 플래그 기본값을 ""
+// 로 두면 제품 경로가 되고, 경로를 주면 그 파일이 이긴다.
 func LoadObject(objPath, pinDir string) (*Loader, error) {
+	if objPath == "" {
+		return Load(pinDir)
+	}
+	return load(pinDir, objPath, func() (*ebpf.CollectionSpec, error) {
+		return ebpf.LoadCollectionSpec(objPath)
+	})
+}
+
+// load 의 loadSpec 은 재시도마다 다시 불린다 — spec 은 한 번 NewCollection 에
+// 넘기면 재사용할 수 없다.
+func load(pinDir, source string, loadSpec func() (*ebpf.CollectionSpec, error)) (*Loader, error) {
 	if err := os.MkdirAll(pinDir, 0o700); err != nil {
 		return nil, fmt.Errorf("pin 디렉터리 %s: %w", pinDir, err)
 	}
@@ -58,9 +81,9 @@ func LoadObject(objPath, pinDir string) (*Loader, error) {
 	var coll *ebpf.Collection
 	for i := 0; ; i++ {
 		var err error
-		spec, err = ebpf.LoadCollectionSpec(objPath)
+		spec, err = loadSpec()
 		if err != nil {
-			return nil, fmt.Errorf("오브젝트 %s: %w", objPath, err)
+			return nil, fmt.Errorf("오브젝트 %s: %w", source, err)
 		}
 
 		// 맵마다 「이름으로 pin」 을 켠다. C 쪽에 LIBBPF_PIN_BY_NAME 을 안 적어도
