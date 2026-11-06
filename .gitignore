@@ -16,6 +16,11 @@ bpf/vmlinux.h
 *.skel.h
 *.o
 
+# agent/bpf/ 의 .o 는 예외다 — Go 바이너리에 임베드되는 산출물이라 커밋한다.
+# 없으면 go:embed 가 컴파일 단계에서 터져서 agent/ 전체가 안 빌드된다.
+# 위 두 규칙(*.bpf.o · *.o) 뒤에 와야 효력이 있다. (agent/bpf/README.md)
+!agent/bpf/warrant.bpf.o
+
 # 스파이크 산출 바이너리
 bpf/smoke
 
