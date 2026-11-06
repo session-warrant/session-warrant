@@ -41,7 +41,45 @@ pass=0 fail=0
 ok()   { pass=$((pass+1)); printf '  \033[32m통과\033[0m  %s\n' "$1"; }
 no()   { fail=$((fail+1)); printf '  \033[31m실패\033[0m  %s\n' "$1"; }
 step() { printf '\n\033[1m── %s\033[0m\n' "$1"; }
-die()  { printf '\033[31m중단\033[0m %s\n' "$1" >&2; exit 1; }
+die()  { ABORTED=$1; printf '\033[31m중단\033[0m %s\n' "$1" >&2; exit 1; }
+
+# sudo 는 secure_path 로 PATH 를 갈아끼운다. Go 는 보통 /usr/local/go/bin 에
+# 있고 secure_path 에는 안 들어 있다 — 그래서 `sudo ./bpf/vsession.sh` 가
+# "go: command not found" 로 죽는다. 찾아 쓰고, 없으면 어떻게 하라고 말한다.
+find_go() {
+	if command -v go >/dev/null 2>&1; then command -v go; return 0; fi
+	local c home
+	for c in /usr/local/go/bin/go /usr/lib/go/bin/go /snap/bin/go; do
+		[ -x "$c" ] && { echo "$c"; return 0; }
+	done
+	if [ -n "${SUDO_USER:-}" ]; then
+		home=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+		for c in "$home/go/bin/go" "$home/.local/go/bin/go"; do
+			[ -x "$c" ] && { echo "$c"; return 0; }
+		done
+	fi
+	return 1
+}
+
+# ── 누가 대상 세션의 주인인가 ─────────────────────────────────────
+# 조종석(맵 조작)은 root 여야 하고, **대상 세션은 일반 사용자여야 한다.**
+#
+# 이걸 안 가르면 sudo 로 돌릴 때 ssh 도 root 로 붙는다. 그러면 셋이 틀어진다:
+#   - 제품이 통제하려는 건 user-1000.slice 밑의 세션이다. root 세션은 결이 다르다
+#   - 3단계의 「sudo 를 넘어도 태그 유지」가 uid 0→0 이라 아무것도 안 잰다
+#   - PermitRootLogin 이 prohibit-password 면 ssh-copy-id 가 암호를 물어보고,
+#     맞게 쳐도 거절된다. 검증 하네스가 서버에 root SSH 를 열게 만들면 안 된다
+TUSER=${SUDO_USER:-$(id -un)}
+[ "$TUSER" = root ] && die "대상 세션이 root 가 된다. 일반 계정에서 sudo 로 돌려라
+      (root 셸에서 돌렸거나 SUDO_USER 가 없다. SUDO_USER=<계정> 으로 줘도 된다)"
+
+# U 는 대상 사용자 자격으로 돌린다. -H 가 HOME 까지 그 사용자 것으로 돌린다 —
+# 안 주면 sudo 가 HOME=/root 를 물려줘서 ~/.ssh 가 root 것을 가리킨다.
+if [ "$(id -u)" -eq 0 ]; then
+	U() { sudo -u "$TUSER" -H "$@"; }
+else
+	U() { "$@"; }
+fi
 
 # ── 정리 ──────────────────────────────────────────────────────────
 # 어떤 경로로 끝나도 태그를 떼고 훅을 뗀다. 안 떼면 대상 세션이 계속
@@ -60,7 +98,7 @@ cleanup() {
 			&& echo "  cgroup 태그 제거" || true
 	fi
 	sudo rm -rf "$PIN" 2>/dev/null && echo "  pin 제거"
-	ssh -S "$CTL" -O exit localhost 2>/dev/null && echo "  ssh 세션 종료"
+	U ssh -S "$CTL" -O exit localhost 2>/dev/null && echo "  ssh 세션 종료"
 	[ -n "${SUDO_KEEP:-}" ] && kill "$SUDO_KEEP" 2>/dev/null
 	[ -n "${OUT_PID:-}" ] && kill "$OUT_PID" 2>/dev/null
 	# 탈출용 cgroup 에 남은 프로세스를 반드시 거둔다.
@@ -81,8 +119,15 @@ cleanup() {
 	rm -rf "$WORK"
 	echo
 	printf '로그: %s/\n' "$LOGDIR"
+	# 중단된 실행이 「실패 0」으로 보이면 안 된다. 3케이스만 돌고 멈춘 걸
+	# 37케이스 통과로 읽은 적이 있다 — 숫자보다 이 줄이 먼저다.
+	if [ -n "${ABORTED:-}" ]; then
+		printf '\033[31m중단됨 — 끝까지 돌지 못했다: %s\033[0m\n' "$ABORTED"
+		printf '아래 숫자는 거기까지 센 것이다. 「실패 0」을 통과로 읽지 말 것.\n'
+	fi
 	printf '통과 %d · 실패 %d\n' "$pass" "$fail"
 	[ "$fail" -eq 0 ] || rc=1
+	[ -z "${ABORTED:-}" ] || rc=1
 	exit $rc
 }
 trap cleanup EXIT INT TERM
@@ -127,7 +172,18 @@ ok "오브젝트 $(basename "$OBJ") ($(date -r "$OBJ" '+%H:%M:%S'))"
 # 항상 빌드한다. 「없을 때만」으로 두면 Go 쪽을 고친 뒤 낡은 바이너리를 재는
 # 사고가 난다 — 실제로 policy 와 loader 수정이 둘 다 안 들어간 채로 사흘을 돌았다.
 # go build 는 바뀐 게 없으면 캐시로 즉시 끝난다.
-( cd "$ROOT/agent" && go build -o warrantctl ./cmd/warrantctl ) || die "warrantctl 빌드 실패"
+GOBIN=${GO:-$(find_go)} || die "go 를 못 찾았다 — GO=/경로/go ./bpf/vsession.sh 로 준다"
+
+# 빌드는 **부른 사람 계정으로** 한다. root 로 빌드하면 모듈 캐시가 /root/go 라
+# 의존성을 통째로 다시 받고(첫 실행이 몇 분), 사용자 캐시에 root 소유 파일이
+# 섞이면 나중에 자기 빌드가 권한으로 막힌다. -H 는 HOME 까지 그 사용자 것으로
+# 돌린다 — 안 주면 sudo 가 HOME=/root 를 그대로 물려줘 같은 일이 난다.
+if [ "$(id -u)" -eq 0 ]; then
+	sudo -u "$TUSER" -H "$GOBIN" build -C "$ROOT/agent" -o warrantctl ./cmd/warrantctl \
+		|| die "warrantctl 빌드 실패 ($TUSER 계정)"
+else
+	"$GOBIN" build -C "$ROOT/agent" -o warrantctl ./cmd/warrantctl || die "warrantctl 빌드 실패"
+fi
 ok "warrantctl ($(date -r "$CTLBIN" '+%H:%M:%S'))"
 
 # 이전 실행 잔재. 핀된 링크는 프로세스가 죽어도 훅에 붙은 채로 남는다 —
@@ -142,7 +198,7 @@ if [ "$stale_progs" -gt 0 ] || [ "$stale_pin" -eq 1 ] || [ "$stale_proc" -eq 1 ]
 	sudo pkill -f "$(basename "$CTLBIN")" 2>/dev/null
 	sleep 1
 	sudo rm -rf "$PIN"
-	ssh -S "$CTL" -O exit localhost 2>/dev/null
+	U ssh -S "$CTL" -O exit localhost 2>/dev/null
 	rm -f "$CTL"
 	sudo sh -c "xargs -r kill -9 < $ESCAPE_CG/cgroup.procs" 2>/dev/null
 	sudo rmdir "$ESCAPE_CG" 2>/dev/null
@@ -172,21 +228,32 @@ echo "  조종석: cgroup $MYCG  $MYPATH"
 step "1. 진짜 session scope 를 가진 대상 세션"
 
 # 키 없이 ssh 가 되는지. 없으면 만든다 — 이게 없으면 전부 수동이 된다.
-if ! timeout 15 ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
+#
+# ssh-copy-id 는 쓰지 않는다. 자기 계정으로 자기 localhost 에 넣는 거라
+# 네트워크를 돌 이유가 없고, 돌면 암호를 물어본다 — 그 프롬프트에서 하네스가
+# 멈춘다. authorized_keys 에 직접 붙인다.
+if ! U timeout 15 ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
 	localhost true 2>/dev/null; then
-	echo "  localhost 무암호 ssh 가 안 된다 — 키를 만든다"
-	[ -f ~/.ssh/id_ed25519 ] || ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519 >/dev/null
-	ssh-copy-id -o StrictHostKeyChecking=no localhost >/dev/null 2>&1 \
-		|| die "ssh-copy-id 실패. sshd 가 떠 있는지 확인: systemctl status ssh"
-	ssh -o BatchMode=yes localhost true 2>/dev/null \
-		|| die "키를 넣었는데도 무암호 ssh 가 안 된다"
+	echo "  $TUSER 의 localhost 무암호 ssh 가 안 된다 — 키를 만들어 넣는다"
+	U sh -c '
+		set -e
+		mkdir -p -m 700 "$HOME/.ssh"
+		[ -f "$HOME/.ssh/id_ed25519" ] ||
+			ssh-keygen -t ed25519 -N "" -f "$HOME/.ssh/id_ed25519" >/dev/null
+		touch "$HOME/.ssh/authorized_keys"
+		chmod 600 "$HOME/.ssh/authorized_keys"
+		grep -qxF "$(cat "$HOME/.ssh/id_ed25519.pub")" "$HOME/.ssh/authorized_keys" ||
+			cat "$HOME/.ssh/id_ed25519.pub" >> "$HOME/.ssh/authorized_keys"
+	' || die "$TUSER 의 ssh 키를 못 넣었다"
+	U ssh -o BatchMode=yes -o StrictHostKeyChecking=no localhost true 2>/dev/null \
+		|| die "키를 넣었는데도 무암호 ssh 가 안 된다 (sshd 가 떠 있나: systemctl status ssh)"
 fi
-ok "localhost 무암호 ssh"
+ok "localhost 무암호 ssh ($TUSER)"
 
 rm -f "$CTL"
 # ControlPersist 는 짧게 둔다. 길게 두면 중단된 실행의 마스터가 살아남아
 # 다음 실행과 섞인다.
-timeout 20 ssh -o BatchMode=yes -o StrictHostKeyChecking=no \
+U timeout 20 ssh -o BatchMode=yes -o StrictHostKeyChecking=no \
     -o ControlMaster=yes -o ControlPath="$CTL" -o ControlPersist=60 \
     -fN localhost || die "ControlMaster 를 못 열었다 (20초). sshd·logind 상태를 봐라:
       loginctl list-sessions   # closing 에서 안 끝나는 세션이 있으면 그게 원인이다
@@ -197,7 +264,7 @@ timeout 20 ssh -o BatchMode=yes -o StrictHostKeyChecking=no \
 # timeout 을 반드시 건다. ssh 가 멈추면 스크립트가 통째로 매달려서 무엇이
 # 잘못됐는지도 모른 채 기다리게 된다 — 실제로 그렇게 두 번 멈췄다.
 # (원인은 logind 세션이 closing 에서 안 끝나 systemd job 큐가 막힌 것이었다.)
-R() { timeout "${R_TIMEOUT:-30}" ssh -o ControlPath="$CTL" localhost "$@"; }
+R() { U timeout "${R_TIMEOUT:-30}" ssh -o ControlPath="$CTL" localhost "$@"; }
 
 R true >/dev/null 2>&1 || die "대상 세션에서 명령이 안 돈다"
 
@@ -232,6 +299,16 @@ step "2. 픽스처"
 rm -rf "$WORK"; mkdir -p "$WORK/open" "$WORK/secret"
 echo seed > "$WORK/open/f"
 echo seed > "$WORK/secret/f"
+
+# 픽스처의 주인은 대상 사용자여야 한다.
+#
+# 조종석이 root 라 그냥 두면 전부 root 소유 0644 가 된다. 그러면 대상 세션의
+# 쓰기가 **영장이 아니라 파일 권한(EACCES)으로** 막히고, 그걸 「DENY 가 먹었다」
+# 로 읽게 된다 — 훅을 안 재고 퍼미션을 재는 것이다. 4단계가 쓰는 esc.pid 도
+# 세션 쪽이 만들어야 하므로 디렉터리째 넘긴다.
+if [ "$(id -u)" -eq 0 ]; then
+	chown -R "$TUSER" "$WORK" || die "픽스처를 $TUSER 에게 못 넘겼다"
+fi
 
 # 심볼릭 링크 함정: 커널은 exec 시점에 링크의 '대상' 을 연다.
 # 허용 목록에 링크 자신의 inode 를 넣으면 전부 조용히 안 걸린다.
@@ -356,7 +433,7 @@ if R "$SUDO -n true" >/dev/null 2>&1; then
 	fi
 else
 	printf '  \033[33m측정안됨\033[0m  sudo 가 무암호가 아니다 (tty 없는 세션). '
-	printf '필요하면: echo "%s ALL=(ALL) NOPASSWD: ALL" | sudo tee /etc/sudoers.d/99-warrant-test\n' "$USER"
+	printf '필요하면: echo "%s ALL=(ALL) NOPASSWD: ALL" | sudo tee /etc/sudoers.d/99-warrant-test\n' "$TUSER"
 fi
 
 echo "  ── 로그 일부 ──"
@@ -503,8 +580,17 @@ step "7. 자기보호가 같은 영장 안까지 막는가 (ptrace · kill)"
 
 # 영장 밖 대상 — 조종석 세션에서 띄운다. 태그가 없고 uid 는 같으므로
 # DAC 로는 접근 가능하고, 막힌다면 그건 우리 훅이다.
-sleep 60 >/dev/null 2>&1 &
-OUT_PID=$!
+#
+# **반드시 대상 세션과 같은 uid 여야 한다.** 조종석은 root 라 그냥 띄우면 root
+# 프로세스가 되고, uid1000 세션이 그 /proc/pid/maps 를 읽거나 kill -0 하면
+# 커널 DAC 가 먼저 막는다. 그러면 표의 BLOCKED 는 우리 훅이 아니라 커널이
+# 낸 것이고, 자기보호를 쟀다고 착각하게 된다. 실제로 그렇게 나왔다
+# (2026-11-06, 대상 세션을 일반 사용자로 바꾼 직후).
+#
+# /proc/pid/maps 읽기는 PTRACE_MODE_READ 라 Yama ptrace_scope=1 에서도 같은
+# uid 면 통과한다 — Yama 가 거는 건 ATTACH 쪽이다. 그래서 같은 uid 로만
+# 맞춰 주면 남는 변수는 우리 훅뿐이다.
+OUT_PID=$(U sh -c 'sleep 60 >/dev/null 2>&1 & echo $!')
 
 probe7() {
 	R "sleep 30 >/dev/null 2>&1 &
