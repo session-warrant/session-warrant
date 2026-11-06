@@ -47,7 +47,7 @@ func main() {
 		inspectUDP = flag.Bool("inspect-udp", false, "connect 없는 UDP 도 판정한다 (socket_sendmsg)")
 		active     = flag.Bool("active", true, "노드 전역 스위치")
 		mirror     = flag.Bool("mirror", false, "kprobe 미러 기록도 같이 찍는다")
-		obj        = flag.String("obj", loader.DefaultObjectPath, "BPF 오브젝트 경로")
+		obj        = flag.String("obj", "", "BPF 오브젝트 경로. 비우면 바이너리에 임베드된 것 (갓 컴파일한 "+loader.DefaultObjectPath+" 를 시험할 때만 준다)")
 		detach     = flag.Bool("detach", false, "끝날 때 훅을 뗀다 (기본은 붙여둔 채로 끝낸다)")
 		noColor    = flag.Bool("no-color", false, "색 끄기")
 	)

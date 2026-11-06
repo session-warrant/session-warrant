@@ -253,7 +253,7 @@ Ed25519 서명                      · 정책 → (dev,ino) 컴파일           
 | 계층 | 언어 | 핵심 의존성 |
 |---|---|---|
 | BPF 프로그램 | C | libbpf · vmlinux.h · clang/LLVM 18+ · CO-RE |
-| 노드 에이전트 `warrantd` | Go 1.25+ | cilium/ebpf v0.22 · bpf2go · grpc-go v1.81 · protobuf-go v1.36.12 · bbolt · x/sys/unix |
+| 노드 에이전트 `warrantd` | Go 1.25+ | cilium/ebpf v0.22 · go:embed(bpf2go 는 쓰지 않는다 — agent/bpf/README.md) · grpc-go v1.81 · protobuf-go v1.36.12 · bbolt · x/sys/unix |
 | PAM 모듈 | C | libpam-dev |
 | 중앙 서버 | Java 25 (LTS) | Spring Boot 4.1.1 · Security(OIDC) · Data JPA · Flyway · `spring-boot-starter-grpc-server` |
 | DB | — | PostgreSQL 18 (감사 이벤트는 선언적 파티셔닝) |
@@ -409,7 +409,7 @@ sudo deploy/systemd/install.sh --uninstall                        # 정리. 훅�
 proto/    protobuf 스키마 — 팀 간 계약. 스파이크 뒤에 확정한다
 bpf/      C · BPF 프로그램 (vmlinux.h는 gitignore, 커밋하지 않는다)
 agent/    Go · warrantd
-          cmd/warrantd/ · internal/{loader,bpfmap,pamsock,policy,ringbuf,upstream,store}/ · bpf/(bpf2go 생성물, 커밋한다)
+          cmd/warrantd/ · internal/{loader,bpfmap,pamsock,policy,ringbuf,upstream,store}/ · bpf/(임베드되는 warrant.bpf.o, 커밋한다 — bpf2go 아님: agent/bpf/README.md)
 pam/      C · pam_warrant.so (200줄 이내로 유지)
 server/   Java · Spring Boot  ← 골격 있음
 deploy/   bootstrap.sh · enable-bpf-lsm.sh · systemd/ · ansible/
