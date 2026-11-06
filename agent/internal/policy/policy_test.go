@@ -158,12 +158,25 @@ func TestDangerousCombination(t *testing.T) {
 func TestSetuidExecWarns(t *testing.T) {
 	dir := t.TempDir()
 	p := tmpFile(t, dir, "esc")
-	if err := os.Chmod(p, 0o4755); err != nil {
-		t.Skip("setuid 비트를 못 세운다")
+
+	// os.Chmod 는 유닉스 8진수가 아니라 os.FileMode 를 받는다. 거기서 setuid 는
+	// bit 23(os.ModeSetuid) 이고 0o4000(bit 11) 이 아니다 — 0o4755 를 주면
+	// 조용히 0o755 만 적용된다.
+	//
+	// 그래서 이 테스트는 쓰인 이래 한 번도 안 돌았다. 아래 가드가 걸려서
+	// "파일시스템이 setuid 를 무시한다" 는 **틀린 사유**로 건너뛰었고, 그 문장
+	// 때문에 /tmp 마운트를 들여다보게 됐다 (2026-11-06). SKIP 이 거짓말을 하면
+	// 실패보다 나쁘다.
+	if err := os.Chmod(p, 0o755|os.ModeSetuid); err != nil {
+		t.Skipf("setuid 비트를 못 세운다: %v", err)
 	}
-	st, _ := os.Stat(p)
+	st, err := os.Stat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if st.Mode()&os.ModeSetuid == 0 {
-		t.Skip("파일시스템이 setuid 를 무시한다")
+		// 여기까지 와서 비어 있으면 그때는 진짜 파일시스템이 뗀 것이다.
+		t.Skipf("파일시스템이 setuid 를 뗀다 (%s, mode=%v)", dir, st.Mode())
 	}
 
 	c, err := Compile(7, Spec{ExecRules: []ExecRule{{Path: p}}})
@@ -342,5 +355,22 @@ func TestExecOutsideWritableDirNoWarn(t *testing.T) {
 		if strings.Contains(w, "갈아치우면") {
 			t.Errorf("관계없는 디렉터리에 경고가 떴다: %s", w)
 		}
+	}
+}
+
+// os.Chmod 의 8진수 함정을 못 박아 둔다.
+//
+// 누가 TestSetuidExecWarns 를 0o4755 로 되돌리면 그 테스트는 실패가 아니라
+// **SKIP** 으로 조용히 사라진다. 초록은 그대로라 아무도 안 본다. 그래서 전제
+// 자체를 여기서 따로 센다 — 파일시스템도 커널도 안 타는 순수 비트 검사다.
+func TestOctalSetuidIsNotFileModeSetuid(t *testing.T) {
+	if os.FileMode(0o4755)&os.ModeSetuid != 0 {
+		t.Error("0o4755 에 ModeSetuid 가 들어 있다 — Go 의 FileMode 의미가 바뀌었다")
+	}
+	if (0o755|os.ModeSetuid)&os.ModeSetuid == 0 {
+		t.Error("0o755|os.ModeSetuid 에 setuid 가 없다")
+	}
+	if (0o755 | os.ModeSetuid).Perm() != 0o755 {
+		t.Error("권한 비트가 어긋난다")
 	}
 }
