@@ -91,10 +91,11 @@ sudo deploy/systemd/install.sh --uninstall             # 제거. pin 은 남긴�
 
 ### 로컬 영장 (`/etc/warrantd/warrants.json`)
 
-중앙 발급이 붙기 전까지 영장은 이 파일에서 온다. 형식은 `proto/warrant.proto` 의 `Warrant` 를 JSON 배열로 — 예시는
+중앙 없이 시험할 때 쓰는 입구다. 서명이 없어서 중앙 발급이 서면 없앤다. 형식은 `proto/warrant.proto` 의 `Warrant` 를 JSON 배열로 — 예시는
 `systemd/warrants.example.json`. warrantd 가 **시작할 때 한 번** 읽는다. 고친 뒤에는 `sudo systemctl restart warrantd`.
 
-- 영장을 하나라도 설치하면 `active_flag` 를 켜고, 하나도 없으면 끈다. 시작 로그 `warrants: N installed … active=…` 로 확인한다.
+- 영장을 하나라도 설치하면 `active_flag` 를 켠다. 끄는 건 시작할 때뿐이다 — 파일 영장이 없고 중앙 구독도 안 할 때.
+  시작 로그 `warrants: N installed from file, subscribing=…` 로 확인한다.
 - 세션은 **계정(`login_account`) + 키 지문(`ssh_key_fingerprints`)** 이 둘 다 맞아야 붙는다. 계정은 맞는데 키가 다르면
   `KEY_MISMATCH`, 키가 없으면 `NO_KEY` 무영장으로 기록된다. 여럿이 맞으면 늦게 끝나는 영장.
 - 거부하고 건너뛰는 것: `target_hosts` 에 이 노드 hostname 이 없음 · 만료 없음 · `MODE_ENFORCE` · `break_glass`.
@@ -104,6 +105,24 @@ sudo deploy/systemd/install.sh --uninstall             # 제거. pin 은 남긴�
 - **2026-11-03 VM 확인:** 맞는 세션 → `warrant=101` 태그, 허용 밖 실행 · 쓰기 → `EXEC`/`WRITE DRY-DENY`, 허용 쓰기는 기록 없음,
   남의 키 → `KEY_MISMATCH`, 다른 계정 → `NO_WARRANT`, CLOSE 뒤 `cgroup_warrant` 비어 있음, 영장 없는 프로세스 기록 0건.
   PAM 은 `systemd-run --scope` 에 OPEN 한 줄을 직접 보내 흉내 냈다 — 실제 sshd 로그인으로는 아직 안 해 봤다.
+
+### 중앙 영장 (`-upstream` + `/etc/warrantd/keys/`)
+
+`-upstream` 이 있고 `-trust-keys`(기본 `/etc/warrantd/keys`) 에 `<key_id>.pem` 이 하나라도 있으면 warrantd 가
+`WarrantPushService.Subscribe` 로 영장을 받는다. 키가 없으면 구독하지 않는다 — 검증할 수 없는 영장은 받지 않는다.
+키 파일은 Ed25519 공개키의 PKIX(`PUBLIC KEY`) PEM 이고, JDK `PublicKey.getEncoded()` 를 PEM 으로 감싸면 그대로 맞는다.
+
+- 받은 바이트 그대로 서명을 검증하고, 로컬 파일과 같은 검사(대상 호스트 · 만료 · `ENFORCE` · `break_glass`)를 거쳐 같은 순서로 맵에 넣는다.
+- 같은 영장은 **revision 이 올라갈 때만** 바뀐다. 연장 · 취소는 새 revision 으로 온다 — 취소는 열린 세션에도 바로 먹는다.
+- 같은 `policy_id` 에 다른 규칙이 오면 거부한다(정책 id 는 재사용하지 않는다).
+- 스트림마다 서버가 활성 집합 → `ResyncComplete` 를 보낸다. 집합에서 빠진 중앙 영장은 **지우지 않고 취소**한다 — 지우면 이미 붙은
+  세션이 「관리 대상 아님」으로 풀린다. 로컬 파일 영장은 건드리지 않는다.
+- 검증된 수가 서버가 말한 수보다 적으면 Resync 를 건너뛰고 `upstream: RESYNC SKIPPED …` 를 남긴다. 거의 언제나 키 문제다 —
+  서버가 키를 바꿨는데 이 노드의 `/etc/warrantd/keys/` 에 새 키가 없다. 그동안 새 발급은 거부되고 기존 영장은 만료까지 간다.
+- bbolt 캐시가 아직 없다. 재시작하면 warrantd 는 이전에 받은 영장을 모르고, 맵에 pin 된 값만 남는다. 다음 resync 가 다시 채우지만,
+  **warrantd 가 꺼져 있는 동안 서버에서 취소된 영장은 맵에서 만료될 때까지 살아 있다.** `store` 가 서야 닫힌다.
+- 서버 쪽 `WarrantPushGrpcService` 는 아직 껍데기다. **2026-11-07 VM 확인**은 서명하는 가짜 중앙으로 했다: 설치 → 세션 태그 →
+  허용 밖 쓰기 `DRY-DENY` → 6초 뒤 취소 push → 같은 세션의 실행 · 쓰기가 전부 `DRY-DENY` → 새 세션은 `NO_WARRANT`.
 
 `ansible/` 은 노드가 여러 대가 되는 시점에. 지금은 이르다.
 

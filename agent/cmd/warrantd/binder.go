@@ -16,6 +16,11 @@ type auditSink interface {
 	Append(e *pb.AuditEvent) uint64
 }
 
+// warrantSource is *registry.
+type warrantSource interface {
+	match(account, fp string, now time.Time) (*pb.Warrant, pb.UnwarrantedSessionEvent_Reason)
+}
+
 // cgroupTagger is *bpfmap.Maps.
 type cgroupTagger interface {
 	TagCgroup(cgroupID, warrantID uint64) error
@@ -25,7 +30,7 @@ type cgroupTagger interface {
 type binder struct {
 	maps     cgroupTagger
 	audit    auditSink
-	warrants []*pb.Warrant    // installed at startup; read-only afterwards
+	warrants warrantSource    // nil = no warrants
 	now      func() time.Time // nil = time.Now
 }
 
@@ -44,7 +49,11 @@ func (b *binder) Bind(ctx context.Context, r pamsock.Request) (uint64, error) {
 		now = b.now
 	}
 
-	w, reason := matchWarrant(b.warrants, r.LoginAccount, fp, now())
+	ws := b.warrants
+	if ws == nil {
+		ws = warrantList(nil)
+	}
+	w, reason := ws.match(r.LoginAccount, fp, now())
 	if w != nil {
 		id := w.GetWarrantId()
 		if r.CgroupID == 0 {
