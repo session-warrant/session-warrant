@@ -17,8 +17,8 @@ import (
 	"github.com/session-warrant/session-warrant/agent/internal/policy"
 )
 
-// Local warrants: a JSON array of proto Warrant, read once at startup (W1).
-// Central issuance (upstream.Subscribe) will feed the same installWarrants later.
+// Warrant conversion and matching, shared by both sources: the local file (-warrants, read once
+// at startup) and central pushes (upstream.Subscribe). Both go through registry.install.
 
 // Called by loadWarrants. Unknown fields are errors: a typo must not drop a rule silently.
 func parseWarrantFile(b []byte) ([]*pb.Warrant, error) {
@@ -37,7 +37,7 @@ func parseWarrantFile(b []byte) ([]*pb.Warrant, error) {
 	return out, nil
 }
 
-// Called by loadWarrants. ENFORCE and break_glass stay closed this semester (audit mode only).
+// Called by registry.install for both sources. ENFORCE and break_glass stay closed this semester (audit mode only).
 func checkWarrant(w *pb.Warrant, hostname string) error {
 	switch {
 	case w.GetWarrantId() == 0:
@@ -51,7 +51,7 @@ func checkWarrant(w *pb.Warrant, hostname string) error {
 	case w.GetMode() == pb.Mode_MODE_ENFORCE:
 		return errors.New("mode MODE_ENFORCE is out of scope: use MODE_OBSERVE or MODE_DRYRUN")
 	case w.GetBreakGlass():
-		return errors.New("break_glass cannot come from a local file")
+		return errors.New("break_glass is out of scope")
 	}
 	return nil
 }
@@ -76,7 +76,7 @@ func kernelWarrant(w *pb.Warrant, now time.Time, bootNs uint64) bpfmap.Warrant {
 	return k
 }
 
-// Called by installWarrants. Enum values match the policy and bpfmap constants by construction.
+// Called by policyInstaller.install. Enum values match the policy and bpfmap constants by construction.
 func policySpec(p *pb.Policy) (policy.Spec, error) {
 	s := policy.Spec{Name: p.GetName(), ReadWatchPaths: p.GetReadWatchPaths(), InspectUDP: p.GetInspectUdp()}
 	for _, r := range p.GetExecRules() {
@@ -96,74 +96,32 @@ func policySpec(p *pb.Policy) (policy.Spec, error) {
 	return s, nil
 }
 
-// Called by run. A missing file means no local warrants; bad entries are skipped, never fatal (§17).
-func loadWarrants(path, hostname string) ([]*pb.Warrant, error) {
+// Called by run before attach. A missing file means no local warrants; bad entries are skipped, never fatal (§17).
+func loadLocalWarrants(r *registry, path string) {
 	b, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
+		return
+	}
+	var ws []*pb.Warrant
+	if err == nil {
+		ws, err = parseWarrantFile(b)
 	}
 	if err != nil {
-		return nil, err
+		log.Printf("warrants: %s: %v (running without local warrants)", path, err)
+		return
 	}
-	ws, err := parseWarrantFile(b)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
-	}
-	var ok []*pb.Warrant
 	for _, w := range ws {
-		if err := checkWarrant(w, hostname); err != nil {
+		if err := r.install(w, fromFile); err != nil {
 			log.Printf("warrants: skip %d: %v", w.GetWarrantId(), err)
-			continue
 		}
-		ok = append(ok, w)
 	}
-	return ok, nil
 }
 
-// Called by run. Rules go in before the warrant, so a tagged session never sees a warrant without its rules.
-// Returns what was installed and the compiled policies for the inode watcher.
-func installWarrants(m *bpfmap.Maps, ws []*pb.Warrant) ([]*pb.Warrant, map[uint32]policy.Spec, []*policy.Compiled) {
-	specs := map[uint32]policy.Spec{}
-	var compiled []*policy.Compiled
-	var installed []*pb.Warrant
+// warrantList is a fixed set; binder uses it when it has no registry.
+type warrantList []*pb.Warrant
 
-	for _, w := range ws {
-		id := w.GetPolicyId()
-		if _, done := specs[id]; !done {
-			s, err := policySpec(w.GetPolicy())
-			if err == nil {
-				var c *policy.Compiled
-				if c, err = policy.Compile(id, s); err == nil {
-					for _, msg := range c.Warnings {
-						log.Printf("warrants: policy %d: %s", id, msg)
-					}
-					if err = c.Apply(m); err == nil {
-						specs[id] = s
-						compiled = append(compiled, c)
-					}
-				}
-			}
-			if err != nil {
-				log.Printf("warrants: skip %d: policy %d: %v", w.GetWarrantId(), id, err)
-				continue
-			}
-		}
-
-		boot, err := bpfmap.BootNs()
-		if err != nil {
-			log.Printf("warrants: skip %d: %v", w.GetWarrantId(), err)
-			continue
-		}
-		if err := m.PutWarrant(w.GetWarrantId(), kernelWarrant(w, time.Now(), boot)); err != nil {
-			log.Printf("warrants: skip %d: %v", w.GetWarrantId(), err)
-			continue
-		}
-		installed = append(installed, w)
-		log.Printf("warrants: installed %d account=%q policy=%d mode=%s expires=%s",
-			w.GetWarrantId(), w.GetLoginAccount(), id, w.GetMode(),
-			time.Unix(0, int64(w.GetExpiresAtUnixNs())).Format(time.RFC3339))
-	}
-	return installed, specs, compiled
+func (l warrantList) match(account, fp string, now time.Time) (*pb.Warrant, pb.UnwarrantedSessionEvent_Reason) {
+	return matchWarrant(l, account, fp, now)
 }
 
 // Called by binder.Bind. Picks the live warrant for this account and key; the latest expiry wins.

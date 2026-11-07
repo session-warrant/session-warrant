@@ -211,7 +211,7 @@ func TestMatchWarrant(t *testing.T) {
 // 맞는 영장이 있으면 세션 cgroup 에 붙이고, 무영장 기록은 남기지 않는다.
 func TestBindTagsSessionWithMatchingWarrant(t *testing.T) {
 	tg, s := &tagger{}, &sink{}
-	b := &binder{maps: tg, audit: s, warrants: []*pb.Warrant{warrant(9)}, now: func() time.Time { return now }}
+	b := &binder{maps: tg, audit: s, warrants: warrantList{warrant(9)}, now: func() time.Time { return now }}
 
 	id, err := b.Bind(context.Background(), open(aliceKey))
 	if err != nil {
@@ -230,7 +230,7 @@ func TestBindRecordsKeyMismatch(t *testing.T) {
 	w := warrant(9)
 	w.SshKeyFingerprints = []string{"SHA256:someone-else"}
 	tg, s := &tagger{}, &sink{}
-	b := &binder{maps: tg, audit: s, warrants: []*pb.Warrant{w}, now: func() time.Time { return now }}
+	b := &binder{maps: tg, audit: s, warrants: warrantList{w}, now: func() time.Time { return now }}
 
 	if _, err := b.Bind(context.Background(), open(aliceKey)); err != nil {
 		t.Fatal(err)
@@ -246,7 +246,7 @@ func TestBindRecordsKeyMismatch(t *testing.T) {
 // 태그를 못 붙이면 세션은 커널 눈에 무영장이다. 숨기지 않고 기록한다.
 func TestBindTagFailureIsRecordedAsUnwarranted(t *testing.T) {
 	tg, s := &tagger{err: errors.New("map full")}, &sink{}
-	b := &binder{maps: tg, audit: s, warrants: []*pb.Warrant{warrant(9)}, now: func() time.Time { return now }}
+	b := &binder{maps: tg, audit: s, warrants: warrantList{warrant(9)}, now: func() time.Time { return now }}
 
 	id, err := b.Bind(context.Background(), open(aliceKey))
 	if err == nil || id != 0 {
@@ -260,7 +260,7 @@ func TestBindTagFailureIsRecordedAsUnwarranted(t *testing.T) {
 // cgroup id 를 못 구한 세션에는 붙일 곳이 없다.
 func TestBindWithoutCgroupIsUnwarranted(t *testing.T) {
 	tg, s := &tagger{}, &sink{}
-	b := &binder{maps: tg, audit: s, warrants: []*pb.Warrant{warrant(9)}, now: func() time.Time { return now }}
+	b := &binder{maps: tg, audit: s, warrants: warrantList{warrant(9)}, now: func() time.Time { return now }}
 	r := open(aliceKey)
 	r.CgroupID = 0
 
