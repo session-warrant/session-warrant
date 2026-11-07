@@ -37,13 +37,13 @@ bpf/                bpf2go 생성물 (커밋한다)
 |---|---|
 | `loader` · `bpfmap` · `ringbuf` · `policy` | 구현 · 테스트 있음 (A) |
 | `pamsock` | 구현 · 테스트 있음 (C) |
-| `cmd/warrantd` | BPF 로드 · 훅 부착 · 맵 · PAM 소켓 · ringbuf(로그만) · `-upstream` 으로 무영장 세션 업로드 |
+| `cmd/warrantd` | BPF 로드 · 훅 부착 · 맵 · PAM 소켓 · ringbuf(로그만) · `-upstream` 으로 무영장 세션 업로드 · 영장 `registry`(로컬 파일 + 중앙 push → 맵 · 세션 태그) |
 | `store` | **메모리 `AuditQueue` 만.** bbolt `Store`(영장 캐시 · 감사 영속)는 `panic("미구현")`. 재시작하면 ack 안 된 기록을 잃고 새 seq_epoch 로 시작한다 |
-| `upstream` | **평문 `Dial` + `StreamAudit` 만.** mTLS · `Subscribe` · `Verify` · `ToKernel` · `Heartbeat` 등은 `panic("미구현")` |
+| `upstream` | 평문 `Dial` · `StreamAudit` · `Subscribe` · `Verify`(Ed25519) · `LoadTrustKeys`. **mTLS · `Heartbeat` · 연장 · `LookupActiveWarrant` 는 `panic("미구현")`.** 시각 변환 · 맵 쓰기는 여기서 하지 않는다 — `cmd/warrantd` 의 `registry` 가 한다 |
 
-리눅스 전용 상수 때문에 맥에서는 `cmd/warrantd` · `upstream` · `bpfmap` 이 빌드되지 않는다.
+리눅스 전용 상수 때문에 맥에서는 `cmd/warrantd` · `bpfmap` 이 빌드되지 않는다.
 `GOOS=linux go vet ./...` 로 확인하고, 테스트는 Lima VM `sw` 에서 `go test -race ./...` 로 돌린다.
-`store` · `pamsock` · `pb` 는 맥에서도 테스트된다.
+`store` · `pamsock` · `pb` · `upstream` 은 맥에서도 테스트된다.
 
 ## 규칙
 
