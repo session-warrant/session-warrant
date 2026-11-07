@@ -14,6 +14,7 @@ type Applier interface {
 	// signature checked out, even if installing failed, so a resync does not revoke it.
 	Apply(env *pb.SignedWarrant) (warrantID uint64, err error)
 	// Resync gets every id this stream delivered before ResyncComplete: the server's active set.
+	// Not called when fewer verified than the server listed; an incomplete set would revoke valid warrants.
 	Resync(active map[uint64]struct{})
 	// Revisions is what the node holds now; sent for diagnosis only.
 	Revisions() map[uint64]uint32
@@ -67,10 +68,17 @@ func (c *Client) subscribeOnce(ctx context.Context, hello *pb.NodeHello, a Appli
 			if resynced {
 				continue // one active set per stream
 			}
-			log.Printf("upstream: resync complete: server %d active, %d verified",
-				b.ResyncComplete.GetActiveCount(), len(seen))
-			a.Resync(seen)
 			resynced = true
+			n := b.ResyncComplete.GetActiveCount()
+			// Fewer verified than the server listed means pushes we could not check, e.g. a stale
+			// trust key. Revoking on that set would cut valid warrants; keep them and say so (§17).
+			if uint32(len(seen)) < n {
+				log.Printf("upstream: RESYNC SKIPPED: server listed %d active, only %d verified; nothing revoked (check -trust-keys)",
+					n, len(seen))
+				continue
+			}
+			log.Printf("upstream: resync complete: server %d active, %d verified", n, len(seen))
+			a.Resync(seen)
 		}
 	}
 }

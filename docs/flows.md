@@ -75,8 +75,11 @@ registry.Apply
    │ ⑥ PutWarrant            warrants[warrant_id] = struct warrant (32바이트)
    │ ⑦ SetActive(true)       첫 영장일 때 한 번
    ▼
-ResyncComplete → registry.Resync(이번 스트림에서 검증된 id 들)
-                 집합에 없는 중앙 영장 → Revoke (지우지 않는다)
+ResyncComplete{active_count}
+   │ 검증된 수 < active_count ?  → 건너뛴다 (아무것도 취소 안 함, RESYNC SKIPPED 로그)
+   ▼
+registry.Resync(이번 스트림에서 검증된 id 들)
+   집합에 없는 중앙 영장 → Revoke (지우지 않는다)
 ```
 
 | 단계 | 어긋나면 | 이유 |
@@ -92,6 +95,9 @@ ResyncComplete → registry.Resync(이번 스트림에서 검증된 id 들)
   커널은 벽시계를 믿지 않고 `bpf_ktime_get_boot_ns()` 와 비교한다.
 - **Resync 에서 지우지 않고 취소한다.** 맵에서 지우면 이미 태그된 세션의 조회가 빗나가 「관리 대상 아님」으로 통과한다.
   취소로 남기면 그 세션은 끊긴다. 같은 이유로 `active_flag` 도 다시 끄지 않는다.
+- **검증된 수가 서버가 말한 수보다 적으면 Resync 를 건너뛴다.** 키를 교체했는데 노드에 옛 키만 있으면 push 가 전부
+  거부되고, 그 빈 집합으로 Resync 하면 노드의 중앙 영장이 전부 취소된다 — 발급 쪽 설정 실수가 집행을 무너뜨린다 (§17).
+  가짜 메시지를 끼워 넣어도 진짜 영장의 검증 수는 줄지 않으므로, 끼워 넣기로 정당한 취소를 막을 수는 없다.
 - 로컬 파일(`-warrants`)도 ②부터 같은 길을 탄다. 서명이 없어서 Resync 는 파일 영장을 건드리지 않는다.
 - 중앙 영장은 `-trust-keys` 에 키가 있을 때만 받는다. 키가 없으면 구독하지 않는다.
 

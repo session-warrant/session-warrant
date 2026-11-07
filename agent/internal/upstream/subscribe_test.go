@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -246,11 +247,12 @@ func TestSubscribeAppliesPushesThenResyncs(t *testing.T) {
 }
 
 // 검증에 실패한 영장은 활성 집합에 넣지 않는다 — 서명 없는 메시지로 영장을 살려 둘 수 없어야 한다.
+// 서버는 1개라고 했고(9), 13 은 중간에서 끼워 넣은 가짜다.
 func TestSubscribeLeavesRejectedPushesOutOfResync(t *testing.T) {
 	f := &fakePush{handle: func(_ int, st pushStream) error {
 		pushWarrant(st, 9)
 		pushWarrant(st, 13)
-		pushResync(st, 2)
+		pushResync(st, 1)
 		<-st.Context().Done()
 		return nil
 	}}
@@ -265,6 +267,56 @@ func TestSubscribeLeavesRejectedPushesOutOfResync(t *testing.T) {
 	if got := waitResync(t, a); len(got) != 1 {
 		t.Fatalf("resync set %v, want {9}", got)
 	}
+}
+
+// 서버가 말한 수보다 검증된 영장이 적으면 집합이 불완전하다. 그걸로 취소하면 멀쩡한 영장이 죽는다 —
+// 키를 교체했는데 노드에 옛 키만 있으면 전부 거부되고, 그대로 Resync 하면 노드의 중앙 영장이 전부 취소된다.
+// 취소는 건너뛰고, 스트림은 살려 둬서 그 뒤의 변경분은 받는다.
+func TestSubscribeSkipsResyncOnIncompleteSet(t *testing.T) {
+	for name, reject := range map[string]map[uint64]bool{
+		"전부 거부 (키 불일치)": {9: true, 11: true},
+		"일부 거부":         {11: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := &fakePush{handle: func(_ int, st pushStream) error {
+				pushWarrant(st, 9)
+				pushWarrant(st, 11)
+				pushResync(st, 2)
+				pushWarrant(st, 21)
+				<-st.Context().Done()
+				return nil
+			}}
+			c := startPush(t, f)
+			a := newApplier()
+			a.reject = reject
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			go c.Subscribe(ctx, hello(), a)
+
+			waitApplied(t, a, 21)
+			select {
+			case got := <-a.resyncs:
+				t.Fatalf("resynced on an incomplete set %v", got)
+			default:
+			}
+		})
+	}
+}
+
+func waitApplied(t *testing.T, a *fakeApplier, id uint64) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		a.mu.Lock()
+		done := slices.Contains(a.applied, id)
+		a.mu.Unlock()
+		if done {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("warrant %d was not applied", id)
 }
 
 // 스트림이 끊기면 다시 구독하고, 새 스트림은 처음부터 활성 집합을 다시 받는다.
