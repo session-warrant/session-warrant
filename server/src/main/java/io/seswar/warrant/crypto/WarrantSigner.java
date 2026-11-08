@@ -1,5 +1,11 @@
 package io.seswar.warrant.crypto;
 
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Component;
+
+import java.security.GeneralSecurityException;
+import java.security.Signature;
+
 /**
  * 영장 서명 — Ed25519 (JDK 내장).
  *
@@ -7,21 +13,38 @@ package io.seswar.warrant.crypto;
  * 정규화 문제로 "검증에 실패하는데 내용은 같다"는 버그가 나온다. 서명한 바이트를 그대로 보관했다가
  * 그대로 전송한다 — 중간에 역직렬화 후 재직렬화하는 코드가 끼면 서명이 깨진다.
  */
-// @Component
+@Component
+@RequiredArgsConstructor
 public class WarrantSigner {
 
+    private final SigningKeyProvider keys;
+
+    /** @return 64바이트 Ed25519 서명 */
     public byte[] sign(byte[] serializedWarrant) {
-        // Signature.getInstance("Ed25519") → initSign(privateKey) → update → sign
-        throw new UnsupportedOperationException("미구현");
+        try {
+            Signature s = Signature.getInstance("Ed25519");
+            s.initSign(keys.signingKey());
+            s.update(serializedWarrant);
+            return s.sign();
+        } catch (GeneralSecurityException e) {
+            throw new IllegalStateException("sign warrant", e);
+        }
     }
 
-    /**
-     * 검증. 서버에서는 자체 검증(회귀 테스트)용이고,
-     * 실제 검증 주체는 warrantd 다 — 중앙 단절 시에도 캐시된 영장을 오프라인으로 확인해야 하기 때문이다.
-     *
-     * <p>PAM 모듈은 검증하지 않는다. <b>인증 경로에 암호 연산을 넣지 않는다</b>(기술 스택 §05).
-     */
+    /** 서버 자체 검증(회귀 테스트)용. 실제 검증 주체는 warrantd 다. */
     public boolean verify(byte[] serializedWarrant, byte[] signature) {
-        throw new UnsupportedOperationException("미구현");
+        try {
+            Signature s = Signature.getInstance("Ed25519");
+            s.initVerify(keys.verificationKey());
+            s.update(serializedWarrant);
+            return s.verify(signature);
+        } catch (GeneralSecurityException e) {
+            return false;
+        }
+    }
+
+    /** proto {@code SignedWarrant.key_id}. 노드는 이 이름의 .pem 으로 검증한다. */
+    public String keyId() {
+        return keys.keyId();
     }
 }
