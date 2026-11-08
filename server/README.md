@@ -77,6 +77,7 @@ warrantd Subscribe → WarrantPushGrpcService           스트림 등록 → 그
 | `POST /api/warrants` · `GET` · `GET /{id}` | 발급 · 목록 · 단건. `duration` 생략 시 `warrant.default-duration`(30분), `mode` 생략 시 OBSERVE |
 | `DELETE /api/warrants/{id}` | 회수 |
 | `GET /api/signing-key` | 노드에 심을 공개키 PEM. 헤더 `X-Key-Id` 가 파일 이름 |
+| `GET /api/nodes` · `/api/audit/unwarranted` · `/api/audit/gaps` | 대시보드용 읽기. 감사 스트림으로 들어온 노드 · 무영장 세션 · 유실 구간, 최신 순. 기간 필터 · 페이지는 아직 없다 |
 
 - **`/api/**` 는 `dev` 프로필에서만 로그인 없이 열린다**(`SecurityConfig.devApi`, CSRF 도 끈다). 프로필 없이 띄우면 닫혀 있다.
 - 서명 키는 `warrant.signing.key-path`(기본 `.cache/signing.key`). 없으면 만들고 공개키를 `.pub` 로 옆에 둔다.
