@@ -58,6 +58,10 @@ for-select (종료 신호 · 소켓 오류 · ringbuf 오류)
 
 ## 2. 영장 받기와 설치
 
+서버 쪽 앞단: 콘솔에서 **신청**(REQUESTED, 서명 없음) → **다른 사람이 승인**(본인이면 403) → 그 순간부터 기간 시작 ·
+protobuf 로 굳혀 Ed25519 서명 → 커밋 뒤 아래 스트림으로 push. 신청 · 발급 · 반려 · 회수는 계보에 누가 했는지와 함께 남는다
+(`server/README.md` 「영장 발급」). 아래는 노드가 받는 쪽이다.
+
 ```
 중앙 WarrantPushService.Subscribe (스트림)
    │  활성 집합 전체 → ResyncComplete → 이후 변경분
@@ -399,6 +403,5 @@ policyInstaller.recompile → Compile → Apply (같은 policy_id 로 덮어쓴�
   맵에서 만료될 때까지 산다. 감사 큐도 재시작하면 잃는다.
 - **커널 기록 업로드:** 흐름 9 의 레코드가 journal 에서 멈춘다. 서버로 가는 건 흐름 8 의 무영장 세션뿐이다.
 - **영장 세션 기록:** 영장이 맞은 세션은 서버에 안 올라간다. 「조직 전체 SSH 접속 현황」을 셀 수 없다.
-- **서버 push:** `WarrantPushGrpcService` · 서명(`WarrantSigner`)이 껍데기다. 흐름 2 는 가짜 중앙으로만 확인했다.
 - **mTLS · Heartbeat · 연장 요청 · LookupActiveWarrant** (`upstream`).
 - **KILL · SESSION_ONLY_GRACE 만료 처리** (흐름 6).

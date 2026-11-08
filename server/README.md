@@ -2,8 +2,8 @@
 
 Session Warrant 의 컨트롤 플레인. 영장 발급 · 승인 · 서명 · push · 취소 · 감사 조회를 담당한다.
 
-**현재 상태:** 감사 수집 경로와 **영장 발급 · 회수 · push (단순 CRUD 단계)** 가 돈다. 승인 · 연장 · 계보 · 정책 lint 는
-아직 골격(시그니처와 의사코드 주석)이다.
+**현재 상태:** 감사 수집 경로와 **영장 신청 → 다른 사람의 승인 → 서명 · push → 회수** 가 돈다(계보 포함).
+연장 · 정책 lint · 승인자 자격(팀 · 상급자)은 아직 골격(시그니처와 의사코드 주석)이다.
 설계 원본은 `docs/session-warrant-plan.html`(§ 번호) 과 `docs/session-warrant-tech-stack.html` 이다.
 
 ## 이 서버가 지는 책임과 지지 않는 책임
@@ -20,21 +20,30 @@ Session Warrant 의 컨트롤 플레인. 영장 발급 · 승인 · 서명 · pu
 
 ## 패키지 배치
 
+도메인별로 나눈다. 한 패키지 안에 그 도메인의 엔티티 · 저장소 · 서비스 · gRPC · REST 가 같이 있다.
+
 ```
 io.seswar.warrant
-├── domain/       엔티티 · 값 객체 · 도메인 규칙 (warrant · policy · subject · node · audit)
-├── application/  유스케이스 서비스 (발급 · 연장 · 취소 · 승인 · 감사 수집 · 무영장 탐지)
-├── crypto/       Ed25519 서명 — protobuf 바이트에 서명한다
-├── grpc/         warrantd 와의 통신 (영장 push = 서버 스트리밍, 감사 = 클라이언트 스트리밍)
-├── api/          REST — 콘솔(신청 · 승인 큐 · 연장 · 회수) · 리포트
-├── repository/   Spring Data JPA
-└── config/       Security(OIDC) · gRPC · 가상 스레드
+├── warrant/      영장 — 엔티티 · 계보 · 상태 · 모드, 발급 · 회수 · 연장, 서명 굳히기(WarrantSealer), proto 변환, REST
+│   └── push/     영장 전달 — 노드 구독 gRPC(서버 스트리밍), 열린 스트림 보관(NodeStreamRegistry), push
+├── identity/     로그인 · 신원 — 주체(사람 + SSH 키 지문), REST, SecurityConfig(OIDC · dev 프로필)
+├── approval/     승인 — 신청 · 승인 큐 (골격)
+├── policy/       정책 — 정책 · 실행/쓰기/네트워크 규칙 · lint, REST
+├── node/         노드 — 등록 · 하트비트 (NodeRegistry), REST
+├── audit/        감사 — 감사 이벤트 · 무영장 세션 · 유실 구간, 수집 gRPC(클라이언트 스트리밍) · 변환 · 멱등 저장, 무영장 탐지, 조회 REST
+├── signing/      서명 키 — Ed25519 키 관리 · 서명기, 공개키 REST. protobuf 바이트에 서명한다
+├── common/       REST 오류 응답
+└── config/       시계 · gRPC · 가상 스레드
 ```
+
+방향: `warrant` → `identity` · `policy` · `signing`, `audit` → `warrant`(모드 enum) · `node`. `warrant` 와 `warrant.push` 는 서로 부른다(REST 가 커밋 뒤 push). 그 밖의 반대 방향 참조를 만들지 말 것 —
+예전에 `Warrant` 가 `audit` 의 모드 변환기를 빌려 쓰던 것을 `WarrantMode.Converter` 로 옮겼다.
+JPQL 의 `select new …` 는 클래스 전체 이름이 문자열에 들어간다 — 패키지를 옮기면 컴파일러가 못 잡고 기동 때 깨진다.
 
 ## 신청 · 승인 — 콘솔 자체 경로
 
 영장 신청과 승인은 **콘솔(웹)에서 한다.** 외부 메신저 연동은 두지 않는다 (2026-10-16 결정).
-이번 학기 범위 밖이라(루트 `CLAUDE.md` 범위표) API 는 골격만 있다.
+신청 · 승인 · 반려는 동작한다(아래 「영장 발급」). 연장 요청과 `requestLineageId` 확인은 아직 골격이다.
 
 | 메서드 · 경로 | 누가 | 하는 일 |
 |---|---|---|
@@ -57,32 +66,47 @@ io.seswar.warrant
 - **대가:** 승인자에게 푸시가 가지 않으므로 승인 지연이 늘 수 있다. 짧은 기본 기간(§03)이 굴러가려면
   연장이 싸야 한다 — 그래서 read-only 영장의 정책 자동 승인(`warrant.extension.auto-approve`)을 유지한다.
 
-## 영장 발급 — 단순 CRUD 단계
+## 영장 발급 — 신청 · 승인
 
-**승인 없이 바로 발급한다.** 승인 흐름이 붙기 전까지의 단계다.
+**신청자와 승인자는 다른 사람이어야 한다.** 둘 다 로그인에서 정해진다 — 요청 본문의 이름은 믿지 않는다.
 
 ```
-POST /api/warrants → WarrantIssuanceService.issue   주체 · 정책 확인 → 저장(커널 id 는 DB 시퀀스) → WarrantSealer
-                     WarrantSealer                    WarrantProtoMapper(목록 정렬) → WarrantSigner(Ed25519) → 바이트 보관
-                     (커밋 뒤) WarrantPushService.push  대상 호스트마다 NodeStreamRegistry 의 열린 스트림으로
-DELETE /api/warrants/{id} → 같은 길. revoked=true · revision+1 로 다시 서명해 push
+POST /api/warrants (신청자 로그인)          WarrantIssuanceService.request — REQUESTED 로 저장, 계보 REQUESTED(신청자 · 기간)
+                                            서명도 push 도 없다. 노드 활성 집합에도 안 들어간다
+POST /api/approvals/{id}/approve (다른 사람)  ApprovalService.approve — 본인이면 403, REQUESTED 가 아니면 409
+                                            기간은 지금부터 → WarrantSealer(proto · 목록 정렬 · Ed25519) → 계보 ISSUED(승인자)
+                                            (커밋 뒤) WarrantPushService.push → 대상 호스트의 열린 스트림
+POST /api/approvals/{id}/reject {reason}    REJECTED, 계보 REJECTED(승인자 · 사유). 사유 없으면 400
+DELETE /api/warrants/{id}                   ISSUED 만. revoked=true · revision+1 → 다시 서명 → push, 계보 REVOKED(회수한 사람)
 
-warrantd Subscribe → WarrantPushGrpcService           스트림 등록 → 그 호스트의 활성 영장 전부 → ResyncComplete
+warrantd Subscribe → WarrantPushGrpcService 스트림 등록 → 그 호스트의 ISSUED 영장 전부 → ResyncComplete
 ```
 
 | 메서드 · 경로 | 하는 일 |
 |---|---|
 | `POST /api/subjects` · `GET` | 주체(사람) 등록. `sshKeyFingerprints` 가 비면 영장이 어떤 세션에도 안 붙는다 |
 | `POST /api/policies` · `GET` | 정책 등록. 한 행 = 한 버전, 고치지 않는다 |
-| `POST /api/warrants` · `GET` · `GET /{id}` | 발급 · 목록 · 단건. `duration` 생략 시 `warrant.default-duration`(30분), `mode` 생략 시 OBSERVE |
+| `POST /api/warrants` · `GET` · `GET /{id}` | 신청 · 목록 · 단건(계보 포함). `duration` 생략 시 `warrant.default-duration`(30분), `mode` 생략 시 OBSERVE |
+| `GET /api/approvals` | 승인 큐(REQUESTED). 본인 신청은 `approvable: false` |
+| `POST /api/approvals/{id}/approve` · `/reject` | 승인 · 반려(`{"reason": …}` 필수) |
 | `DELETE /api/warrants/{id}` | 회수 |
 | `GET /api/signing-key` | 노드에 심을 공개키 PEM. 헤더 `X-Key-Id` 가 파일 이름 |
 | `GET /api/nodes` · `/api/audit/unwarranted` · `/api/audit/gaps` | 대시보드용 읽기. 감사 스트림으로 들어온 노드 · 무영장 세션 · 유실 구간, 최신 순. 기간 필터 · 페이지는 아직 없다 |
 
-- **`/api/**` 는 `dev` 프로필에서만 로그인 없이 열린다**(`SecurityConfig.devApi`, CSRF 도 끈다). 프로필 없이 띄우면 닫혀 있다.
+- **`dev` 프로필에서는 로그인해야 `/api/**` 가 열린다**(`identity/SecurityConfig.devApi`). 계정은 `application-dev.yml` 의
+  `warrant.dev.accounts`(이메일 + BCrypt 해시) — 회원가입은 없고, OIDC 가 붙기 전까지의 대역이다. 프로필 없이 띄우면 전부 닫혀 있다.
+  - 콘솔: `POST /api/auth/login`(이메일 · 비밀번호) → 세션 쿠키. `GET /api/auth/me` · `POST /api/auth/logout`.
+    **CSRF 를 켠다** — 바꾸는 요청은 `XSRF-TOKEN` 쿠키 값을 `X-XSRF-TOKEN` 헤더로 되돌려 보내야 한다.
+  - curl: `-u <이메일>:<비밀번호>`(Basic). 쿠키가 없어 다른 탭이 위조할 수 없으므로 CSRF 를 건너뛴다.
+  - `GET /api/signing-key` 만 로그인 없이 열린다(공개키).
+  - 로그인한 이메일과 `principal` 이 같은 주체(subject)가 「나」다.
+  - 계정 추가: `htpasswd -nbBC 10 "" '<비밀번호>' | cut -d: -f2` 로 해시를 만들어 `{bcrypt}` 를 앞에 붙인다.
 - 서명 키는 `warrant.signing.key-path`(기본 `.cache/signing.key`). 없으면 만들고 공개키를 `.pub` 로 옆에 둔다.
   **키를 지우면 새 키가 생긴다** — 노드는 그 뒤 push 를 전부 거부한다(`RESYNC SKIPPED`).
 - 노드 신원은 mTLS 전까지 노드가 신고한 hostname 이다. 영장의 `targetHosts` 와 같은 이름으로 맞춘다.
+- 계보(`warrant_lineage`)는 append-only — 저장소에 `save` 와 조회만 연다. 상태는 `warrant` 에 비정규화해 둔다.
+- 같은 클래스 안에서 `@Transactional` 메서드를 부르면 프록시를 안 거쳐 트랜잭션이 없다 — 바깥 메서드에도 붙인다
+  (`WarrantRevocationService.revoke(id)` 가 그래서 취소를 저장하지 못한 적이 있다).
 - Jackson 3 은 요청에 없는 primitive 필드를 오류로 본다 — 요청 본문 레코드는 박싱 타입으로 받는다.
   응답에 도메인 레코드를 그대로 싣지 않는다 — `is*()` 메서드를 속성으로 읽어 부른다.
 
@@ -91,14 +115,16 @@ warrantd Subscribe → WarrantPushGrpcService           스트림 등록 → 그
 ```sh
 docker compose -f compose.yaml up -d --wait
 SPRING_PROFILES_ACTIVE=dev ./gradlew bootRun
+ME='<신청자 이메일>:<비밀번호>'; OK='<승인자 이메일>:<비밀번호>'    # application-dev.yml 의 계정 둘
 curl -s localhost:8080/api/signing-key > central.pem          # 노드의 /etc/warrantd/keys/central.pem
-curl -s -H 'Content-Type: application/json' localhost:8080/api/subjects \
+curl -s -u "$ME" -H 'Content-Type: application/json' localhost:8080/api/subjects \
   -d '{"oidcSubject":"oidc|alice","principal":"alice@example.com","loginAccount":"ec2-user","sshKeyFingerprints":["SHA256:..."]}'
-curl -s -H 'Content-Type: application/json' localhost:8080/api/policies \
+curl -s -u "$ME" -H 'Content-Type: application/json' localhost:8080/api/policies \
   -d '{"name":"ops","execRules":["/usr/bin/bash","/usr/bin/ls"],"writeRules":[{"path":"/tmp","recursive":true,"effect":"ALLOW"}]}'
-curl -s -H 'Content-Type: application/json' localhost:8080/api/warrants \
-  -d '{"subjectId":"<id>","loginAccount":"ec2-user","reason":"INC-1","targetHosts":["<노드 hostname>"],"policyId":"<id>","duration":"PT20M","mode":"DRYRUN"}'
-curl -s -X DELETE localhost:8080/api/warrants/<id>
+curl -s -u "$ME" -H 'Content-Type: application/json' localhost:8080/api/warrants \
+  -d '{"loginAccount":"ec2-user","reason":"INC-1","targetHosts":["<노드 hostname>"],"policyId":"<id>","duration":"PT20M","mode":"DRYRUN"}'
+curl -s -u "$OK" -X POST localhost:8080/api/approvals/<id>/approve       # 다른 사람이 승인 → 서명 · push
+curl -s -u "$OK" -X DELETE localhost:8080/api/warrants/<id>
 ```
 
 ## 감사 수집 — 재전송 멱등
@@ -126,7 +152,7 @@ warrantd → `AuditIngestGrpcService`(gRPC 스트림) → `AuditIngestService.in
 - **적재는 Hibernate JDBC 배치**(`hibernate.jdbc.batch_size: 100`). 쿼리가 "조회 1 + INSERT" 라 예전
   `INSERT … ON CONFLICT` 한 번보다 많다. 수집량이 병목이 되면 `audit_event` 하나만 `ON CONFLICT` 로 되돌린다.
 
-## 노드 (`domain/node/Node`)
+## 노드 (`node/Node`)
 
 영장을 집행하는 호스트. warrantd 한 대가 한 노드다. 테이블은 `node`(V1).
 
@@ -141,7 +167,7 @@ warrantd → `AuditIngestGrpcService`(gRPC 스트림) → `AuditIngestService.in
 | `lastSeenAt` | 마지막 하트비트. gRPC 스트림이 살아 있는지와는 별개로 기록한다 |
 | `bootedAt` | 노드 부팅 시각. 절대시각 → `bpf_ktime_get_boot_ns` 변환의 기준이지만 **변환은 warrantd 가 한다.** 여기 값은 시계 스큐 진단용 참고 정보일 뿐이다 |
 
-## 감사 엔티티 (`domain/audit/`)
+## 감사 엔티티 (`audit/`)
 
 공통 규칙:
 - **enum 칼럼은 순서(ordinal)가 아니라 proto 번호를 `SMALLINT` 로 저장한다** (`AuditEnumConverters`). Java enum 순서를
