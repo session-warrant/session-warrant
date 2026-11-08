@@ -6,6 +6,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
 import java.util.UUID;
 
 /**
@@ -19,14 +20,25 @@ public class WarrantRevocationService {
 
     private final WarrantRepository warrants;
     private final WarrantSealer sealer;
+    private final WarrantLineageRepository lineage;
+    private final Clock clock;
 
+    // Transactional itself: the call below is a self-call and does not go through the proxy.
     @Transactional
     public Warrant revoke(UUID id) {
+        return revoke(id, null);
+    }
+
+    /** @param actorId 회수한 사람. 계보에 남는다 */
+    @Transactional
+    public Warrant revoke(UUID id, UUID actorId) {
         Warrant w = warrants.findById(id).orElseThrow(() -> new IllegalArgumentException("unknown warrant " + id));
-        if (!w.isRevoked()) {
-            w.revoke();
-            sealer.seal(w);
+        if (w.getState() != WarrantState.ISSUED) {
+            throw new IllegalStateException("warrant " + w.getDisplayId() + " is " + w.getState() + ", not ISSUED");
         }
+        w.revoke();
+        sealer.seal(w);
+        lineage.save(WarrantLineage.of(w.getId(), LineageType.REVOKED, clock.instant(), actorId, null, null, null));
         return w;
     }
 }

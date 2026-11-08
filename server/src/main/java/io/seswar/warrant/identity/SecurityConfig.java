@@ -1,12 +1,26 @@
 package io.seswar.warrant.identity;
 
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
 import org.springframework.core.annotation.Order;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.ProviderManager;
+import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.core.userdetails.User;
+import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.crypto.factory.PasswordEncoderFactories;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.provisioning.InMemoryUserDetailsManager;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.HttpStatusEntryPoint;
+import org.springframework.security.web.authentication.logout.HttpStatusReturningLogoutSuccessHandler;
+import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
+import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 
 /**
  * <b>자체 회원가입을 만들지 않는다.</b> 조직 신원 매핑이 제품 핵심이므로
@@ -15,6 +29,7 @@ import org.springframework.security.web.SecurityFilterChain;
  */
 @Configuration
 @EnableWebSecurity
+@EnableConfigurationProperties(DevAccounts.class)
 public class SecurityConfig {
 
     // Called by Spring Security at startup.
@@ -27,16 +42,49 @@ public class SecurityConfig {
         return http.build();
     }
 
-    // Called by Spring Security only with the dev profile. Opens /api/** without login or CSRF so the
-    // API can be driven with curl before OIDC is wired. Never turn dev on for a host others can reach.
+    // Called by Spring Security only with the dev profile: console login with the accounts in application-dev.yml.
+    // The dashboard holds a session cookie, so CSRF stays on (token in the XSRF-TOKEN cookie, echoed as X-XSRF-TOKEN).
+    // curl sends Basic and no cookie; such a request cannot be forged by another tab, so it skips CSRF.
+    // Unauthenticated calls get a bare 401, never a Basic challenge that would pop a browser dialog.
     @Bean
     @Order(0)
     @Profile("dev")
     SecurityFilterChain devApi(HttpSecurity http) throws Exception {
+        HttpStatusEntryPoint unauthorized = new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED);
+        CsrfTokenRequestAttributeHandler csrfHandler = new CsrfTokenRequestAttributeHandler();
+        csrfHandler.setCsrfRequestAttributeName(null); // load the token on every request so the cookie is always set
         http.securityMatcher("/api/**")
-                .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
-                .csrf(csrf -> csrf.disable());
+                .authorizeHttpRequests(auth -> auth
+                        .requestMatchers("/api/auth/login", "/api/signing-key").permitAll()
+                        .anyRequest().authenticated())
+                .httpBasic(basic -> basic.authenticationEntryPoint(unauthorized))
+                .exceptionHandling(e -> e.authenticationEntryPoint(unauthorized))
+                .csrf(csrf -> csrf
+                        .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
+                        .csrfTokenRequestHandler(csrfHandler)
+                        .ignoringRequestMatchers(req -> req.getHeader("Authorization") != null))
+                .logout(logout -> logout
+                        .logoutUrl("/api/auth/logout")
+                        .logoutSuccessHandler(new HttpStatusReturningLogoutSuccessHandler(HttpStatus.NO_CONTENT)));
         return http.build();
+    }
+
+    @Bean
+    @Profile("dev")
+    UserDetailsService devUsers(DevAccounts accounts) {
+        return new InMemoryUserDetailsManager(accounts.accounts().stream()
+                .map(a -> User.withUsername(a.email()).password(a.password()).roles("USER").build())
+                .toList());
+    }
+
+    // Called by AuthController.login. Passwords are stored as {bcrypt} hashes.
+    @Bean
+    @Profile("dev")
+    AuthenticationManager devAuthentication(UserDetailsService users) {
+        PasswordEncoder encoder = PasswordEncoderFactories.createDelegatingPasswordEncoder();
+        DaoAuthenticationProvider provider = new DaoAuthenticationProvider(users);
+        provider.setPasswordEncoder(encoder);
+        return new ProviderManager(provider);
     }
 
     // 남은 것:

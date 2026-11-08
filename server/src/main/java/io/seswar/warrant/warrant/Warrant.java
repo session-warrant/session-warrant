@@ -182,6 +182,37 @@ public class Warrant {
         return w;
     }
 
+    // Called by WarrantIssuanceService.request. Nothing is signed or pushed until someone else approves;
+    // expiresAt is a placeholder (the column is NOT NULL) and is set again from the approval time.
+    public static Warrant request(Subject subject, Policy policy, String loginAccount, String reason,
+                                  List<String> targetHosts, Instant now, Duration duration,
+                                  WarrantMode mode, OnExpiry onExpiry) {
+        Warrant w = issue(subject, policy, loginAccount, reason, targetHosts, now, duration, mode, onExpiry);
+        w.issuedAt = null;
+        w.state = WarrantState.REQUESTED;
+        return w;
+    }
+
+    // Called by ApprovalService. The validity period starts now, not when it was requested —
+    // a request approved late would otherwise arrive already half spent or expired.
+    public void approve(Instant now, Duration duration) {
+        requireRequested();
+        issuedAt = now;
+        expiresAt = now.plus(duration);
+        state = WarrantState.ISSUED;
+    }
+
+    public void reject() {
+        requireRequested();
+        state = WarrantState.REJECTED;
+    }
+
+    private void requireRequested() {
+        if (state != WarrantState.REQUESTED) {
+            throw new IllegalStateException("warrant " + displayId + " is " + state + ", not REQUESTED");
+        }
+    }
+
     // Called by WarrantSealer after every revision change. These exact bytes are what nodes receive.
     public void seal(byte[] signedPayload, byte[] signature, String signingKeyId) {
         this.signedPayload = signedPayload;

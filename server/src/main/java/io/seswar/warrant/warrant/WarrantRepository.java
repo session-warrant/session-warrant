@@ -17,9 +17,18 @@ import java.util.UUID;
 public interface WarrantRepository extends JpaRepository<Warrant, UUID> {
 
     // Called by WarrantPushGrpcService when a node subscribes: the active set it gets before ResyncComplete.
+    // Only ISSUED: a REQUESTED warrant has no signature yet and must never reach a node.
     @Query("select w from Warrant w join w.targetHosts h "
-            + "where h = :host and w.revoked = false and w.expiresAt > :now order by w.warrantId")
-    List<Warrant> findActiveForHost(@Param("host") String host, @Param("now") Instant now);
+            + "where h = :host and w.state = :issued and w.revoked = false and w.expiresAt > :now order by w.warrantId")
+    List<Warrant> findActiveForHostInState(@Param("host") String host, @Param("now") Instant now,
+                                           @Param("issued") WarrantState issued);
+
+    default List<Warrant> findActiveForHost(String host, Instant now) {
+        return findActiveForHostInState(host, now, WarrantState.ISSUED);
+    }
+
+    // Called by ApprovalController: the approval queue, oldest first.
+    List<Warrant> findByStateOrderByWarrantIdAsc(WarrantState state);
 
     List<Warrant> findAllByOrderByIssuedAtDesc();
 }

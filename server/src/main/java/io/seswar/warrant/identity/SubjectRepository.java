@@ -15,6 +15,9 @@ public interface SubjectRepository extends JpaRepository<Subject, UUID> {
 
     Optional<Subject> findByOidcSubject(String oidcSubject);
 
+    // Called by AuthController: the subject whose principal is the logged-in email.
+    Optional<Subject> findByPrincipal(String principal);
+
     // 감사 조회 시점의 조인
     Optional<Subject> findByKernelSubjectId(int kernelSubjectId);
 }

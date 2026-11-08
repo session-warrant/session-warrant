@@ -30,7 +30,7 @@ public class SubjectController {
 
     public record SubjectView(UUID id, int kernelSubjectId, String oidcSubject, String principal,
                               String loginAccount, List<String> sshKeyFingerprints) {
-        static SubjectView of(Subject s) {
+        public static SubjectView of(Subject s) {
             return new SubjectView(s.getId(), s.getKernelSubjectId(), s.getOidcSubject(), s.getPrincipal(),
                     s.getLoginAccount(), List.copyOf(s.getSshKeyFingerprints()));
         }
