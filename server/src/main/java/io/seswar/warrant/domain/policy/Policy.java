@@ -1,6 +1,23 @@
 package io.seswar.warrant.domain.policy;
 
-import java.util.List;
+import jakarta.persistence.CollectionTable;
+import jakarta.persistence.Column;
+import jakarta.persistence.ElementCollection;
+import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.Table;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import org.hibernate.annotations.Generated;
+
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -14,30 +31,44 @@ import java.util.UUID;
  * 영장마다 정책이 인라인으로 서명돼 내려가는데 rule_* 맵 키는 {@code policy_id} 라서,
  * 같은 id 로 다른 규칙이 도착하면 노드 맵에서 서로 덮어쓴다(proto/README 확정 검토).
  */
-// @Entity @Table(name = "policy")
+@Entity
+@Table(name = "policy")
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Policy {
 
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
     /**
      * 커널로 내려가는 정수 id (proto {@code policy_id}, u32). 버전마다 새로 발급하고 재사용하지 않는다.
      * 같은 id 에 다른 내용이 오면 warrantd 가 적용하지 않고 경보한다.
      */
+    @Generated
+    @Column(insertable = false, updatable = false)
     private int kernelPolicyId;
 
     /** 이 버전이 대체한 이전 버전. 첫 버전이면 null. "이 정책이 언제 넓어졌나"를 따라가는 끈. */
     private UUID supersedesId;
 
+    @Column(nullable = false)
     private String name;
 
     /** 실행 허용 목록. <b>화이트리스트</b>다 — 여기 없으면 bprm_check_security 에서 막힌다. */
-    private List<ExecRule> execRules;
+    @ElementCollection(fetch = FetchType.EAGER)
+    @CollectionTable(name = "policy_exec_rule", joinColumns = @JoinColumn(name = "policy_id"))
+    private Set<ExecRule> execRules = new HashSet<>();
 
     /** 쓰기 허용 목록. 디렉터리 단위. 읽기는 통제하지 않으므로 read 규칙은 존재하지 않는다(§15). */
-    private List<WriteRule> writeRules;
+    @ElementCollection(fetch = FetchType.EAGER)
+    @CollectionTable(name = "policy_write_rule", joinColumns = @JoinColumn(name = "policy_id"))
+    private Set<WriteRule> writeRules = new HashSet<>();
 
     /** 아웃바운드 허용 대역. 커널에서는 LPM 트라이. 비어 있으면 전면 차단이다. */
-    private List<NetRule> netRules;
+    @ElementCollection(fetch = FetchType.EAGER)
+    @CollectionTable(name = "policy_net_rule", joinColumns = @JoinColumn(name = "policy_id"))
+    private Set<NetRule> netRules = new HashSet<>();
 
     /**
      * UDP 경로({@code lsm/socket_sendmsg})까지 볼 것인가.
@@ -50,5 +81,20 @@ public class Policy {
      * 읽기 통제를 포기한 대가를 부분적으로 메우는 장치이므로 <b>목록이 길어지면 안 된다</b>(§15).
      * 비어 있으면 BPF 가 읽기 경로를 아예 보지 않는다 — 비용을 내는 건 목록이 있을 때뿐이다.
      */
-    private List<String> readWatchPaths;
+    @ElementCollection(fetch = FetchType.EAGER)
+    @CollectionTable(name = "policy_read_watch", joinColumns = @JoinColumn(name = "policy_id"))
+    @Column(name = "path", nullable = false)
+    private Set<String> readWatchPaths = new HashSet<>();
+
+    // Called by PolicyController. A policy row is never edited afterwards; changes are a new row.
+    public static Policy of(String name, boolean inspectUdp, Collection<ExecRule> exec,
+                            Collection<WriteRule> write, Collection<NetRule> net) {
+        Policy p = new Policy();
+        p.name = name;
+        p.inspectUdp = inspectUdp;
+        p.execRules = new HashSet<>(exec);
+        p.writeRules = new HashSet<>(write);
+        p.netRules = new HashSet<>(net);
+        return p;
+    }
 }

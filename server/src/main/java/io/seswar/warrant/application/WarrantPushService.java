@@ -1,31 +1,67 @@
 package io.seswar.warrant.application;
 
+import com.google.protobuf.ByteString;
 import io.seswar.warrant.domain.warrant.Warrant;
+import io.seswar.warrant.grpc.NodeStreamRegistry;
+import io.seswar.warrant.proto.AgentProtos.PushMessage;
+import io.seswar.warrant.proto.AgentProtos.ResyncComplete;
+import io.seswar.warrant.proto.WarrantProtos.SignedWarrant;
+import io.seswar.warrant.repository.WarrantRepository;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
-import java.util.UUID;
+import java.time.Clock;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
- * 영장을 노드로 내려보낸다. 발급 · 연장 · 취소가 전부 이 경로를 쓴다.
+ * 영장을 노드로 내려보낸다. 발급 · 취소가 전부 이 경로를 쓴다.
  *
  * <p>push 실패는 <b>새 정보가 늦게 도착하는</b> 문제일 뿐 집행이 멈추는 문제가 아니다(§17).
- * 단 하나 예외가 취소다 — 취소 push 실패는 권한이 살아 있다는 뜻이므로 반드시 경보한다.
+ * 단 하나 예외가 취소다 — 취소 push 실패는 권한이 살아 있다는 뜻이다. 지금은 로그만 남긴다.
  */
-// @Service
+@Slf4j
+@Service
+@RequiredArgsConstructor
 public class WarrantPushService {
 
-    public void push(Warrant warrant) {
-        // 1. warrant.targetHosts 로 대상 노드 해석
-        // 2. 노드별 열린 스트림에 서명된 protobuf 바이트를 그대로 전달 —
-        //    여기서 다시 직렬화하면 서명이 깨진다. 서명한 바이트를 보관했다가 그대로 보낸다
-        // 3. 스트림이 없는 노드는 pending 으로 남기고 재연결 시 처리
-        throw new UnsupportedOperationException("미구현");
+    private final NodeStreamRegistry streams;
+    private final WarrantRepository warrants;
+    private final Clock clock;
+
+    // Called by WarrantController after the issue or revoke transaction committed.
+    public void push(Warrant w) {
+        PushMessage m = message(w);
+        for (String host : w.getTargetHosts()) {
+            int n = streams.send(host, m);
+            if (n == 0) {
+                log.info("warrant {} rev {}: {} is not connected, it catches up on its next subscribe",
+                        w.getWarrantId(), w.getRevision(), host);
+            }
+        }
     }
 
-    /**
-     * 노드 재연결 시 전체 동기화.
-     * 중앙 단절 중에 만료 · 취소된 영장이 있을 수 있으므로 <b>현재 활성 집합 전체</b>를 내려준다.
-     */
-    public void resync(UUID nodeId) {
-        throw new UnsupportedOperationException("미구현");
+    /** 노드가 구독하면 처음 받는 것 — 그 노드의 활성 영장 전부, 그리고 ResyncComplete. */
+    @Transactional(readOnly = true)
+    public List<PushMessage> activeSet(String hostname) {
+        List<PushMessage> out = new ArrayList<>();
+        for (Warrant w : warrants.findActiveForHost(hostname, clock.instant())) {
+            out.add(message(w));
+        }
+        out.add(PushMessage.newBuilder()
+                .setResyncComplete(ResyncComplete.newBuilder().setActiveCount(out.size()))
+                .build());
+        return out;
+    }
+
+    // The stored signed bytes go out as they are; re-serializing would break the signature.
+    private static PushMessage message(Warrant w) {
+        return PushMessage.newBuilder().setWarrant(SignedWarrant.newBuilder()
+                        .setWarrant(ByteString.copyFrom(w.getSignedPayload()))
+                        .setSignature(ByteString.copyFrom(w.getSignature()))
+                        .setKeyId(w.getSigningKeyId()))
+                .build();
     }
 }

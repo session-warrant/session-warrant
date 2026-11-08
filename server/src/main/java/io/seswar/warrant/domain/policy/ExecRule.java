@@ -1,5 +1,8 @@
 package io.seswar.warrant.domain.policy;
 
+import jakarta.persistence.Column;
+import jakarta.persistence.Embeddable;
+
 /**
  * 실행 허용 한 줄. 정책에는 {@code /usr/bin/git} 이라고 쓰지만 맵에는 inode 가 들어간다.
  *
@@ -8,8 +11,8 @@ package io.seswar.warrant.domain.policy;
  * 대가는 패키지 업데이트로 inode 가 바뀌면 재컴파일이 필요하다는 것이고,
  * warrantd 가 fanotify 로 감시해 자동 갱신한다.
  */
-// @Embeddable
-public record ExecRule(String path) {
+@Embeddable
+public record ExecRule(@Column(nullable = false) String path) {
 
     /**
      * 위임 경로로 악명 높은 바이너리인가.

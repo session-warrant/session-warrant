@@ -1,9 +1,34 @@
 package io.seswar.warrant.domain.warrant;
 
+import io.seswar.warrant.domain.audit.AuditEnumConverters;
+import io.seswar.warrant.domain.policy.Policy;
+import io.seswar.warrant.domain.subject.Subject;
+import jakarta.persistence.CollectionTable;
+import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
+import jakarta.persistence.ElementCollection;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import org.hibernate.annotations.Generated;
+
 import java.time.Duration;
 import java.time.Instant;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * 영장(§02). 필드 구성은 {@code proto/warrant.proto} 와 {@code struct warrant}(§12)에서 그대로 온다 —
@@ -21,17 +46,24 @@ import java.util.UUID;
  * };
  * </pre>
  */
-// @Entity @Table(name = "warrant")
+@Entity
+@Table(name = "warrant")
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Warrant {
 
     /** 서버 PK. proto {@code warrant_uuid}. 커널로 안 내려간다. */
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
     /**
      * 커널 맵 키 (proto {@code warrant_id}, u64). 서버가 시퀀스로 발급하고 <b>재사용하지 않는다</b> —
      * 재사용하면 과거 감사 로그의 귀속이 조용히 뒤바뀐다. 0 은 "무영장" 자리라 발급하지 않는다.
-     * revision 이 올라도 불변.
+     * revision 이 올라도 불변. DB 시퀀스({@code warrant_kernel_id_seq})가 매긴다.
      */
+    @Generated
+    @Column(insertable = false, updatable = false)
     private long warrantId;
 
     /** 발급 1, 연장 · 취소마다 +1. 노드는 자기가 가진 것보다 큰 revision 만 적용한다(재생 방어). */
@@ -54,7 +86,10 @@ public class Warrant {
      * 사후에 키가 추가 · 폐기돼도 이미 서명된 영장은 바뀌지 않는다 — 바꾸려면 새 revision.
      * 비어 있으면 어떤 세션에도 붙지 않는다(와일드카드 아님).
      */
-    private List<String> sshKeyFingerprints;
+    @ElementCollection(fetch = FetchType.EAGER)
+    @CollectionTable(name = "warrant_ssh_key", joinColumns = @JoinColumn(name = "warrant_id"))
+    @Column(name = "fingerprint", nullable = false)
+    private Set<String> sshKeyFingerprints = new HashSet<>();
 
     /**
      * 정책 <b>버전</b> 행. 커널로는 그 행의 {@code kernelPolicyId}(u32)가 {@code policy_id} 로 내려가
@@ -66,7 +101,10 @@ public class Warrant {
     private String reason;
 
     /** 대상 호스트. 예: {@code prod-payment-{03,04}}. 이 목록의 노드에만 push 된다. */
-    private List<String> targetHosts;
+    @ElementCollection(fetch = FetchType.EAGER)
+    @CollectionTable(name = "warrant_target_host", joinColumns = @JoinColumn(name = "warrant_id"))
+    @Column(name = "hostname", nullable = false)
+    private Set<String> targetHosts = new HashSet<>();
 
     private Instant issuedAt;
 
@@ -80,13 +118,21 @@ public class Warrant {
      * 유예 <b>기간</b> (proto {@code grace_window_ns}). SESSION_ONLY_GRACE 에서만 의미가 있고 0 = 유예 없음.
      * 절대시각이 아니라 기간인 이유: 연장으로 expiresAt 이 밀리면 유예 창도 따라가야 한다.
      * 무기한은 허용되지 않는다. 유예 종료 시각은 {@link #graceUntil()} 로 파생한다.
+     * 아직 매핑하지 않는다 — 칼럼은 DB 기본값 0(유예 없음)으로 남는다.
      */
-    private Duration graceWindow;
+    @Transient
+    private Duration graceWindow = Duration.ZERO;
 
+    @Convert(converter = AuditEnumConverters.ModeConverter.class)
+    @Column(nullable = false)
     private WarrantMode mode;
 
+    @Convert(converter = OnExpiry.Converter.class)
+    @Column(nullable = false)
     private OnExpiry onExpiry;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
     private WarrantState state;
 
     /** 취소 플래그. 커널에서는 1바이트이고, 뒤집는 순간 전 노드에서 즉시 발효된다. */
@@ -109,10 +155,40 @@ public class Warrant {
     /** 서명 키 id (proto {@code SignedWarrant.key_id}). 키 교체 중 공존하는 두 키를 가른다. */
     private String signingKeyId;
 
-    /** 발급 → 연장 → 만료의 append-only 계보. "30분짜리 작업이 왜 90분이었나"가 이걸로 설명된다. */
+    /** 발급 → 연장 → 만료의 append-only 계보. "30분짜리 작업이 왜 90분이었나"가 이걸로 설명된다. 아직 매핑하지 않는다. */
+    @Transient
     private List<WarrantLineage> lineage;
 
     // ---------------------------------------------------------------- 도메인 규칙
+
+    // Called by WarrantIssuanceService. Issues at once (no approval step yet); the kernel id comes from
+    // the DB sequence on insert, and the signature is attached after that by WarrantSealer.
+    public static Warrant issue(Subject subject, Policy policy, String loginAccount, String reason,
+                                List<String> targetHosts, Instant now, Duration duration,
+                                WarrantMode mode, OnExpiry onExpiry) {
+        Warrant w = new Warrant();
+        w.revision = 1;
+        w.displayId = "W-%06X".formatted(ThreadLocalRandom.current().nextInt(1 << 24));
+        w.subjectId = subject.getId();
+        w.loginAccount = loginAccount;
+        w.sshKeyFingerprints = new HashSet<>(subject.getSshKeyFingerprints());
+        w.policyId = policy.getId();
+        w.reason = reason;
+        w.targetHosts = new HashSet<>(targetHosts);
+        w.issuedAt = now;
+        w.expiresAt = now.plus(duration);
+        w.mode = mode;
+        w.onExpiry = onExpiry;
+        w.state = WarrantState.ISSUED;
+        return w;
+    }
+
+    // Called by WarrantSealer after every revision change. These exact bytes are what nodes receive.
+    public void seal(byte[] signedPayload, byte[] signature, String signingKeyId) {
+        this.signedPayload = signedPayload;
+        this.signature = signature;
+        this.signingKeyId = signingKeyId;
+    }
 
     /**
      * 지금 이 시각 기준으로 만료했는가.
@@ -121,8 +197,7 @@ public class Warrant {
      * 서버가 만료를 "선언"해서 노드에 알릴 필요는 없다 — 알림이 끊겨도 만료는 정확히 발효된다.
      */
     public boolean isExpiredAt(Instant now) {
-        // return now.isAfter(expiresAt);
-        throw new UnsupportedOperationException("미구현");
+        return !now.isBefore(expiresAt);
     }
 
     /** 유예 구간에 있는가 (만료했지만 grace 안). */
@@ -157,10 +232,14 @@ public class Warrant {
         throw new UnsupportedOperationException("미구현");
     }
 
-    public void revoke(UUID actorId, String reason) {
-        // revoked = true; revision++; state = REVOKED; lineage.add(REVOKED)
-        // 취소도 새 revision 의 서명 봉투로 내려간다 — "취소만 서명 검증을 안 한다" 같은 구멍을 막는다
-        // push 는 호출자가 한다. push 가 실패해도 revoked 는 남아야 하므로 순서를 바꾸지 말 것.
-        throw new UnsupportedOperationException("미구현");
+    /**
+     * 취소도 새 revision 의 서명 봉투로 내려간다 — "취소만 서명 검증을 안 한다" 같은 구멍을 막는다.
+     * 재서명은 호출자(WarrantSealer)가, push 는 그다음에 한다. push 가 실패해도 revoked 는 남아야 하므로
+     * 순서를 바꾸지 말 것. 계보(REVOKED)는 아직 남기지 않는다.
+     */
+    public void revoke() {
+        revoked = true;
+        revision++;
+        state = WarrantState.REVOKED;
     }
 }

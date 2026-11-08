@@ -1,5 +1,11 @@
 package io.seswar.warrant.domain.policy;
 
+import jakarta.persistence.AttributeConverter;
+import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
+import jakarta.persistence.Converter;
+import jakarta.persistence.Embeddable;
+
 /**
  * 쓰기 허용 한 줄.
  *
@@ -13,8 +19,10 @@ package io.seswar.warrant.domain.policy;
  *
  * <p>판정 순서: <b>최장 일치 → 길이가 같으면 DENY → 안 걸리면 금지.</b> 목록 순서는 무의미하다.
  */
-// @Embeddable
-public record WriteRule(String path, boolean recursive, Effect effect) {
+@Embeddable
+public record WriteRule(@Column(nullable = false) String path,
+                        @Column(nullable = false) boolean recursive,
+                        @Column(nullable = false) @Convert(converter = WriteRule.EffectConverter.class) Effect effect) {
 
     /**
      * wire 값은 proto {@code WriteRule.Effect} 와 같다. proto 의 0 = {@code EFFECT_UNSPECIFIED} 는
@@ -33,6 +41,22 @@ public record WriteRule(String path, boolean recursive, Effect effect) {
         public int wireValue() {
             return wireValue;
         }
+
+        public static Effect fromWire(int v) {
+            for (Effect e : values()) {
+                if (e.wireValue == v) {
+                    return e;
+                }
+            }
+            throw new IllegalArgumentException("unknown WriteRule.Effect wire value: " + v);
+        }
+    }
+
+    // Used by WriteRule.effect. The column holds the proto number, not the ordinal.
+    @Converter
+    public static class EffectConverter implements AttributeConverter<Effect, Short> {
+        public Short convertToDatabaseColumn(Effect e) { return e == null ? null : (short) e.wireValue(); }
+        public Effect convertToEntityAttribute(Short s) { return s == null ? null : Effect.fromWire(s); }
     }
 
     /**

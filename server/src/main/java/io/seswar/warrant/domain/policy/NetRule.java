@@ -1,15 +1,24 @@
 package io.seswar.warrant.domain.policy;
 
+import jakarta.persistence.AttributeConverter;
+import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
+import jakarta.persistence.Converter;
+import jakarta.persistence.Embeddable;
+import org.hibernate.annotations.ColumnTransformer;
+
 /**
  * 아웃바운드 허용 대역. 커널에서는 {@code (policy_id, CIDR)} 키의 LPM 트라이 엔트리가 된다.
  *
  * <p>읽기 통제를 포기한 대가를 여기서 메운다 — <b>읽을 수는 있어도 밖으로 내보낼 수 없다</b>(§15).
  * 그래서 이 목록을 넓게 여는 것은 읽기 통제 포기와 곱해져서 위험해진다.
  *
- * <p>{@code port} 가 null 이면 모든 포트 (wire 0).
+ * <p>{@code port} 가 0 이면 모든 포트.
  */
-// @Embeddable
-public record NetRule(String cidr, Integer port, Proto proto) {
+@Embeddable
+public record NetRule(@Column(nullable = false, columnDefinition = "cidr") @ColumnTransformer(write = "?::cidr") String cidr,
+                      @Column(nullable = false) int port,
+                      @Column(nullable = false) @Convert(converter = NetRule.ProtoConverter.class) Proto proto) {
 
     /**
      * wire 값은 proto {@code Proto} 와 같다. UDP 규칙은 정책의 inspectUdp 가 true 일 때만 강제된다 —
@@ -29,6 +38,22 @@ public record NetRule(String cidr, Integer port, Proto proto) {
         public int wireValue() {
             return wireValue;
         }
+
+        public static Proto fromWire(int v) {
+            for (Proto p : values()) {
+                if (p.wireValue == v) {
+                    return p;
+                }
+            }
+            throw new IllegalArgumentException("unknown NetRule.Proto wire value: " + v);
+        }
+    }
+
+    // Used by NetRule.proto.
+    @Converter
+    public static class ProtoConverter implements AttributeConverter<Proto, Short> {
+        public Short convertToDatabaseColumn(Proto p) { return p == null ? null : (short) p.wireValue(); }
+        public Proto convertToEntityAttribute(Short s) { return s == null ? null : Proto.fromWire(s); }
     }
 
     public boolean isWideOpen() {

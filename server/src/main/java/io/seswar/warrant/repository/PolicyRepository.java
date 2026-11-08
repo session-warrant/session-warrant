@@ -1,5 +1,9 @@
 package io.seswar.warrant.repository;
 
-// @Repository
-public interface PolicyRepository /* extends JpaRepository<Policy, UUID> */ {
+import io.seswar.warrant.domain.policy.Policy;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+import java.util.UUID;
+
+public interface PolicyRepository extends JpaRepository<Policy, UUID> {
 }

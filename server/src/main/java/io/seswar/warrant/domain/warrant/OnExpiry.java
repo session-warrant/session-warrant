@@ -46,6 +46,22 @@ public enum OnExpiry {
         return wireValue;
     }
 
+    public static OnExpiry fromWire(int v) {
+        for (OnExpiry o : values()) {
+            if (o.wireValue == v) {
+                return o;
+            }
+        }
+        throw new IllegalArgumentException("unknown OnExpiry wire value: " + v);
+    }
+
+    // Used by Warrant.onExpiry.
+    @jakarta.persistence.Converter
+    public static class Converter implements jakarta.persistence.AttributeConverter<OnExpiry, Short> {
+        public Short convertToDatabaseColumn(OnExpiry o) { return o == null ? null : (short) o.wireValue(); }
+        public OnExpiry convertToEntityAttribute(Short s) { return s == null ? null : OnExpiry.fromWire(s); }
+    }
+
     /** 유예 시한(grace) 설정이 필수인 모드인가. */
     public boolean requiresGraceWindow() {
         // return this == SESSION_ONLY_GRACE;
