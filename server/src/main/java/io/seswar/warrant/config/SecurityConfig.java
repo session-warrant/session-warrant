@@ -2,6 +2,8 @@ package io.seswar.warrant.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Profile;
+import org.springframework.core.annotation.Order;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.web.SecurityFilterChain;
@@ -22,6 +24,18 @@ public class SecurityConfig {
         http.authorizeHttpRequests(auth -> auth
                 .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
                 .anyRequest().authenticated());
+        return http.build();
+    }
+
+    // Called by Spring Security only with the dev profile. Opens /api/** without login or CSRF so the
+    // API can be driven with curl before OIDC is wired. Never turn dev on for a host others can reach.
+    @Bean
+    @Order(0)
+    @Profile("dev")
+    SecurityFilterChain devApi(HttpSecurity http) throws Exception {
+        http.securityMatcher("/api/**")
+                .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
+                .csrf(csrf -> csrf.disable());
         return http.build();
     }
 
