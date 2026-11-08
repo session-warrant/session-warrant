@@ -9,6 +9,9 @@ import java.util.UUID;
 
 public interface EventGapRepository extends JpaRepository<EventGap, UUID> {
 
+    // Called by AuditQueryController. Newest first.
+    List<EventGap> findAllByOrderByFromDesc();
+
     // Called by AuditIngestService before saving a gap. The interval itself is the replay key (V2).
     boolean existsByNodeIdAndFromAndToAndCause(UUID nodeId, Instant from, Instant to, String cause);
 

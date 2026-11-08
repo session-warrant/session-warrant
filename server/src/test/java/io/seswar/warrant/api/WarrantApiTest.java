@@ -116,6 +116,14 @@ class WarrantApiTest {
         mvc.perform(get("/api/warrants/" + UUID.randomUUID())).andExpect(status().isNotFound());
     }
 
+    // 대시보드가 노드 목록 · 무영장 세션 · 유실 구간을 읽는다. 감사 스트림으로 들어온 것만 있다.
+    @Test
+    void 노드와_무영장_세션과_유실_구간을_목록으로_준다() throws Exception {
+        mvc.perform(get("/api/nodes")).andExpect(status().isOk()).andExpect(jsonPath("$").isArray());
+        mvc.perform(get("/api/audit/unwarranted")).andExpect(status().isOk()).andExpect(jsonPath("$").isArray());
+        mvc.perform(get("/api/audit/gaps")).andExpect(status().isOk()).andExpect(jsonPath("$").isArray());
+    }
+
     // 노드는 이 본문을 /etc/warrantd/keys/<X-Key-Id>.pem 으로 저장한다.
     @Test
     void 서명_공개키를_PEM으로_준다() throws Exception {

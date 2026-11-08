@@ -13,6 +13,9 @@ import java.util.UUID;
 /** 아래 두 쿼리의 결과가 §07 STEP 2 의 리포트 한 장이 된다. 기간은 [from, to). */
 public interface UnwarrantedSessionRepository extends JpaRepository<UnwarrantedSession, UUID> {
 
+    // Called by AuditQueryController. Newest first.
+    List<UnwarrantedSession> findAllByOrderByObservedAtDesc();
+
     interface NodeSummary {
         UUID getNodeId();
         long getSessions();
