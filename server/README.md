@@ -2,7 +2,8 @@
 
 Session Warrant 의 컨트롤 플레인. 영장 발급 · 승인 · 서명 · push · 취소 · 감사 조회를 담당한다.
 
-**현재 상태: 요구사항 골격.** 모든 클래스가 시그니처와 의사코드 주석만 갖고 있고 본문은 비어 있다.
+**현재 상태:** 감사 수집 경로와 **영장 발급 · 회수 · push (단순 CRUD 단계)** 가 돈다. 승인 · 연장 · 계보 · 정책 lint 는
+아직 골격(시그니처와 의사코드 주석)이다.
 설계 원본은 `docs/session-warrant-plan.html`(§ 번호) 과 `docs/session-warrant-tech-stack.html` 이다.
 
 ## 이 서버가 지는 책임과 지지 않는 책임
@@ -55,6 +56,49 @@ io.seswar.warrant
   Grafana 경보 규칙이 PostgreSQL(계보 · 감사 이벤트)을 직접 읽어 건다. 화면을 Grafana 로 대체한 것과 같은 선이다.
 - **대가:** 승인자에게 푸시가 가지 않으므로 승인 지연이 늘 수 있다. 짧은 기본 기간(§03)이 굴러가려면
   연장이 싸야 한다 — 그래서 read-only 영장의 정책 자동 승인(`warrant.extension.auto-approve`)을 유지한다.
+
+## 영장 발급 — 단순 CRUD 단계
+
+**승인 없이 바로 발급한다.** 승인 흐름이 붙기 전까지의 단계다.
+
+```
+POST /api/warrants → WarrantIssuanceService.issue   주체 · 정책 확인 → 저장(커널 id 는 DB 시퀀스) → WarrantSealer
+                     WarrantSealer                    WarrantProtoMapper(목록 정렬) → WarrantSigner(Ed25519) → 바이트 보관
+                     (커밋 뒤) WarrantPushService.push  대상 호스트마다 NodeStreamRegistry 의 열린 스트림으로
+DELETE /api/warrants/{id} → 같은 길. revoked=true · revision+1 로 다시 서명해 push
+
+warrantd Subscribe → WarrantPushGrpcService           스트림 등록 → 그 호스트의 활성 영장 전부 → ResyncComplete
+```
+
+| 메서드 · 경로 | 하는 일 |
+|---|---|
+| `POST /api/subjects` · `GET` | 주체(사람) 등록. `sshKeyFingerprints` 가 비면 영장이 어떤 세션에도 안 붙는다 |
+| `POST /api/policies` · `GET` | 정책 등록. 한 행 = 한 버전, 고치지 않는다 |
+| `POST /api/warrants` · `GET` · `GET /{id}` | 발급 · 목록 · 단건. `duration` 생략 시 `warrant.default-duration`(30분), `mode` 생략 시 OBSERVE |
+| `DELETE /api/warrants/{id}` | 회수 |
+| `GET /api/signing-key` | 노드에 심을 공개키 PEM. 헤더 `X-Key-Id` 가 파일 이름 |
+
+- **`/api/**` 는 `dev` 프로필에서만 로그인 없이 열린다**(`SecurityConfig.devApi`, CSRF 도 끈다). 프로필 없이 띄우면 닫혀 있다.
+- 서명 키는 `warrant.signing.key-path`(기본 `.cache/signing.key`). 없으면 만들고 공개키를 `.pub` 로 옆에 둔다.
+  **키를 지우면 새 키가 생긴다** — 노드는 그 뒤 push 를 전부 거부한다(`RESYNC SKIPPED`).
+- 노드 신원은 mTLS 전까지 노드가 신고한 hostname 이다. 영장의 `targetHosts` 와 같은 이름으로 맞춘다.
+- Jackson 3 은 요청에 없는 primitive 필드를 오류로 본다 — 요청 본문 레코드는 박싱 타입으로 받는다.
+  응답에 도메인 레코드를 그대로 싣지 않는다 — `is*()` 메서드를 속성으로 읽어 부른다.
+
+로컬에서 해 보기:
+
+```sh
+docker compose -f compose.yaml up -d --wait
+SPRING_PROFILES_ACTIVE=dev ./gradlew bootRun
+curl -s localhost:8080/api/signing-key > central.pem          # 노드의 /etc/warrantd/keys/central.pem
+curl -s -H 'Content-Type: application/json' localhost:8080/api/subjects \
+  -d '{"oidcSubject":"oidc|alice","principal":"alice@example.com","loginAccount":"ec2-user","sshKeyFingerprints":["SHA256:..."]}'
+curl -s -H 'Content-Type: application/json' localhost:8080/api/policies \
+  -d '{"name":"ops","execRules":["/usr/bin/bash","/usr/bin/ls"],"writeRules":[{"path":"/tmp","recursive":true,"effect":"ALLOW"}]}'
+curl -s -H 'Content-Type: application/json' localhost:8080/api/warrants \
+  -d '{"subjectId":"<id>","loginAccount":"ec2-user","reason":"INC-1","targetHosts":["<노드 hostname>"],"policyId":"<id>","duration":"PT20M","mode":"DRYRUN"}'
+curl -s -X DELETE localhost:8080/api/warrants/<id>
+```
 
 ## 감사 수집 — 재전송 멱등
 
@@ -172,6 +216,6 @@ protobuf-gradle-plugin 은 BOM 을 읽지 못하므로 `ext.protobufVersion` · 
 
 1. `../proto/warrant.proto` 확정 — 이게 늦어지면 커널 담당과 검증 담당이 서로를 기다린다
 2. `Warrant` · `Policy` 엔티티 + Flyway V1
-3. 발급 → 서명 → push 경로 (`WarrantIssuanceService` → `WarrantSigner` → `WarrantPushService`)
+3. 발급 → 서명 → push 경로 (`WarrantIssuanceService` → `WarrantSigner` → `WarrantPushService`) — 단순 CRUD 로 돈다(2026-11-08)
 4. 감사 수집 (`AuditIngestService`) 및 무영장 세션 탐지
 5. 콘솔 신청 · 승인 큐 · 연장 정책
