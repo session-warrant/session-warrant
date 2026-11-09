@@ -92,15 +92,19 @@ warrantd Subscribe → WarrantPushGrpcService 스트림 등록 → 그 호스트
 | `DELETE /api/warrants/{id}` | 회수 |
 | `GET /api/signing-key` | 노드에 심을 공개키 PEM. 헤더 `X-Key-Id` 가 파일 이름 |
 | `GET /api/nodes` · `/api/audit/unwarranted` · `/api/audit/gaps` | 대시보드용 읽기. 감사 스트림으로 들어온 노드 · 무영장 세션 · 유실 구간, 최신 순. 기간 필터 · 페이지는 아직 없다 |
+| `GET /api/audit/events?since=&limit=` | 커널 판정 기록, 최신 순. 기본 최근 24시간 · 1000건(최대 5000). 훅은 proto 이름(`HOOK_FILE_OPEN`), kprobe 미러 · fork 도 그대로 준다 — 거르는 건 화면 몫 |
 
-- **`dev` 프로필에서는 로그인해야 `/api/**` 가 열린다**(`identity/SecurityConfig.devApi`). 계정은 `application-dev.yml` 의
-  `warrant.dev.accounts`(이메일 + BCrypt 해시) — 회원가입은 없고, OIDC 가 붙기 전까지의 대역이다. 프로필 없이 띄우면 전부 닫혀 있다.
-  - 콘솔: `POST /api/auth/login`(이메일 · 비밀번호) → 세션 쿠키. `GET /api/auth/me` · `POST /api/auth/logout`.
-    **CSRF 를 켠다** — 바꾸는 요청은 `XSRF-TOKEN` 쿠키 값을 `X-XSRF-TOKEN` 헤더로 되돌려 보내야 한다.
-  - curl: `-u <이메일>:<비밀번호>`(Basic). 쿠키가 없어 다른 탭이 위조할 수 없으므로 CSRF 를 건너뛴다.
-  - `GET /api/signing-key` 만 로그인 없이 열린다(공개키).
-  - 로그인한 이메일과 `principal` 이 같은 주체(subject)가 「나」다.
-  - 계정 추가: `htpasswd -nbBC 10 "" '<비밀번호>' | cut -d: -f2` 로 해시를 만들어 `{bcrypt}` 를 앞에 붙인다.
+- **로그인은 두 가지다. 둘 다 `/api/**` 는 로그인해야 열리고(공개키만 예외), 역할 규칙 · CSRF 가 같다**(`identity/SecurityConfig`).
+  - **`oidc` 프로필 — 기본으로 쓸 것.** 콘솔은 Keycloak 로그인(코드 흐름 + PKCE) → 세션, curl 은 Keycloak 액세스 토큰(Bearer).
+    `docker compose -f compose.yaml --profile oidc up -d` → `../deploy/keycloak/seed-users.sh` → `SPRING_PROFILES_ACTIVE=oidc ./gradlew bootRun`.
+    Keycloak 은 `127.0.0.1:8180`, realm `warrant`(`deploy/keycloak/warrant-realm.json`), 클라이언트 `warrant-server`.
+    사용자는 git 밖 `server/.cache/dev-accounts.txt`(`<이메일> <비밀번호> <그룹,그룹>`)에서 넣는다. 서버는 기동할 때 Keycloak 에 묻지 않는다.
+  - **역할 = Keycloak 그룹** (`groups` claim): `warrant-requesters` 신청 · `warrant-approvers` 승인 · 반려 · 회수 · `warrant-auditors` 조회만.
+    자기 승인 금지는 역할과 별개로 서버가 막는다.
+  - **「나」= `sub`.** 처음 보는 sub 면 주체를 만들고, 검증된 같은 이메일의 주체가 있으면 거기에 sub 를 잇는다(dev 시절 주체).
+  - 로그아웃은 서버 세션과 Keycloak 세션을 둘 다 끝낸다(`GET /api/auth/config` 의 `logoutUrl`).
+  - **`dev` 프로필** — Keycloak 없이 개발할 때. `application-dev.yml` 의 계정(이메일 + `{bcrypt}` 해시), 콘솔은 `POST /api/auth/login`,
+    curl 은 `-u <이메일>:<비밀번호>`(Basic). dev 계정은 역할을 전부 가진다. 해시: `htpasswd -nbBC 10 "" '<비밀번호>' | cut -d: -f2`.
 - 서명 키는 `warrant.signing.key-path`(기본 `.cache/signing.key`). 없으면 만들고 공개키를 `.pub` 로 옆에 둔다.
   **키를 지우면 새 키가 생긴다** — 노드는 그 뒤 push 를 전부 거부한다(`RESYNC SKIPPED`).
 - 노드 신원은 mTLS 전까지 노드가 신고한 hostname 이다. 영장의 `targetHosts` 와 같은 이름으로 맞춘다.

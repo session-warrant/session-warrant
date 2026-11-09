@@ -336,16 +336,24 @@ ringbuf.Consumer.Run (warrantd)
    │ (cpu, cpu_seq) 가 기대한 다음 번호인가
    │   건너뛰었으면 → Gap{from = 그 CPU 의 마지막 레코드 시각, to = 건너뛴 레코드 시각, dropped}
    ▼
-logRecord → journal                  ← 지금은 여기까지. 서버로는 아직 안 올린다
+kernelUpload.record (cmd/warrantd)
+   │ logRecord → journal
+   │ kernelEvent: boot_ts + (지금 벽시계 − 지금 boot 시계) = wall_ts, 훅별 payload
+   │   못 읽는 레코드는 보내지 않는다 — 하나라도 섞이면 서버가 묶음 전체를 거부한다
+   ▼
+store.AuditQueue.Append → upstream.StreamAudit → 서버 AuditIngestService → audit_event
+                                                                    → GET /api/audit/events → 대시보드
 ```
 
 - **번호를 먼저 올리는 게 핵심이다.** reserve 가 성공한 뒤에 올리면, 버려진 이벤트가 번호도 남기지 않고 사라진다.
 - 빈 구간을 숨기지 않는다 (§13). 유실은 「조용한 시간」과 구분되어야 한다.
-- Gap 시각은 boot 기준이다(`FromBootNs` · `ToBootNs`). 서버로 올리는 쪽이 벽시계로 바꿔 `from_unix_ns` 에 넣어야 한다.
+- 커널은 boot 시각만 안다. 벽시계 변환은 warrantd 가 레코드마다 한다(`bootOffset`) — 시계가 바뀌면 바로 반영된다.
+  Gap 도 같은 변환을 거쳐 `AppendGap` 으로 다음 묶음에 실린다.
 - 기록 절제: 차단은 전건, 허용은 실행 · 접속 · fork 만. 허용된 쓰기까지 남기면 ringbuf 가 넘쳐 정작 차단 기록이 밀린다.
-- 미러(kprobe) 레코드는 `logRecord` 가 건너뛴다. 대조용이다.
+- 미러(kprobe) 레코드는 journal 에는 안 찍고 서버로는 `origin=KPROBE` 로 올린다. LSM 판정과 대조하는 용도라
+  대시보드는 LSM 것만 보여준다(같은 건을 두 번 세지 않게). fork 도 판정이 아니라 대시보드에서 뺀다.
 
-코드: `bpf/warrant.bpf.c` `emit`, `agent/internal/ringbuf/ringbuf.go` `Run` · `checkGap`, `agent/cmd/warrantd/main.go` `logRecord` · `logGap`
+코드: `bpf/warrant.bpf.c` `emit`, `agent/internal/ringbuf/ringbuf.go` `Run` · `checkGap`, `agent/cmd/warrantd/audit.go` `kernelUpload` · `kernelEvent` · `kernelGap`, `server/.../audit/AuditQueryController.java` `events`
 
 ---
 
@@ -401,7 +409,6 @@ policyInstaller.recompile → Compile → Apply (같은 policy_id 로 덮어쓴�
 
 - **bbolt `store`:** 재시작한 warrantd 는 전에 받은 중앙 영장을 모른다. warrantd 가 꺼진 동안 서버에서 취소된 영장은
   맵에서 만료될 때까지 산다. 감사 큐도 재시작하면 잃는다.
-- **커널 기록 업로드:** 흐름 9 의 레코드가 journal 에서 멈춘다. 서버로 가는 건 흐름 8 의 무영장 세션뿐이다.
 - **영장 세션 기록:** 영장이 맞은 세션은 서버에 안 올라간다. 「조직 전체 SSH 접속 현황」을 셀 수 없다.
 - **mTLS · Heartbeat · 연장 요청 · LookupActiveWarrant** (`upstream`).
 - **KILL · SESSION_ONLY_GRACE 만료 처리** (흐름 6).
