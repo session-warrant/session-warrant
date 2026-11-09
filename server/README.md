@@ -93,6 +93,8 @@ warrantd Subscribe → WarrantPushGrpcService 스트림 등록 → 그 호스트
 | `GET /api/signing-key` | 노드에 심을 공개키 PEM. 헤더 `X-Key-Id` 가 파일 이름 |
 | `GET /api/nodes` · `/api/audit/unwarranted` · `/api/audit/gaps` | 대시보드용 읽기. 감사 스트림으로 들어온 노드 · 무영장 세션 · 유실 구간, 최신 순. 기간 필터 · 페이지는 아직 없다 |
 | `GET /api/audit/events?since=&limit=` | 커널 판정 기록, 최신 순. 기본 최근 24시간 · 1000건(최대 5000). 훅은 proto 이름(`HOOK_FILE_OPEN`), kprobe 미러 · fork 도 그대로 준다 — 거르는 건 화면 몫 |
+| `GET /api/audit/events?after=<순번>&limit=` | 이어 받기. 서버가 그 순번 뒤에 **받은** 것, 받은 순(발생 시각은 과거일 수 있다). 두 형태 모두 헤더 `X-Audit-Cursor` 가 다음 `after` 다 |
+| `GET /api/audit/stream` | SSE. 처음에 `ready`, 새 행이 저장되면 `audit`(data 는 새 행 수 `{"events","gaps","unwarrantedSessions"}` 뿐 — 기록은 위 조회로). 25초마다 빈 주석, 30분이면 끊고 브라우저가 다시 붙는다. 서버 한 대 안에서만 퍼진다 |
 
 - **로그인은 두 가지다. 둘 다 `/api/**` 는 로그인해야 열리고(공개키만 예외), 역할 규칙 · CSRF 가 같다**(`identity/SecurityConfig`).
   - **`oidc` 프로필 — 기본으로 쓸 것.** 콘솔은 Keycloak 로그인(코드 흐름 + PKCE) → 세션, curl 은 Keycloak 액세스 토큰(Bearer).
