@@ -90,6 +90,10 @@ public class AuditEvent {
     /** 프로세스 이름. 16바이트로 잘리고 위조 가능한 참고 정보 — 증거는 (deviceId, inode). */
     private String comm;
 
+    /** 서버가 받은 순서(V4). DB 시퀀스가 매긴다 — 이어 받기 커서이고, 화면 위치는 occurredAt 이다. */
+    @Column(insertable = false, updatable = false)
+    private Long receivedSeq;
+
     public enum TagSource {
         NONE(0), CGROUP(1), TASK(2);
 

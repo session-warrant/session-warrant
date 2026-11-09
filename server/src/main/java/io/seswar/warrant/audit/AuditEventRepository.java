@@ -33,4 +33,14 @@ public interface AuditEventRepository extends JpaRepository<AuditEvent, UUID> {
 
     // Called by AuditQueryController. Newest first, within a time range so partitions are pruned.
     List<AuditEvent> findByOccurredAtGreaterThanEqualOrderByOccurredAtDesc(Instant since, Limit limit);
+
+    // Called by AuditQueryController for the dashboard's catch-up. No time range: the receive index serves it.
+    List<AuditEvent> findByReceivedSeqGreaterThanOrderByReceivedSeqAsc(long after, Limit limit);
+
+    @Query("select coalesce(max(e.receivedSeq), 0) from AuditEvent e")
+    long maxReceivedSeq();
+
+    // Called by AuditIngestService at the start of each batch. Held to commit, so receive order = commit order.
+    @Query(value = "select count(*) from pg_advisory_xact_lock(:key)", nativeQuery = true)
+    long lockIngest(@Param("key") long key);
 }

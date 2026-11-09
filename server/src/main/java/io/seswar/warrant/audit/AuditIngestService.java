@@ -34,6 +34,9 @@ public class AuditIngestService {
     private final EventGapRepository gaps;
     private final UnwarrantedSessionRepository unwarranted;
 
+    // pg_advisory_xact_lock key for audit ingest. Any constant works; this one is "swaudit\0" in ASCII.
+    static final long INGEST_LOCK = 0x7377617564697400L;
+
 
     public record Batch(List<AuditEvent> events, List<EventGap> gaps, List<UnwarrantedSession> unwarrantedSessions) {
         public Batch {
@@ -48,10 +51,14 @@ public class AuditIngestService {
     }
 
 
-    /** 배치 하나 저장*/
+    /**
+     * 배치 하나 저장. 노드가 여럿이어도 한 번에 하나씩 — 수신 순번(received_seq) 순서가 커밋 순서와 같아야
+     * 대시보드가 "순번 N 이후"로 이어 받을 때 늦게 커밋된 작은 순번을 건너뛰지 않는다.
+     */
     @Transactional
     public Result ingest(UUID nodeId, Batch batch) {
         requireNode(nodeId, batch);
+        events.lockIngest(INGEST_LOCK);
 
         List<AuditEvent> newEvents = onlyNew(batch.events(), AuditEvent::getSeqEpoch, AuditEvent::getNodeSeq,
                 (epochs, min, max) -> events.findExistingKeys(nodeId, epochs, min, max));
