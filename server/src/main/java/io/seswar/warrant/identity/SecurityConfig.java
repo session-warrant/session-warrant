@@ -21,6 +21,19 @@ import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.web.authentication.logout.HttpStatusReturningLogoutSuccessHandler;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
+import org.springframework.security.config.Customizer;
+import org.springframework.security.config.annotation.web.configurers.AuthorizeHttpRequestsConfigurer;
+import org.springframework.security.oauth2.client.registration.ClientRegistration;
+import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
+import org.springframework.security.oauth2.client.registration.InMemoryClientRegistrationRepository;
+import org.springframework.security.oauth2.core.AuthorizationGrantType;
+import org.springframework.security.oauth2.core.ClientAuthenticationMethod;
+import org.springframework.security.oauth2.core.oidc.IdTokenClaimNames;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.JwtValidators;
+import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
+import org.springframework.http.HttpMethod;
 
 /**
  * <b>자체 회원가입을 만들지 않는다.</b> 조직 신원 매핑이 제품 핵심이므로
@@ -29,11 +42,11 @@ import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
  */
 @Configuration
 @EnableWebSecurity
-@EnableConfigurationProperties(DevAccounts.class)
+@EnableConfigurationProperties({DevAccounts.class, OidcSettings.class})
 public class SecurityConfig {
 
     // Called by Spring Security at startup.
-    // Health is public; everything else is closed until OIDC login is wired (oidc profile).
+    // Health is public; everything else is closed unless the dev or oidc chain below takes the request.
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http.authorizeHttpRequests(auth -> auth
@@ -42,22 +55,28 @@ public class SecurityConfig {
         return http.build();
     }
 
-    // Called by Spring Security only with the dev profile: console login with the accounts in application-dev.yml.
-    // The dashboard holds a session cookie, so CSRF stays on (token in the XSRF-TOKEN cookie, echoed as X-XSRF-TOKEN).
-    // curl sends Basic and no cookie; such a request cannot be forged by another tab, so it skips CSRF.
-    // Unauthenticated calls get a bare 401, never a Basic challenge that would pop a browser dialog.
-    @Bean
-    @Order(0)
-    @Profile("dev")
-    SecurityFilterChain devApi(HttpSecurity http) throws Exception {
+    /**
+     * 역할 규칙 — dev · oidc 가 같은 규칙을 쓴다.
+     * REQUESTER 신청 · APPROVER 승인 · 반려 · 회수 · AUDITOR 조회만(발급 권한 없음). 자기 승인 금지는 ApprovalService 가 따로 막는다.
+     */
+    private static void rules(AuthorizeHttpRequestsConfigurer<HttpSecurity>.AuthorizationManagerRequestMatcherRegistry auth) {
+        auth.requestMatchers("/api/auth/login", "/api/auth/config", "/api/signing-key").permitAll()
+                .requestMatchers(HttpMethod.POST, "/api/warrants").hasRole("REQUESTER")
+                .requestMatchers("/api/approvals/**").hasRole("APPROVER")
+                .requestMatchers(HttpMethod.DELETE, "/api/warrants/**").hasRole("APPROVER")
+                .requestMatchers(HttpMethod.POST, "/api/policies", "/api/subjects").hasAnyRole("REQUESTER", "APPROVER")
+                .anyRequest().authenticated();
+    }
+
+    // Shared by both chains. The dashboard holds a session cookie, so CSRF stays on (token in the XSRF-TOKEN cookie,
+    // echoed as X-XSRF-TOKEN). A request carrying Authorization (Basic, Bearer) has no cookie to forge, so it skips CSRF.
+    // Unauthenticated API calls get a bare 401, never a challenge that would pop a browser dialog.
+    private static HttpSecurity common(HttpSecurity http) throws Exception {
         HttpStatusEntryPoint unauthorized = new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED);
         CsrfTokenRequestAttributeHandler csrfHandler = new CsrfTokenRequestAttributeHandler();
         csrfHandler.setCsrfRequestAttributeName(null); // load the token on every request so the cookie is always set
-        http.securityMatcher("/api/**")
-                .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/auth/login", "/api/signing-key").permitAll()
-                        .anyRequest().authenticated())
-                .httpBasic(basic -> basic.authenticationEntryPoint(unauthorized))
+        return http
+                .authorizeHttpRequests(SecurityConfig::rules)
                 .exceptionHandling(e -> e.authenticationEntryPoint(unauthorized))
                 .csrf(csrf -> csrf
                         .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
@@ -66,6 +85,16 @@ public class SecurityConfig {
                 .logout(logout -> logout
                         .logoutUrl("/api/auth/logout")
                         .logoutSuccessHandler(new HttpStatusReturningLogoutSuccessHandler(HttpStatus.NO_CONTENT)));
+    }
+
+    // Called by Spring Security only with the dev profile: console login with the accounts in application-dev.yml,
+    // curl with Basic. Every dev account has every role.
+    @Bean
+    @Order(0)
+    @Profile("dev")
+    SecurityFilterChain devApi(HttpSecurity http) throws Exception {
+        common(http.securityMatcher("/api/**"))
+                .httpBasic(basic -> basic.authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)));
         return http.build();
     }
 
@@ -73,7 +102,7 @@ public class SecurityConfig {
     @Profile("dev")
     UserDetailsService devUsers(DevAccounts accounts) {
         return new InMemoryUserDetailsManager(accounts.accounts().stream()
-                .map(a -> User.withUsername(a.email()).password(a.password()).roles("USER").build())
+                .map(a -> User.withUsername(a.email()).password(a.password()).roles("REQUESTER", "APPROVER", "AUDITOR").build())
                 .toList());
     }
 
@@ -87,14 +116,52 @@ public class SecurityConfig {
         return new ProviderManager(provider);
     }
 
-    // 남은 것:
-    // /api/**    → OIDC 인증 필요 (oauth2Login · oauth2ResourceServer)
-    // /api/approvals/** POST → APPROVER. 콘솔은 세션 쿠키로 붙으므로 CSRF 보호를 끄지 말 것 —
-    //                          끄면 승인자가 연 다른 탭이 승인 버튼을 대신 누를 수 있다
-    //
-    // 권한 분리:
-    //   REQUESTER  영장 요청
-    //   APPROVER   승인 · 연장 · 회수
-    //   AUDITOR    감사 조회 전용 — 발급 권한 없음. 감사자가 발급할 수 있으면 감사가 아니다
-    //   OPERATOR   노드 · 정책 관리
+    // Called by Spring Security only with the oidc profile. The console logs in at Keycloak (code flow + PKCE) and
+    // comes back with a session; curl and scripts send a Keycloak access token. Groups become roles (KeycloakGroups).
+    // After login the browser goes back to "/", which is the dashboard when it comes through the dashboard's proxy.
+    @Bean
+    @Order(0)
+    @Profile("oidc")
+    SecurityFilterChain oidcApi(HttpSecurity http) throws Exception {
+        KeycloakGroups groups = new KeycloakGroups();
+        JwtAuthenticationConverter bearer = new JwtAuthenticationConverter();
+        bearer.setJwtGrantedAuthoritiesConverter(groups.forJwt());
+        common(http.securityMatcher("/api/**", "/oauth2/**", "/login/oauth2/**"))
+                .oauth2Login(login -> login
+                        .userInfoEndpoint(u -> u.userAuthoritiesMapper(groups.forLogin()))
+                        .defaultSuccessUrl("/", true))
+                .oauth2ResourceServer(rs -> rs.jwt(j -> j.jwtAuthenticationConverter(bearer)));
+        return http.build();
+    }
+
+    // Built from the issuer by Keycloak's URL layout, so nothing is fetched at startup. PKCE on.
+    @Bean
+    @Profile("oidc")
+    ClientRegistrationRepository keycloakClient(OidcSettings oidc) {
+        return new InMemoryClientRegistrationRepository(ClientRegistration.withRegistrationId("keycloak")
+                .clientId(oidc.clientId())
+                .clientSecret(oidc.clientSecret())
+                .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
+                .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
+                .redirectUri("{baseUrl}/login/oauth2/code/{registrationId}")
+                .scope("openid", "profile", "email")
+                .issuerUri(oidc.issuer())
+                .authorizationUri(oidc.endpoint("auth"))
+                .tokenUri(oidc.endpoint("token"))
+                .jwkSetUri(oidc.endpoint("certs"))
+                .userInfoUri(oidc.endpoint("userinfo"))
+                .userNameAttributeName(IdTokenClaimNames.SUB)
+                .clientName("Keycloak")
+                .clientSettings(ClientRegistration.ClientSettings.builder().requireProofKey(true).build())
+                .build());
+    }
+
+    // Bearer tokens: keys are fetched lazily on the first token; iss must be our realm.
+    @Bean
+    @Profile("oidc")
+    JwtDecoder keycloakTokens(OidcSettings oidc) {
+        NimbusJwtDecoder decoder = NimbusJwtDecoder.withJwkSetUri(oidc.endpoint("certs")).build();
+        decoder.setJwtValidator(JwtValidators.createDefaultWithIssuer(oidc.issuer()));
+        return decoder;
+    }
 }

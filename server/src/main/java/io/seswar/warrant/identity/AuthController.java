@@ -14,7 +14,6 @@ import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
 import org.springframework.security.web.context.SecurityContextRepository;
-import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -23,8 +22,8 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.Map;
 
 /**
- * 콘솔 로그인 (dev 프로필). 이메일 · 비밀번호로 세션을 만든다. 로그아웃은 SecurityConfig 의 logout 이 맡는다.
- * 로그인한 이메일과 principal 이 같은 주체가 콘솔의 「나」 — 영장 신청자가 된다.
+ * 콘솔 로그인 (dev 프로필). 이메일 · 비밀번호로 세션을 만든다. 「나」는 MeController, 로그아웃은 SecurityConfig.
+ * oidc 프로필에서는 이 컨트롤러가 없다 — 로그인은 Keycloak 이 받는다.
  */
 @Profile("dev")
 @RestController
@@ -33,14 +32,12 @@ import java.util.Map;
 public class AuthController {
 
     private final AuthenticationManager authentication;
-    private final SubjectRepository subjects;
+    private final CurrentSubject current;
     private final SecurityContextRepository contexts = new HttpSessionSecurityContextRepository();
 
     public record LoginRequest(String email, String password) {
     }
 
-    public record Me(String email, SubjectController.SubjectView subject) {
-    }
 
     @PostMapping("/login")
     public ResponseEntity<?> login(@RequestBody LoginRequest body, HttpServletRequest req, HttpServletResponse res) {
@@ -59,11 +56,8 @@ public class AuthController {
         ctx.setAuthentication(auth);
         SecurityContextHolder.setContext(ctx);
         contexts.saveContext(ctx, req, res);
-        return ResponseEntity.ok(me(auth));
+        return ResponseEntity.ok(new MeController.Me(auth.getName(),
+                current.find(auth).map(SubjectController.SubjectView::of).orElse(null)));
     }
 
-    @GetMapping("/me")
-    public Me me(Authentication auth) {
-        return new Me(auth.getName(), subjects.findByPrincipal(auth.getName()).map(SubjectController.SubjectView::of).orElse(null));
-    }
 }

@@ -1,15 +1,11 @@
-# 콘솔 로그인(OIDC). 기동할 때 issuer 에 접속해 설정을 받아오므로 Keycloak 이 떠 있어야 한다.
-#   SPRING_PROFILES_ACTIVE=oidc ./gradlew bootRun
-# 프로필 없이 띄우면 콘솔 로그인 없이 뜬다 — gRPC · health 만 쓰는 로컬 개발용.
-spring:
-  security:
-    oauth2:
-      client:
-        provider:
-          keycloak:
-            issuer-uri: ${OIDC_ISSUER:http://localhost:8080/realms/warrant}
-        registration:
-          keycloak:
-            client-id: ${OIDC_CLIENT_ID:warrant-server}
-            client-secret: ${OIDC_CLIENT_SECRET:}
-            scope: openid,profile,email
+# oidc 프로필 — 콘솔 로그인을 Keycloak 으로. SPRING_PROFILES_ACTIVE=oidc ./gradlew bootRun
+# Keycloak 은 server/compose.yaml 의 keycloak(:8180), realm 은 deploy/keycloak/warrant-realm.json.
+# 서버는 기동할 때 Keycloak 에 묻지 않는다 — 엔드포인트를 issuer 에서 만들고 키는 첫 토큰 때 받는다.
+warrant:
+  oidc:
+    issuer: ${OIDC_ISSUER:http://localhost:8180/realms/warrant}
+    client-id: ${OIDC_CLIENT_ID:warrant-server}
+    # realm 파일의 개발용 값. 개발 밖에서는 반드시 OIDC_CLIENT_SECRET 으로 바꾼다.
+    client-secret: ${OIDC_CLIENT_SECRET:dev-only-warrant-server-secret}
+    # 로그인 · 로그아웃 뒤 돌아갈 콘솔(대시보드). realm 클라이언트의 post.logout.redirect.uris 와 맞춘다.
+    console-url: ${WARRANT_CONSOLE_URL:http://localhost:5173/}

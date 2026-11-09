@@ -63,6 +63,11 @@ public class Subject {
     @Column(name = "fingerprint", nullable = false)
     private List<String> sshKeyFingerprints = new ArrayList<>();
 
+    // Called by CurrentSubject on the first OIDC login of someone who already had a subject (dev login era).
+    public void linkOidc(String sub) {
+        this.oidcSubject = sub;
+    }
+
     public static Subject of(String oidcSubject, String principal, String loginAccount, List<String> fingerprints) {
         Subject s = new Subject();
         s.oidcSubject = oidcSubject;
