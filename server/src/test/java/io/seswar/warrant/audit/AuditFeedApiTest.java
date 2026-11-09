@@ -9,6 +9,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.test.context.ActiveProfiles;
@@ -20,20 +21,31 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Base64;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-// 대시보드가 새로고침 없이 따라가는 길: 수신 순번으로 이어 받는 차분 조회.
-@SpringBootTest(properties = "spring.grpc.server.port=0")
+// 대시보드가 새로고침 없이 따라가는 길: 수신 순번으로 이어 받는 차분 조회 + 새 기록 알림(SSE).
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = "spring.grpc.server.port=0")
 @AutoConfigureMockMvc
 @ActiveProfiles("dev")
 @Testcontainers
@@ -56,6 +68,7 @@ class AuditFeedApiTest {
     @Autowired MockMvc mvc;
     @Autowired AuditIngestService ingest;
     @Autowired NodeRegistry nodes;
+    @LocalServerPort int port;
 
     UUID node;
     String host;
@@ -125,5 +138,38 @@ class AuditFeedApiTest {
         MvcResult page = events("?after=" + start + "&limit=2");
         assertThat(inodes(page)).containsExactly(11, 12);
         assertThat(inodes(events("?after=" + cursor(page)))).containsExactly(13);
+    }
+
+    @Test
+    void 새_기록이_저장되면_구독한_화면에_알린다() throws Exception {
+        String basic = "Basic " + Base64.getEncoder().encodeToString((ALICE + ":" + PW).getBytes(StandardCharsets.UTF_8));
+        HttpResponse<InputStream> res = HttpClient.newHttpClient().send(
+                HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/audit/stream"))
+                        .header("Authorization", basic).header("Accept", "text/event-stream").build(),
+                HttpResponse.BodyHandlers.ofInputStream());
+        assertThat(res.statusCode()).isEqualTo(200);
+
+        try (BufferedReader in = new BufferedReader(new InputStreamReader(res.body(), StandardCharsets.UTF_8))) {
+            assertThat(readUntil(in, "event:ready")).isNotNull();
+            arrive(Instant.now(), 21);
+            assertThat(readUntil(in, "event:audit")).isNotNull();
+            assertThat(in.readLine()).contains("\"events\":1");
+        }
+    }
+
+    // Reads lines until one starts with `prefix`; null after 10 seconds.
+    static String readUntil(BufferedReader in, String prefix) throws Exception {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                for (String line; (line = in.readLine()) != null; ) {
+                    if (line.startsWith(prefix)) {
+                        return line;
+                    }
+                }
+                return null;
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+        }).get(10, TimeUnit.SECONDS);
     }
 }

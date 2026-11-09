@@ -13,9 +13,11 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.data.domain.Limit;
 import io.seswar.warrant.proto.AuditProtos.Hook;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -25,7 +27,7 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
- * 감사 조회. 커널 판정 기록 · 무영장 세션 · 유실 구간. 노드 필터는 아직 없다.
+ * 감사 조회. 커널 판정 기록 · 무영장 세션 · 유실 구간, 그리고 새 기록 알림. 노드 필터는 아직 없다.
  */
 @RestController
 @RequestMapping("/api/audit")
@@ -36,6 +38,7 @@ public class AuditQueryController {
     private final EventGapRepository gaps;
     private final NodeRepository nodes;
     private final AuditEventRepository events;
+    private final AuditStream stream;
 
     static final int MAX_EVENTS = 5000;
     /** 이어 받을 시작점. 다음 요청의 {@code after} 로 그대로 돌려보낸다. */
@@ -83,6 +86,15 @@ public class AuditQueryController {
                         e.getDestination()))
                 .toList();
         return ResponseEntity.ok().header(CURSOR, Long.toString(cursor)).body(body);
+    }
+
+    /**
+     * 새 기록 알림(SSE). {@code event: audit} 의 data 는 새로 들어간 행 수뿐이다 — 기록은 위 조회로 가져온다.
+     * 처음에 {@code event: ready} 가 한 번 온다.
+     */
+    @GetMapping(path = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter stream() {
+        return stream.subscribe();
     }
 
     // Rows stored before V3 have no hook.

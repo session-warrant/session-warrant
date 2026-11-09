@@ -8,6 +8,7 @@ import io.seswar.warrant.audit.EventGapRepository;
 import io.seswar.warrant.audit.SeqKey;
 import io.seswar.warrant.audit.UnwarrantedSessionRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -33,6 +34,7 @@ public class AuditIngestService {
     private final AuditEventRepository events;
     private final EventGapRepository gaps;
     private final UnwarrantedSessionRepository unwarranted;
+    private final ApplicationEventPublisher publisher;
 
     // pg_advisory_xact_lock key for audit ingest. Any constant works; this one is "swaudit\0" in ASCII.
     static final long INGEST_LOCK = 0x7377617564697400L;
@@ -46,8 +48,11 @@ public class AuditIngestService {
         }
     }
 
-    /** 이번 배치에서 새로 들어간 행 수. 재전송이면 전부 0 이다. */
+    /** 이번 배치에서 새로 들어간 행 수. 재전송이면 전부 0 이다. 새 행이 있으면 커밋 뒤 AuditStream 이 화면에 알린다. */
     public record Result(int events, int gaps, int unwarrantedSessions) {
+        boolean empty() {
+            return events == 0 && gaps == 0 && unwarrantedSessions == 0;
+        }
     }
 
 
@@ -74,7 +79,11 @@ public class AuditIngestService {
         events.saveAllAndFlush(newEvents);
         gaps.saveAllAndFlush(newGaps);
         unwarranted.saveAllAndFlush(newSessions);
-        return new Result(newEvents.size(), newGaps.size(), newSessions.size());
+        Result result = new Result(newEvents.size(), newGaps.size(), newSessions.size());
+        if (!result.empty()) {
+            publisher.publishEvent(result);
+        }
+        return result;
     }
 
     /** warrantd 가 보고한 유실 구간을 그대로 남긴다 ({@link EventGap}). */
@@ -82,6 +91,7 @@ public class AuditIngestService {
     public void recordGap(UUID nodeId, Instant from, Instant to, Long droppedCount, String cause) {
         if (!gaps.existsByNodeIdAndFromAndToAndCause(nodeId, from, to, cause)) {
             gaps.saveAndFlush(EventGap.of(nodeId, from, to, droppedCount, cause));
+            publisher.publishEvent(new Result(0, 1, 0));
         }
     }
 
