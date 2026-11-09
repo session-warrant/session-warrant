@@ -84,6 +84,12 @@ public class AuditEvent {
 
     private String destination;
 
+    /** proto Hook 번호. type 만으로는 unlink · rename, 자기보호의 어느 훅인지 모른다. 무영장 세션(HOOK_AGENT)은 100. */
+    private Short hook;
+
+    /** 프로세스 이름. 16바이트로 잘리고 위조 가능한 참고 정보 — 증거는 (deviceId, inode). */
+    private String comm;
+
     public enum TagSource {
         NONE(0), CGROUP(1), TASK(2);
 

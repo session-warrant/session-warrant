@@ -55,6 +55,8 @@ class WarrantApiTest {
 
     @Autowired MockMvc mvc;
     @Autowired SubjectRepository subjects;
+    @Autowired io.seswar.warrant.audit.AuditIngestService ingest;
+    @Autowired io.seswar.warrant.node.NodeRegistry nodes;
 
     @BeforeEach
     void seed() {
@@ -137,6 +139,37 @@ class WarrantApiTest {
         mvc.perform(as(ALICE, get("/api/nodes"))).andExpect(status().isOk()).andExpect(jsonPath("$").isArray());
         mvc.perform(as(ALICE, get("/api/audit/unwarranted"))).andExpect(status().isOk()).andExpect(jsonPath("$").isArray());
         mvc.perform(as(ALICE, get("/api/audit/gaps"))).andExpect(status().isOk()).andExpect(jsonPath("$").isArray());
+    }
+
+    // warrantd 가 올린 커널 판정 기록을 대시보드가 읽는다. 최신 순, 노드는 이름으로.
+    @Test
+    void 커널_판정_기록을_최신_순으로_준다() throws Exception {
+        String host = "node-" + UUID.randomUUID();
+        UUID node = nodes.register("dev:" + host, new io.seswar.warrant.node.NodeRegistry.Report(
+                host, "6.8", true, "test", java.util.Set.of(), null, 9)).nodeId();
+        long now = java.time.Instant.now().toEpochMilli() * 1_000_000L;
+        var e = io.seswar.warrant.proto.AuditProtos.AuditEvent.newBuilder()
+                .setNodeSeq(1).setWallTsUnixNs(now).setWarrantId(8)
+                .setHook(io.seswar.warrant.proto.AuditProtos.Hook.HOOK_FILE_OPEN)
+                .setVerdict(io.seswar.warrant.proto.AuditProtos.Verdict.VERDICT_WOULD_DENY)
+                .setMode(io.seswar.warrant.proto.WarrantProtos.Mode.MODE_DRYRUN)
+                .setOrigin(io.seswar.warrant.proto.AuditProtos.Origin.ORIGIN_LSM)
+                .setTagSource(io.seswar.warrant.proto.AuditProtos.TagSource.TAG_CGROUP)
+                .setProcess(io.seswar.warrant.proto.AuditProtos.ProcessIdentity.newBuilder().setTgid(40).setUid(1000).setComm("touch").setCgroupId(59020))
+                .setFileWrite(io.seswar.warrant.proto.AuditProtos.FileWriteEvent.newBuilder()
+                        .setFile(io.seswar.warrant.proto.AuditProtos.FileRef.newBuilder().setDev(2049).setIno(131)))
+                .build();
+        ingest.ingest(node, io.seswar.warrant.audit.AuditProtoMapper.toBatch(node,
+                io.seswar.warrant.proto.AgentProtos.AuditBatch.newBuilder().setSeqEpoch(9).setLastNodeSeq(1).addEvents(e).build()));
+
+        mvc.perform(as(ALICE, get("/api/audit/events")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].node").value(host))
+                .andExpect(jsonPath("$[0].hook").value("HOOK_FILE_OPEN"))
+                .andExpect(jsonPath("$[0].verdict").value("WOULD_DENY"))
+                .andExpect(jsonPath("$[0].comm").value("touch"))
+                .andExpect(jsonPath("$[0].warrantId").value(8))
+                .andExpect(jsonPath("$[0].inode").value(131));
     }
 
     // 노드는 이 본문을 /etc/warrantd/keys/<X-Key-Id>.pem 으로 저장한다.

@@ -1,6 +1,7 @@
 package io.seswar.warrant.audit;
 
 import io.seswar.warrant.audit.AuditEvent;
+import org.springframework.data.domain.Limit;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -30,5 +31,6 @@ public interface AuditEventRepository extends JpaRepository<AuditEvent, UUID> {
     // Events attributed to one kernel warrant id within [from, to).
     long countByWarrantIdAndOccurredAtGreaterThanEqualAndOccurredAtLessThan(long warrantId, Instant from, Instant to);
 
-    // 남은 것: search(AuditQuery) — 감사 조회 API 를 붙일 때.
+    // Called by AuditQueryController. Newest first, within a time range so partitions are pruned.
+    List<AuditEvent> findByOccurredAtGreaterThanEqualOrderByOccurredAtDesc(Instant since, Limit limit);
 }

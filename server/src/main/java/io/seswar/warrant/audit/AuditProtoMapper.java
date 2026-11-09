@@ -77,12 +77,14 @@ public final class AuditProtoMapper {
                 .origin(AuditEvent.Origin.fromWire(p.getOriginValue()))
                 .tagSource(AuditEvent.TagSource.fromWire(p.getTagSourceValue()))
                 .warrantId(p.getWarrantId())
+                .hook((short) p.getHookValue())
                 .kernelSubjectId(p.getSubjectId() == 0 ? null : p.getSubjectId());
 
         if (p.hasProcess()) {
             AuditProtos.ProcessIdentity proc = p.getProcess();
             b.pid(Integer.toUnsignedLong(proc.getTgid()))
                     .uid(proc.getUid())
+                    .comm(emptyToNull(proc.getComm()))
                     .cgroupId(proc.getCgroupId());
         }
 

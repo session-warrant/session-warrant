@@ -92,6 +92,18 @@ class AuditProtoMapperTest {
         assertThat(e.getCgroupId()).isEqualTo(7594L);
     }
 
+    // 기록 종류(EXEC · INODE_MUTATE …)만으로는 unlink 인지 rename 인지, 자기보호의 어느 훅인지 모른다. 훅 번호를 그대로 남긴다.
+    // 프로세스 이름은 잘리고 위조 가능한 참고 정보지만, 화면에서 무엇이 일어났는지 읽는 첫 단서다.
+    @Test
+    void 훅_번호와_프로세스_이름도_남는다() {
+        AuditEvent e = only(base(1).setHook(Hook.HOOK_INODE_RENAME)
+                .setProcess(ProcessIdentity.newBuilder().setTgid(100).setComm("touch"))
+                .setInodeMutate(AuditProtos.InodeMutateEvent.getDefaultInstance()).build());
+
+        assertThat(e.getHook()).isEqualTo((short) Hook.HOOK_INODE_RENAME_VALUE);
+        assertThat(e.getComm()).isEqualTo("touch");
+    }
+
     @Test
     void 기록_종류는_담긴_내용으로_정해진다() {
         assertThat(only(base(1).setExec(ExecEvent.getDefaultInstance()).build()).getType())
