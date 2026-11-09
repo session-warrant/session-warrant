@@ -164,3 +164,21 @@ func TestAuditQueueOverflowDropsOldestAndReportsGap(t *testing.T) {
 		t.Fatalf("gap sent again after its batch was acked: %v", b.GetGaps())
 	}
 }
+
+// 커널 ringbuf 의 유실 구간은 그다음 이벤트와 같은 묶음으로 간다 — 서버가 빈 구간을 이벤트와 같은 순서로 받는다.
+func TestAuditQueueAppendGapTravelsWithTheNextEvent(t *testing.T) {
+	q := NewAuditQueue(10, 10)
+	q.Append(ev(100))
+	q.AppendGap(&pb.GapReport{FromUnixNs: 100, ToUnixNs: 110, DroppedCount: 3, DroppedCountKnown: true,
+		Cause: pb.GapReport_CAUSE_CPU_SEQ_SKIP})
+	q.Append(ev(110))
+
+	b, _ := q.Next(context.Background(), 1)
+	if !equal(seqs(b), []uint64{2}) || len(b.GetGaps()) != 1 || b.GetGaps()[0].GetDroppedCount() != 3 {
+		t.Fatalf("batch %v gaps %v, want event 2 with the gap", seqs(b), b.GetGaps())
+	}
+	b, _ = q.Next(context.Background(), 0)
+	if len(b.GetGaps()) != 1 {
+		t.Fatalf("a batch from the start must carry the gap too: %v", b.GetGaps())
+	}
+}

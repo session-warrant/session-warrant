@@ -76,13 +76,22 @@ func (q *AuditQueue) Append(e *pb.AuditEvent) uint64 {
 	return e.NodeSeq
 }
 
+// AppendGap queues a loss reported by the kernel side (ringbuf cpu_seq skip). It rides in the batch of the
+// next appended event, so the server sees the hole where it happened.
+func (q *AuditQueue) AppendGap(g *pb.GapReport) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.gaps = append(q.gaps, queuedGap{beforeSeq: q.nextSeq, gap: g})
+}
+
 // Drops events[0] and widens the trailing LOCAL_STORE_FULL gap if the drop is contiguous with it.
 func (q *AuditQueue) dropOldest() {
 	lost := q.events[0]
 	q.events = q.events[1:]
 	head := q.events[0].NodeSeq
 
-	if n := len(q.gaps); n > 0 && q.gaps[n-1].beforeSeq == lost.NodeSeq {
+	if n := len(q.gaps); n > 0 && q.gaps[n-1].beforeSeq == lost.NodeSeq &&
+		q.gaps[n-1].gap.GetCause() == pb.GapReport_CAUSE_LOCAL_STORE_FULL {
 		g := proto.Clone(q.gaps[n-1].gap).(*pb.GapReport)
 		g.ToUnixNs = lost.WallTsUnixNs
 		g.DroppedCount++
