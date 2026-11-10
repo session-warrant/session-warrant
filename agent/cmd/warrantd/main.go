@@ -5,7 +5,8 @@
 //   - registry.go: 영장을 정책 → 규칙 → 영장 순으로 맵에 넣고 active_flag 를 켠다. 출처는 -warrants 파일과 중앙 push 둘이다
 //   - warrants.go: 파일 읽기 · 시각 변환 · 세션과 영장 맞추기
 //   - binder.go: PAM 세션이 열리면 계정 · 키가 맞는 영장을 cgroup 에 붙이고, 없으면 무영장 사유를 기록한다. 닫히면 태그를 뗀다
-//   - -upstream 이 있으면 무영장 세션을 메모리 큐에 쌓아 중앙으로 올린다 (store.AuditQueue → upstream.StreamAudit)
+//   - -upstream 이 있으면 무영장 세션과 커널 판정 기록 · 유실 구간을 메모리 큐에 쌓아 중앙으로 올린다
+//     (audit.go: ringbuf → AuditEvent, store.AuditQueue → upstream.StreamAudit)
 //     -trust-keys 에 서명 키가 있으면 영장 push 도 받는다 (upstream.Subscribe → registry.Apply)
 //
 // 기동 순서 (바꾸지 말 것):
@@ -153,19 +154,8 @@ func run(pinDir, objPath, socketPath, upstreamEP, warrantsPath, trustDir string)
 		return err
 	}
 
-	cons, err := ringbuf.Open(pinDir)
-
-	runErr := make(chan error, 1)
-
-	if err == nil {
-		defer cons.Close()
-		cons.OnGap(logGap)
-		go func() { runErr <- cons.Run(ctx, logRecord) }()
-	} else {
-		log.Printf("ringbuf: open %s: %v", pinDir, err)
-	}
-
 	b := &binder{maps: maps, warrants: reg}
+	var up kernelUpload
 
 	// Upstream failing never stops warrantd: tagging and the kernel keep working (§17).
 	if upstreamEP != "" {
@@ -176,12 +166,25 @@ func run(pinDir, objPath, socketPath, upstreamEP, warrantsPath, trustDir string)
 			defer client.Close()
 			q := store.NewAuditQueue(10_000, 500)
 			b.audit = q
+			up.q = q
 			hello := nodeHello(hooksFromSections(attached))
 			go client.StreamAudit(ctx, hello, q)
 			if len(reg.keys) > 0 {
 				go client.Subscribe(ctx, hello, reg)
 			}
 		}
+	}
+
+	cons, err := ringbuf.Open(pinDir)
+
+	runErr := make(chan error, 1)
+
+	if err == nil {
+		defer cons.Close()
+		cons.OnGap(up.gap)
+		go func() { runErr <- cons.Run(ctx, up.record) }()
+	} else {
+		log.Printf("ringbuf: open %s: %v", pinDir, err)
 	}
 
 	serveErr := make(chan error, 1)

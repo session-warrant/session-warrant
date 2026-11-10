@@ -58,6 +58,10 @@ for-select (종료 신호 · 소켓 오류 · ringbuf 오류)
 
 ## 2. 영장 받기와 설치
 
+서버 쪽 앞단: 콘솔에서 **신청**(REQUESTED, 서명 없음) → **다른 사람이 승인**(본인이면 403) → 그 순간부터 기간 시작 ·
+protobuf 로 굳혀 Ed25519 서명 → 커밋 뒤 아래 스트림으로 push. 신청 · 발급 · 반려 · 회수는 계보에 누가 했는지와 함께 남는다
+(`server/README.md` 「영장 발급」). 아래는 노드가 받는 쪽이다.
+
 ```
 중앙 WarrantPushService.Subscribe (스트림)
    │  활성 집합 전체 → ResyncComplete → 이후 변경분
@@ -332,16 +336,31 @@ ringbuf.Consumer.Run (warrantd)
    │ (cpu, cpu_seq) 가 기대한 다음 번호인가
    │   건너뛰었으면 → Gap{from = 그 CPU 의 마지막 레코드 시각, to = 건너뛴 레코드 시각, dropped}
    ▼
-logRecord → journal                  ← 지금은 여기까지. 서버로는 아직 안 올린다
+kernelUpload.record (cmd/warrantd)
+   │ logRecord → journal
+   │ kernelEvent: boot_ts + (지금 벽시계 − 지금 boot 시계) = wall_ts, 훅별 payload
+   │   못 읽는 레코드는 보내지 않는다 — 하나라도 섞이면 서버가 묶음 전체를 거부한다
+   ▼
+store.AuditQueue.Append → upstream.StreamAudit → 서버 AuditIngestService → audit_event (received_seq 를 받은 순서로 매긴다)
+                                                   │ 커밋 뒤
+                                                   ▼
+                                    AuditStream: SSE 「새 기록 있음」 → 대시보드 → GET /api/audit/events?after=<받은 순번>
 ```
 
 - **번호를 먼저 올리는 게 핵심이다.** reserve 가 성공한 뒤에 올리면, 버려진 이벤트가 번호도 남기지 않고 사라진다.
 - 빈 구간을 숨기지 않는다 (§13). 유실은 「조용한 시간」과 구분되어야 한다.
-- Gap 시각은 boot 기준이다(`FromBootNs` · `ToBootNs`). 서버로 올리는 쪽이 벽시계로 바꿔 `from_unix_ns` 에 넣어야 한다.
+- 커널은 boot 시각만 안다. 벽시계 변환은 warrantd 가 레코드마다 한다(`bootOffset`) — 시계가 바뀌면 바로 반영된다.
+  Gap 도 같은 변환을 거쳐 `AppendGap` 으로 다음 묶음에 실린다.
 - 기록 절제: 차단은 전건, 허용은 실행 · 접속 · fork 만. 허용된 쓰기까지 남기면 ringbuf 가 넘쳐 정작 차단 기록이 밀린다.
-- 미러(kprobe) 레코드는 `logRecord` 가 건너뛴다. 대조용이다.
+- 미러(kprobe) 레코드는 journal 에는 안 찍고 서버로는 `origin=KPROBE` 로 올린다. LSM 판정과 대조하는 용도라
+  대시보드는 LSM 것만 보여준다(같은 건을 두 번 세지 않게). fork 도 판정이 아니라 대시보드에서 뺀다.
+- **대시보드는 발생 시각이 아니라 받은 순번으로 이어 받는다.** 서버가 죽어 있던 동안 노드가 쌓아 둔 기록은 재전송될 때
+  발생 시각이 이미 과거라서, 「마지막 시각 이후」로 물으면 영영 빠진다. 받은 순번이 커밋 순서와 같아야 하므로
+  적재는 한 번에 하나씩 한다(`pg_advisory_xact_lock`). 그리는 위치는 여전히 발생 시각이다.
+- SSE 에는 기록을 싣지 않는다. 알림을 놓쳐도(끊김 · 재시작) 다시 붙을 때 오는 `ready` 에서 같은 조회를 하므로 빠지지 않는다.
 
-코드: `bpf/warrant.bpf.c` `emit`, `agent/internal/ringbuf/ringbuf.go` `Run` · `checkGap`, `agent/cmd/warrantd/main.go` `logRecord` · `logGap`
+코드: `bpf/warrant.bpf.c` `emit`, `agent/internal/ringbuf/ringbuf.go` `Run` · `checkGap`, `agent/cmd/warrantd/audit.go` `kernelUpload` · `kernelEvent` · `kernelGap`, `server/.../audit/AuditIngestService.java` `ingest`, `AuditStream`, `AuditQueryController.java` `events` · `stream`,
+대시보드 `src/live.ts` `follow` · `catchUp`
 
 ---
 
@@ -397,8 +416,6 @@ policyInstaller.recompile → Compile → Apply (같은 policy_id 로 덮어쓴�
 
 - **bbolt `store`:** 재시작한 warrantd 는 전에 받은 중앙 영장을 모른다. warrantd 가 꺼진 동안 서버에서 취소된 영장은
   맵에서 만료될 때까지 산다. 감사 큐도 재시작하면 잃는다.
-- **커널 기록 업로드:** 흐름 9 의 레코드가 journal 에서 멈춘다. 서버로 가는 건 흐름 8 의 무영장 세션뿐이다.
 - **영장 세션 기록:** 영장이 맞은 세션은 서버에 안 올라간다. 「조직 전체 SSH 접속 현황」을 셀 수 없다.
-- **서버 push:** `WarrantPushGrpcService` · 서명(`WarrantSigner`)이 껍데기다. 흐름 2 는 가짜 중앙으로만 확인했다.
 - **mTLS · Heartbeat · 연장 요청 · LookupActiveWarrant** (`upstream`).
 - **KILL · SESSION_ONLY_GRACE 만료 처리** (흐름 6).

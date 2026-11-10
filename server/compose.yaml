@@ -46,6 +46,22 @@ services:
       - ../deploy/grafana/provisioning:/etc/grafana/provisioning:ro
       - ../deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
 
+  # 콘솔 로그인(OIDC). oidc 프로필에서만 쓴다: docker compose -f compose.yaml --profile oidc up -d
+  # realm 은 처음 뜰 때 deploy/keycloak/warrant-realm.json 에서 들여오고, 사용자는 deploy/keycloak/seed-users.sh 로 넣는다.
+  # 8180 — 서버가 8080 이라 Keycloak 기본 포트를 옮긴다. 관리 콘솔 http://localhost:8180/admin (개발용 admin 계정).
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.4.0
+    profiles: ["oidc"]
+    command: ["start-dev", "--import-realm", "--http-port=8180"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+    ports:
+      - "127.0.0.1:8180:8180"
+    volumes:
+      - ../deploy/keycloak:/opt/keycloak/data/import:ro
+      - keycloak-data:/opt/keycloak/data
+
   # 로컬 경보 수신기. 받은 웹훅을 본문째 로그로 찍는다: docker compose -f server/compose.yaml logs -f alert-sink
   alert-sink:
     image: mendhak/http-https-echo:42
@@ -54,4 +70,5 @@ services:
       LOG_IGNORE_PATH: /healthz
 
 volumes:
+  keycloak-data:
   warrant-pg:

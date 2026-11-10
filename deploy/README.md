@@ -121,8 +121,10 @@ sudo deploy/systemd/install.sh --uninstall             # 제거. pin 은 남긴�
   서버가 키를 바꿨는데 이 노드의 `/etc/warrantd/keys/` 에 새 키가 없다. 그동안 새 발급은 거부되고 기존 영장은 만료까지 간다.
 - bbolt 캐시가 아직 없다. 재시작하면 warrantd 는 이전에 받은 영장을 모르고, 맵에 pin 된 값만 남는다. 다음 resync 가 다시 채우지만,
   **warrantd 가 꺼져 있는 동안 서버에서 취소된 영장은 맵에서 만료될 때까지 살아 있다.** `store` 가 서야 닫힌다.
-- 서버 쪽 `WarrantPushGrpcService` 는 아직 껍데기다. **2026-11-07 VM 확인**은 서명하는 가짜 중앙으로 했다: 설치 → 세션 태그 →
-  허용 밖 쓰기 `DRY-DENY` → 6초 뒤 취소 push → 같은 세션의 실행 · 쓰기가 전부 `DRY-DENY` → 새 세션은 `NO_WARRANT`.
+- **2026-11-08 진짜 서버로 확인:** `SPRING_PROFILES_ACTIVE=dev ./gradlew bootRun` → `GET /api/signing-key` 를
+  `/etc/warrantd/keys/central.pem` 으로 → `-upstream host.lima.internal:9090` → curl 로 발급하자 0.1초 뒤 `installed 1 rev=1` →
+  세션 태그 · 허용 밖 쓰기 `DRY-DENY` → 세션이 열린 채 `DELETE /api/warrants/{id}` → `rev=2 revoked=true` → 같은 세션의 실행 · 쓰기
+  전부 `DRY-DENY` → 새 세션 `NO_WARRANT`. 발급 API 는 `server/README.md` 「영장 발급」.
 
 `ansible/` 은 노드가 여러 대가 되는 시점에. 지금은 이르다.
 

@@ -58,4 +58,7 @@ warrant:
     max-window: PT2H                # 무기한 유예는 존재하지 않는다(§03)
 
   signing:
-    key-path: ${WARRANT_SIGNING_KEY:/etc/warrant/signing.key}
+    # Ed25519 개인키(PEM). 없으면 새로 만들고 공개키를 옆에 <key-path>.pub 로 둔다 — 로컬 개발용.
+    # 노드는 공개키를 /etc/warrantd/keys/<key-id>.pem 으로 받아야 push 를 받는다 (GET /api/signing-key).
+    key-path: ${WARRANT_SIGNING_KEY:.cache/signing.key}
+    key-id: ${WARRANT_SIGNING_KEY_ID:central}

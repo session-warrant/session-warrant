@@ -1,0 +1,12 @@
+# dev 프로필 — 로컬 개발 전용. SPRING_PROFILES_ACTIVE=dev ./gradlew bootRun
+# OIDC 가 붙기 전까지 콘솔 로그인 계정을 여기 적는다. 회원가입은 없다. 비밀번호는 BCrypt 해시만 둔다.
+#   해시 만들기: htpasswd -nbBC 10 "" '<비밀번호>' | cut -d: -f2
+# 로그인한 이메일과 principal 이 같은 주체(subject)가 콘솔의 「나」다.
+warrant:
+  dev:
+    accounts:
+      - email: dev@example.com
+        password: "{bcrypt}$2y$10$2JXhyI1btfbhsNFaezG9ye7plxCvyTkhnCzUTPkg7qSRDGMyxV0E."
+      # Claude 가 신청자 역할로 쓰는 계정. 평문은 server/.cache/dev-accounts.txt (git 무시)
+      - email: claude@example.com
+        password: "{bcrypt}$2y$10$RtunLFMIiv4//hODb1qgAeH0JnX61e7eY5Fv0beILBZho7038iIv."
