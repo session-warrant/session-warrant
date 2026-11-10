@@ -5,7 +5,7 @@
 warrant:
   dev:
     accounts:
-      - email: jnghukkim@gmail.com
+      - email: dev@example.com
         password: "{bcrypt}$2y$10$2JXhyI1btfbhsNFaezG9ye7plxCvyTkhnCzUTPkg7qSRDGMyxV0E."
       # Claude 가 신청자 역할로 쓰는 계정. 평문은 server/.cache/dev-accounts.txt (git 무시)
       - email: claude@example.com

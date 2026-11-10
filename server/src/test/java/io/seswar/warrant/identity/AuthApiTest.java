@@ -43,7 +43,7 @@ class AuthApiTest {
         r.add("warrant.signing.key-path", () -> path);
     }
 
-    static final String EMAIL = "jnghukkim@gmail.com";
+    static final String EMAIL = "dev@example.com";
     static final String PASSWORD = "1234";
 
     @Autowired MockMvc mvc;
