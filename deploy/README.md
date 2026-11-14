@@ -126,6 +126,35 @@ sudo deploy/systemd/install.sh --uninstall             # 제거. pin 은 남긴�
   세션 태그 · 허용 밖 쓰기 `DRY-DENY` → 세션이 열린 채 `DELETE /api/warrants/{id}` → `rev=2 revoked=true` → 같은 세션의 실행 · 쓰기
   전부 `DRY-DENY` → 새 세션 `NO_WARRANT`. 발급 API 는 `server/README.md` 「영장 발급」.
 
+### 노드 인증서 — mTLS (`pki/pki.sh`)
+
+노드 ↔ 중앙 gRPC 는 mTLS 다. 중앙은 **사내 CA 가 서명한 노드 인증서로만** 노드를 받고, 노드 신원은 그 인증서의 sha256 지문이다.
+노드가 NodeHello 로 말하는 호스트 이름은 인증서 CN 과 같아야 한다 — 다르면 감사 스트림 · 영장 구독 모두 `PERMISSION_DENIED`.
+
+```sh
+# 맥(중앙 쪽). 결과는 .cache/pki (git 무시). ca.key 는 중앙 밖으로 내보내지 않는다
+deploy/pki/pki.sh ca
+deploy/pki/pki.sh server localhost 127.0.0.1 host.lima.internal   # 노드가 서버를 부르는 이름 · 주소 전부
+deploy/pki/pki.sh node lima-sw                                     # CN = 노드의 hostname
+
+# 노드. ca.pem 과 그 노드의 인증서 · 키만 둔다(키는 0600)
+sudo install -d -m 0700 /etc/warrantd/tls
+sudo install -m 0644 .cache/pki/ca.pem .cache/pki/nodes/lima-sw.pem /etc/warrantd/tls/
+sudo install -m 0600 .cache/pki/nodes/lima-sw.key /etc/warrantd/tls/
+sudo deploy/systemd/install.sh -upstream host.lima.internal:9090 \
+  -tls-cert /etc/warrantd/tls/lima-sw.pem -tls-key /etc/warrantd/tls/lima-sw.key -tls-ca /etc/warrantd/tls/ca.pem
+```
+
+- 서버는 `SPRING_PROFILES_ACTIVE=oidc,mtls` 로 띄운다(`server/README.md`). `mtls` 없이 띄우면 평문이다 — 로컬 개발 전용.
+- `-tls-*` 는 셋 다 주거나 셋 다 비운다. 하나라도 빠지면 warrantd 는 평문으로 내려가지 않고 「로컬 전용」으로 돈다(집행은 계속).
+- 이미 설치한 노드는 `install.sh` 가 `/etc/default/warrantd` 를 덮어쓰지 않는다 — 그 파일의 `WARRANTD_ARGS` 를 직접 고친다.
+- mTLS 전에 `dev:<hostname>` 으로 등록된 노드는 같은 이름의 인증서로 처음 붙을 때 그 행을 넘겨받는다(감사 기록이 한 노드에 남는다).
+  인증서끼리는 넘겨받지 않는다 — 같은 이름으로 새 인증서를 만들면 새 노드다.
+- 폐기 목록(CRL)은 아직 없다. 노드를 빼려면 CA 를 새로 만들어 남는 노드에 다시 발급하는 수밖에 없다.
+- **2026-11-14 실서버로 확인:** 평문 warrantd 는 `error reading server preface: EOF` 로 끊기고, 인증서를 단 warrantd 는
+  `resync complete` → VM 로그인 한 건이 `unwarranted_session` 에 들어오며 노드 행이 `dev:lima-sw` → `sha256:9899…` 로 바뀌었다.
+  인증서 없이 openssl 로 붙으면 TLS 1.3 `certificate required`(alert 116).
+
 `ansible/` 은 노드가 여러 대가 되는 시점에. 지금은 이르다.
 
 ## Grafana (`grafana/`)

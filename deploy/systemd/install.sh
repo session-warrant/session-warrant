@@ -1,7 +1,7 @@
 #!/bin/sh
 # 노드에 warrantd 를 설치하고 켠다. 리포 최상단에서, 빌드가 끝난 뒤:
 #   make -C bpf warrant.bpf.o && (cd agent && go build -o ../.cache/bin/warrantd ./cmd/warrantd)
-#   sudo deploy/systemd/install.sh [-upstream 호스트:9090]
+#   sudo deploy/systemd/install.sh [-upstream 호스트:9090 -tls-cert … -tls-key … -tls-ca …]   (mTLS: deploy/README.md)
 #   sudo deploy/systemd/install.sh --uninstall      # 유닛 · 바이너리 제거. pin 은 남긴다(재부팅하면 사라진다)
 #
 # 인자는 그대로 /etc/default/warrantd 의 WARRANTD_ARGS 가 된다. 이미 있으면 덮어쓰지 않는다.

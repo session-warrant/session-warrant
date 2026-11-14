@@ -54,6 +54,11 @@ public class Node {
     private Instant bootedAt;
 
     // Called by NodeRegistry.register when a known node reconnects. Overwrites what the node reports about itself.
+    // Called by NodeRegistry when a node first connects with a certificate: its identity becomes the certificate.
+    void identifyBy(String certificateIdentity) {
+        this.clientCertFingerprint = certificateIdentity;
+    }
+
     public void refresh(String hostname, String kernelVersion, boolean bpfLsmEnabled, String agentVersion,
                         Set<String> attachedHooks, Instant bootedAt, long seqEpoch, Instant now) {
         this.hostname = hostname;

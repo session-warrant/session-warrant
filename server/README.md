@@ -92,8 +92,10 @@ warrantd Subscribe → WarrantPushGrpcService 스트림 등록 → 그 호스트
 | `DELETE /api/warrants/{id}` | 회수 |
 | `GET /api/signing-key` | 노드에 심을 공개키 PEM. 헤더 `X-Key-Id` 가 파일 이름 |
 | `GET /api/nodes` · `/api/audit/unwarranted` · `/api/audit/gaps` | 대시보드용 읽기. 감사 스트림으로 들어온 노드 · 무영장 세션 · 유실 구간, 최신 순. 기간 필터 · 페이지는 아직 없다 |
-| `GET /api/audit/events?since=&limit=` | 커널 판정 기록, 최신 순. 기본 최근 24시간 · 1000건(최대 5000). 훅은 proto 이름(`HOOK_FILE_OPEN`), kprobe 미러 · fork 도 그대로 준다 — 거르는 건 화면 몫 |
+| `GET /api/audit/events?since=&until=&limit=` | 커널 판정 기록, 최신 순. 기본 최근 24시간 · 1000건(최대 5000). `until` 은 그 시각 전까지. 헤더 `X-Audit-Total` 이 한도 없이 센 건수다. 훅은 proto 이름(`HOOK_FILE_OPEN`) |
+| `…&kind=verdict` · `…&node=<호스트>` | 두 형태 모두에 붙는다. `kind=verdict` 는 LSM 판정만(kprobe 미러 · fork 를 빼서 한도를 판정에 쓴다), `node` 는 호스트 이름 |
 | `GET /api/audit/events?after=<순번>&limit=` | 이어 받기. 서버가 그 순번 뒤에 **받은** 것, 받은 순(발생 시각은 과거일 수 있다). 두 형태 모두 헤더 `X-Audit-Cursor` 가 다음 `after` 다 |
+| `GET /api/audit/summary?from=&to=&bucketSeconds=&origin=&node=` | 「구간 선택」 막대 집계. `[from, to)` 를 막대로 나눠 막대 · 훅 · 판정 · 영장 여부(`warranted`)별 건수. LSM 판정만 센다. 막대 경계는 `origin` + k · bucket(대시보드는 지역 자정을 보낸다). 막대가 5000개를 넘거나 `from ≥ to` 면 400 |
 | `GET /api/audit/stream` | SSE. 처음에 `ready`, 새 행이 저장되면 `audit`(data 는 새 행 수 `{"events","gaps","unwarrantedSessions"}` 뿐 — 기록은 위 조회로). 25초마다 빈 주석, 30분이면 끊고 브라우저가 다시 붙는다. 서버 한 대 안에서만 퍼진다 |
 
 - **로그인은 두 가지다. 둘 다 `/api/**` 는 로그인해야 열리고(공개키만 예외), 역할 규칙 · CSRF 가 같다**(`identity/SecurityConfig`).
@@ -109,7 +111,10 @@ warrantd Subscribe → WarrantPushGrpcService 스트림 등록 → 그 호스트
     curl 은 `-u <이메일>:<비밀번호>`(Basic). dev 계정은 역할을 전부 가진다. 해시: `htpasswd -nbBC 10 "" '<비밀번호>' | cut -d: -f2`.
 - 서명 키는 `warrant.signing.key-path`(기본 `.cache/signing.key`). 없으면 만들고 공개키를 `.pub` 로 옆에 둔다.
   **키를 지우면 새 키가 생긴다** — 노드는 그 뒤 push 를 전부 거부한다(`RESYNC SKIPPED`).
-- 노드 신원은 mTLS 전까지 노드가 신고한 hostname 이다. 영장의 `targetHosts` 와 같은 이름으로 맞춘다.
+- **노드 신원은 mTLS 클라이언트 인증서다**(`mtls` 프로필, 2026-11-14). `SPRING_PROFILES_ACTIVE=oidc,mtls` 로 띄우면 gRPC(:9090)가 TLS 가 되고
+  사내 CA(`deploy/pki/pki.sh`)가 서명한 인증서 없이는 붙지 못한다. 신원은 `sha256:<인증서 지문>`, 노드가 말하는 hostname 은 인증서 CN 과
+  같아야 한다(다르면 `PERMISSION_DENIED`). `mtls` 없이 띄우면 평문이고 신원은 `dev:<hostname>` — 로컬 개발 전용.
+  인증서 경로는 `WARRANT_TLS_DIR`(기본 `../.cache/pki`). 영장의 `targetHosts` 는 그 CN 과 같은 이름으로 맞춘다.
 - 계보(`warrant_lineage`)는 append-only — 저장소에 `save` 와 조회만 연다. 상태는 `warrant` 에 비정규화해 둔다.
 - 같은 클래스 안에서 `@Transactional` 메서드를 부르면 프록시를 안 거쳐 트랜잭션이 없다 — 바깥 메서드에도 붙인다
   (`WarrantRevocationService.revoke(id)` 가 그래서 취소를 저장하지 못한 적이 있다).
@@ -222,6 +227,22 @@ warrantd → `AuditIngestGrpcService`(gRPC 스트림) → `AuditIngestService.in
 | `from` · `to` | 빠진 구간. 칼럼 이름은 `from_at` · `to_at` — `from` · `to` 가 SQL 예약어라서 |
 | `droppedCount` | 커널 ringbuf 가 보고한 드롭 수. **모르면 NULL** — 0 과 구분한다 |
 | `cause` | proto `GapReport.Cause`: `RINGBUF_OVERFLOW` · `AGENT_DOWN` · `LOCAL_STORE_FULL` · `CPU_SEQ_SKIP` |
+
+## 더미 감사 데이터 (`dev/dummy-audit.sh`)
+
+대시보드 「구간」을 큰 데이터로 시험할 때 로컬 DB 에 지난 30일치를 넣는다. 실제 기록과 섞이지 않는다.
+
+```sh
+dev/dummy-audit.sh seed 2     # audit_event 가 약 2GB 늘 때까지 50만 건씩
+dev/dummy-audit.sh size       # 더미 건수 · 크기
+dev/dummy-audit.sh clean      # 더미 노드에 딸린 것만 지우고 VACUUM FULL
+```
+
+- 노드 4대(`dummy-web-01` · `dummy-web-02` · `dummy-db-01` · `dummy-app-01`), `client_cert_fingerprint` 가 `dummy:` 로 시작한다.
+  `dummy-app-01` 은 ENFORCE(차단 = DENY), 나머지는 DRYRUN(WOULD_DENY).
+- 영장 번호 9001~9060 은 서버에 없는 번호라 화면에 `#9001` 로 보인다. 무영장 세션 400건 · 유실 구간 40건도 같이 넣는다.
+- **`received_seq` 가 음수다.** 대시보드는 「받은 순번 N 뒤」로 이어 받으므로, 양수로 넣으면 열려 있던 화면이 수백만 건을
+  따라잡는다. 음수면 발생 시각으로 고르는 구간 조회 · 집계에만 잡힌다.
 
 ## 의존성에서 한 번 걸리는 지점
 
