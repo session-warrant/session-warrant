@@ -111,7 +111,10 @@ warrantd Subscribe → WarrantPushGrpcService 스트림 등록 → 그 호스트
     curl 은 `-u <이메일>:<비밀번호>`(Basic). dev 계정은 역할을 전부 가진다. 해시: `htpasswd -nbBC 10 "" '<비밀번호>' | cut -d: -f2`.
 - 서명 키는 `warrant.signing.key-path`(기본 `.cache/signing.key`). 없으면 만들고 공개키를 `.pub` 로 옆에 둔다.
   **키를 지우면 새 키가 생긴다** — 노드는 그 뒤 push 를 전부 거부한다(`RESYNC SKIPPED`).
-- 노드 신원은 mTLS 전까지 노드가 신고한 hostname 이다. 영장의 `targetHosts` 와 같은 이름으로 맞춘다.
+- **노드 신원은 mTLS 클라이언트 인증서다**(`mtls` 프로필, 2026-11-14). `SPRING_PROFILES_ACTIVE=oidc,mtls` 로 띄우면 gRPC(:9090)가 TLS 가 되고
+  사내 CA(`deploy/pki/pki.sh`)가 서명한 인증서 없이는 붙지 못한다. 신원은 `sha256:<인증서 지문>`, 노드가 말하는 hostname 은 인증서 CN 과
+  같아야 한다(다르면 `PERMISSION_DENIED`). `mtls` 없이 띄우면 평문이고 신원은 `dev:<hostname>` — 로컬 개발 전용.
+  인증서 경로는 `WARRANT_TLS_DIR`(기본 `../.cache/pki`). 영장의 `targetHosts` 는 그 CN 과 같은 이름으로 맞춘다.
 - 계보(`warrant_lineage`)는 append-only — 저장소에 `save` 와 조회만 연다. 상태는 `warrant` 에 비정규화해 둔다.
 - 같은 클래스 안에서 `@Transactional` 메서드를 부르면 프록시를 안 거쳐 트랜잭션이 없다 — 바깥 메서드에도 붙인다
   (`WarrantRevocationService.revoke(id)` 가 그래서 취소를 저장하지 못한 적이 있다).

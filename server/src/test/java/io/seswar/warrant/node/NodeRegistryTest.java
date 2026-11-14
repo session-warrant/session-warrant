@@ -93,6 +93,29 @@ class NodeRegistryTest {
         assertThat(row.get("last_seen_at")).isNotNull();
     }
 
+    // mTLS 이전에 「dev:호스트」로 등록된 노드가 인증서로 처음 붙으면 그 행을 넘겨받는다 — 노드가 둘로 갈라지면
+    // 그동안의 감사 기록이 옛 노드에 남고 화면에 같은 이름이 두 번 뜬다.
+    @Test
+    void 예전_호스트_이름_신원은_같은_호스트의_인증서가_넘겨받는다() {
+        UUID old = registry.register("dev:node-a", report("node-a", Set.of(), 7)).nodeId();
+        Registration now = registry.register("sha256:ab12", report("node-a", Set.of(), 8));
+
+        assertThat(now.nodeId()).isEqualTo(old);
+        assertThat(now.created()).isFalse();
+        assertThat(row(old).get("client_cert_fingerprint")).isEqualTo("sha256:ab12");
+        assertThat(jdbc.queryForObject("select count(*) from node", Long.class)).isEqualTo(1);
+    }
+
+    // 인증서끼리는 넘겨받지 않는다. 같은 이름의 새 인증서는 새 노드다 — 옛 인증서를 가로채는 길이 되면 안 된다.
+    @Test
+    void 이미_인증서로_등록된_노드는_다른_인증서가_넘겨받지_못한다() {
+        UUID first = registry.register("sha256:aaaa", report("node-a", Set.of(), 7)).nodeId();
+        UUID second = registry.register("sha256:bbbb", report("node-a", Set.of(), 7)).nodeId();
+
+        assertThat(second).isNotEqualTo(first);
+        assertThat(row(first).get("client_cert_fingerprint")).isEqualTo("sha256:aaaa");
+    }
+
     @Test
     void 같은_노드가_다시_접속하면_새로_만들지_않는다() {
         UUID first = registry.register("dev:node-a", report("node-a", Set.of(), 7)).nodeId();

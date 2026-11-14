@@ -3,6 +3,7 @@ package io.seswar.warrant.audit;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.seswar.warrant.audit.AuditIngestService;
+import io.seswar.warrant.node.NodePeer;
 import io.seswar.warrant.node.NodeRegistry;
 import io.seswar.warrant.proto.AgentProtos.AuditAck;
 import io.seswar.warrant.proto.AgentProtos.AuditBatch;
@@ -21,7 +22,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class AuditIngestGrpcService extends AuditIngestServiceGrpc.AuditIngestServiceImplBase {
 
-    // Until mTLS lands the identity is the reported hostname; "dev:" marks it as local-only.
+    // Without mTLS (local development) a node is its reported hostname; "dev:" marks it as unverified.
     private static final String DEV_IDENTITY_PREFIX = "dev:";
 
     private final AuditIngestService auditIngestService;
@@ -30,6 +31,25 @@ public class AuditIngestGrpcService extends AuditIngestServiceGrpc.AuditIngestSe
     @Override
     public StreamObserver<AuditBatch> stream(StreamObserver<AuditAck> ack) {
         return new IngestStream(ack);
+    }
+
+    /** 인증서와 다른 호스트 이름을 댔다. 남의 노드 이름으로 기록을 올리는 길이다. */
+    static final class NodeImpersonation extends RuntimeException {
+        NodeImpersonation(String message) {
+            super(message);
+        }
+    }
+
+    // With a client certificate the node is that certificate, and must call itself by the certificate's name.
+    static String identityOf(String hostname) {
+        NodePeer peer = NodePeer.current();
+        if (peer == null) {
+            return DEV_IDENTITY_PREFIX + hostname;
+        }
+        if (!hostname.equals(peer.hostname())) {
+            throw new NodeImpersonation("certificate is for " + peer.hostname() + ", NodeHello says " + hostname);
+        }
+        return peer.identity();
     }
 
     private final class IngestStream implements StreamObserver<AuditBatch> {
@@ -53,6 +73,8 @@ public class AuditIngestGrpcService extends AuditIngestServiceGrpc.AuditIngestSe
                 identify(batch);
                 store(batch);
                 ackThrough(batch);
+            } catch (NodeImpersonation e) {
+                fail(Status.PERMISSION_DENIED, e);
             } catch (IllegalArgumentException e) {
                 fail(Status.INVALID_ARGUMENT, e);
             }
@@ -92,7 +114,7 @@ public class AuditIngestGrpcService extends AuditIngestServiceGrpc.AuditIngestSe
             if (batch.hasNode()) {
                 NodeRegistry.Report report = AuditProtoMapper.toReport(batch.getNode(), epoch);
                 if (first) {
-                    identity = DEV_IDENTITY_PREFIX + report.hostname();
+                    identity = identityOf(report.hostname());
                 }
                 nodeId = nodeRegistry.register(identity, report).nodeId();
             }

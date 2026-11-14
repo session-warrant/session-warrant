@@ -21,6 +21,9 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class NodeRegistry {
 
+    /** mTLS 없이(로컬 개발) 붙은 노드의 신원 앞머리. AuditIngestGrpcService 와 같다. */
+    static final String DEV_PREFIX = "dev:";
+
     private final NodeRepository nodes;
     private final Clock clock;
 
@@ -38,6 +41,15 @@ public class NodeRegistry {
     public Registration register(String identity, Report report) {
         Instant now = clock.instant();
         Optional<Node> found = nodes.findByClientCertFingerprint(identity);
+        // A node registered before mTLS ("dev:<host>") is taken over by the first certificate for that host,
+        // so its audit history stays on one node. Certificates never take over each other.
+        if (found.isEmpty() && !identity.startsWith(DEV_PREFIX)) {
+            found = nodes.findByClientCertFingerprint(DEV_PREFIX + report.hostname());
+            found.ifPresent(n -> {
+                log.info("node {} ({}) now identified by certificate {}", n.getId(), n.getHostname(), identity);
+                n.identifyBy(identity);
+            });
+        }
 
         if (found.isEmpty()) {
             Node created = nodes.saveAndFlush(Node.builder()
