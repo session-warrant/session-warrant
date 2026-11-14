@@ -8,6 +8,7 @@
 //   - -upstream 이 있으면 무영장 세션과 커널 판정 기록 · 유실 구간을 메모리 큐에 쌓아 중앙으로 올린다
 //     (audit.go: ringbuf → AuditEvent, store.AuditQueue → upstream.StreamAudit)
 //     -trust-keys 에 서명 키가 있으면 영장 push 도 받는다 (upstream.Subscribe → registry.Apply)
+//     -tls-cert · -tls-key · -tls-ca 가 있으면 중앙과 mTLS 로 붙는다 — 중앙은 이 인증서로 노드를 가린다 (deploy/pki/pki.sh)
 //
 // 기동 순서 (바꾸지 말 것):
 //  1. loader.Load     pin 된 맵이 있으면 재사용
@@ -53,12 +54,15 @@ func main() {
 		upstreamEP = flag.String("upstream", "", "중앙 gRPC 엔드포인트. 비어 있으면 로컬 전용")
 		warrantsAt = flag.String("warrants", "/etc/warrantd/warrants.json", "로컬 영장 파일 (Warrant JSON 배열). 없으면 영장 없이 돈다")
 		trustKeys  = flag.String("trust-keys", "/etc/warrantd/keys", "중앙 서명 공개키 디렉터리 (<key_id>.pem). 비어 있으면 영장 push 를 받지 않는다")
+		tlsCert    = flag.String("tls-cert", "", "노드 인증서 (CN = 이 노드의 호스트 이름). 셋 다 비면 평문 — 로컬 개발 전용")
+		tlsKey     = flag.String("tls-key", "", "노드 인증서의 개인키")
+		tlsCA      = flag.String("tls-ca", "", "중앙 서버 인증서를 서명한 사내 CA")
 	)
 	flag.Parse()
 
 	_ = statePath
 
-	if err := run(*pinDir, *objPath, *socketPath, *upstreamEP, *warrantsAt, *trustKeys); err != nil {
+	if err := run(*pinDir, *objPath, *socketPath, *upstreamEP, *warrantsAt, *trustKeys, nodeTLS{*tlsCert, *tlsKey, *tlsCA}); err != nil {
 		log.Printf("warrantd: %v", err)
 		os.Exit(1)
 	}
@@ -107,8 +111,11 @@ func nodeHello(hooks []pb.Hook) *pb.NodeHello {
 	return h
 }
 
+// Node certificate for mTLS to the central server (deploy/pki/pki.sh). All empty means plaintext.
+type nodeTLS struct{ cert, key, ca string }
+
 // Starts all components and blocks until shutdown; returns so deferred Closes run.
-func run(pinDir, objPath, socketPath, upstreamEP, warrantsPath, trustDir string) error {
+func run(pinDir, objPath, socketPath, upstreamEP, warrantsPath, trustDir string, tlsFiles nodeTLS) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -159,7 +166,7 @@ func run(pinDir, objPath, socketPath, upstreamEP, warrantsPath, trustDir string)
 
 	// Upstream failing never stops warrantd: tagging and the kernel keep working (§17).
 	if upstreamEP != "" {
-		client, err := upstream.Dial(upstreamEP, "", "", "")
+		client, err := upstream.Dial(upstreamEP, tlsFiles.cert, tlsFiles.key, tlsFiles.ca)
 		if err != nil {
 			log.Printf("upstream: %v (running local only)", err)
 		} else {

@@ -10,16 +10,20 @@
 // boot 기준 시각 변환 · 정책 컴파일 · 맵 쓰기는 여기서 하지 않는다 — Applier(cmd/warrantd)가 한다.
 //
 // 부르는 쪽: cmd/warrantd 기동 5단계, binder.
-// 상태: Dial(평문 전용) · StreamAudit · Subscribe · Verify 구현. mTLS · Heartbeat · 연장 · Lookup 은 미구현.
+// 상태: Dial(mTLS · 로컬 개발용 평문) · StreamAudit · Subscribe · Verify 구현. Heartbeat · 연장 · Lookup 은 미구현.
 package upstream
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 
@@ -42,14 +46,37 @@ var keepaliveParams = keepalive.ClientParameters{
 	PermitWithoutStream: true,
 }
 
-// Dial does not block; the first RPC connects. Empty cert paths mean plaintext, for local development only.
+// Dial does not block; the first RPC connects. With the node certificate, its key and the CA it is mTLS: the
+// central server knows the node by that certificate. All three empty means plaintext, for local development only.
 func Dial(endpoint string, certPath, keyPath, caPath string) (*Client, error) {
+	creds := insecure.NewCredentials()
 	if certPath != "" || keyPath != "" || caPath != "" {
-		return nil, errors.New("upstream: mTLS is not implemented yet")
+		var err error
+		if creds, err = nodeTLS(certPath, keyPath, caPath); err != nil {
+			return nil, err
+		}
 	}
-	return dial(endpoint,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithKeepaliveParams(keepaliveParams))
+	return dial(endpoint, grpc.WithTransportCredentials(creds), grpc.WithKeepaliveParams(keepaliveParams))
+}
+
+// Half a TLS setup must not quietly fall back to plaintext. The server name checked is the endpoint's host.
+func nodeTLS(certPath, keyPath, caPath string) (credentials.TransportCredentials, error) {
+	if certPath == "" || keyPath == "" || caPath == "" {
+		return nil, errors.New("upstream: mTLS needs the node certificate, its key and the CA together")
+	}
+	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+	if err != nil {
+		return nil, fmt.Errorf("upstream: node certificate: %w", err)
+	}
+	ca, err := os.ReadFile(caPath)
+	if err != nil {
+		return nil, fmt.Errorf("upstream: CA: %w", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(ca) {
+		return nil, fmt.Errorf("upstream: CA: no certificate in %s", caPath)
+	}
+	return credentials.NewTLS(&tls.Config{Certificates: []tls.Certificate{cert}, RootCAs: pool, MinVersion: tls.VersionTLS12}), nil
 }
 
 func dial(endpoint string, opts ...grpc.DialOption) (*Client, error) {
