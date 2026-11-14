@@ -225,6 +225,22 @@ warrantd → `AuditIngestGrpcService`(gRPC 스트림) → `AuditIngestService.in
 | `droppedCount` | 커널 ringbuf 가 보고한 드롭 수. **모르면 NULL** — 0 과 구분한다 |
 | `cause` | proto `GapReport.Cause`: `RINGBUF_OVERFLOW` · `AGENT_DOWN` · `LOCAL_STORE_FULL` · `CPU_SEQ_SKIP` |
 
+## 더미 감사 데이터 (`dev/dummy-audit.sh`)
+
+대시보드 「구간」을 큰 데이터로 시험할 때 로컬 DB 에 지난 30일치를 넣는다. 실제 기록과 섞이지 않는다.
+
+```sh
+dev/dummy-audit.sh seed 2     # audit_event 가 약 2GB 늘 때까지 50만 건씩
+dev/dummy-audit.sh size       # 더미 건수 · 크기
+dev/dummy-audit.sh clean      # 더미 노드에 딸린 것만 지우고 VACUUM FULL
+```
+
+- 노드 4대(`dummy-web-01` · `dummy-web-02` · `dummy-db-01` · `dummy-app-01`), `client_cert_fingerprint` 가 `dummy:` 로 시작한다.
+  `dummy-app-01` 은 ENFORCE(차단 = DENY), 나머지는 DRYRUN(WOULD_DENY).
+- 영장 번호 9001~9060 은 서버에 없는 번호라 화면에 `#9001` 로 보인다. 무영장 세션 400건 · 유실 구간 40건도 같이 넣는다.
+- **`received_seq` 가 음수다.** 대시보드는 「받은 순번 N 뒤」로 이어 받으므로, 양수로 넣으면 열려 있던 화면이 수백만 건을
+  따라잡는다. 음수면 발생 시각으로 고르는 구간 조회 · 집계에만 잡힌다.
+
 ## 의존성에서 한 번 걸리는 지점
 
 Spring Boot 4 는 Boot 3 과 스타터 좌표가 다르고, gRPC 는 아예 소속이 바뀌었다.
