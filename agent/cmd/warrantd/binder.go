@@ -67,6 +67,9 @@ func (b *binder) Bind(ctx context.Context, r pamsock.Request) (uint64, error) {
 		}
 		log.Printf("binder: warranted session warrant=%d cgroup=%d session=%q account=%q rhost=%q key=%q",
 			id, r.CgroupID, r.SessionID, r.LoginAccount, r.RHost, fp)
+		if b.audit != nil {
+			b.audit.Append(warrantedEvent(r, fp, w, now()))
+		}
 		return id, nil
 	}
 
@@ -98,6 +101,28 @@ func unwarrantedEvent(r pamsock.Request, fp string, reason pb.UnwarrantedSession
 			CgroupId:          r.CgroupID,
 			SessionId:         r.SessionID,
 			Reason:            reason,
+			SshKeyFingerprint: fp,
+		}},
+	}
+}
+
+// Called by Bind after the cgroup is tagged. With unwarranted sessions this makes the org-wide SSH login record.
+func warrantedEvent(r pamsock.Request, fp string, w *pb.Warrant, now time.Time) *pb.AuditEvent {
+	return &pb.AuditEvent{
+		Hook:         pb.Hook_HOOK_AGENT,
+		Verdict:      pb.Verdict_VERDICT_ALLOW,
+		Mode:         w.GetMode(),
+		WallTsUnixNs: uint64(now.UnixNano()),
+		WarrantId:    w.GetWarrantId(),
+		SubjectId:    w.GetSubjectId(),
+		PolicyId:     w.GetPolicyId(),
+		TagSource:    pb.TagSource_TAG_CGROUP,
+		Origin:       pb.Origin_ORIGIN_AGENT,
+		Payload: &pb.AuditEvent_WarrantedSession{WarrantedSession: &pb.WarrantedSessionEvent{
+			LoginAccount:      r.LoginAccount,
+			SourceAddress:     r.RHost,
+			CgroupId:          r.CgroupID,
+			SessionId:         r.SessionID,
 			SshKeyFingerprint: fp,
 		}},
 	}
