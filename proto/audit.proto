@@ -65,6 +65,7 @@ message AuditEvent {
     UdpSendEvent udp_send = 18;
     SelfProtectionEvent self_protection = 19;
     ForkEvent fork = 20;
+    WarrantedSessionEvent warranted_session = 21;
 
     UnwarrantedSessionEvent unwarranted_session = 30;
     DelegationAttemptEvent delegation_attempt = 31;
@@ -195,6 +196,16 @@ message ForkEvent {
 }
 
 // 차단하지 않고 기록 · 경보만
+// warrantd 가 영장을 찾아 세션 cgroup 에 태그한 순간. 무영장 세션과 짝을 이뤄 「조직 전체 SSH 접속 현황」이 된다.
+// 영장 · 주체 · 정책 · 모드는 바깥 AuditEvent 의 warrant_id · subject_id · policy_id · mode 에 싣는다.
+message WarrantedSessionEvent {
+  string login_account = 1;
+  string source_address = 2;       // PAM_RHOST
+  fixed64 cgroup_id = 3;
+  string session_id = 4;           // XDG_SESSION_ID. 재사용되므로 참고용
+  string ssh_key_fingerprint = 5;  // 영장을 맞춘 키
+}
+
 message UnwarrantedSessionEvent {
   enum Reason {
     REASON_UNSPECIFIED     = 0;

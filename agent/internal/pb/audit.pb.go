@@ -495,7 +495,7 @@ func (x UnwarrantedSessionEvent_Reason) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use UnwarrantedSessionEvent_Reason.Descriptor instead.
 func (UnwarrantedSessionEvent_Reason) EnumDescriptor() ([]byte, []int) {
-	return file_audit_proto_rawDescGZIP(), []int{10, 0}
+	return file_audit_proto_rawDescGZIP(), []int{11, 0}
 }
 
 type DelegationAttemptEvent_Vector int32
@@ -553,7 +553,7 @@ func (x DelegationAttemptEvent_Vector) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use DelegationAttemptEvent_Vector.Descriptor instead.
 func (DelegationAttemptEvent_Vector) EnumDescriptor() ([]byte, []int) {
-	return file_audit_proto_rawDescGZIP(), []int{11, 0}
+	return file_audit_proto_rawDescGZIP(), []int{12, 0}
 }
 
 type GraceEvent_Phase int32
@@ -605,7 +605,7 @@ func (x GraceEvent_Phase) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use GraceEvent_Phase.Descriptor instead.
 func (GraceEvent_Phase) EnumDescriptor() ([]byte, []int) {
-	return file_audit_proto_rawDescGZIP(), []int{12, 0}
+	return file_audit_proto_rawDescGZIP(), []int{13, 0}
 }
 
 type GapReport_Cause int32
@@ -660,7 +660,7 @@ func (x GapReport_Cause) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use GapReport_Cause.Descriptor instead.
 func (GapReport_Cause) EnumDescriptor() ([]byte, []int) {
-	return file_audit_proto_rawDescGZIP(), []int{15, 0}
+	return file_audit_proto_rawDescGZIP(), []int{16, 0}
 }
 
 // 필드 번호 ≤15 는 1바이트 태그다. 전건에 실리는 필드와 고빈도 payload 를 거기 둔다.
@@ -688,6 +688,7 @@ type AuditEvent struct {
 	//	*AuditEvent_UdpSend
 	//	*AuditEvent_SelfProtection
 	//	*AuditEvent_Fork
+	//	*AuditEvent_WarrantedSession
 	//	*AuditEvent_UnwarrantedSession
 	//	*AuditEvent_DelegationAttempt
 	//	*AuditEvent_Grace
@@ -889,6 +890,15 @@ func (x *AuditEvent) GetFork() *ForkEvent {
 	return nil
 }
 
+func (x *AuditEvent) GetWarrantedSession() *WarrantedSessionEvent {
+	if x != nil {
+		if x, ok := x.Payload.(*AuditEvent_WarrantedSession); ok {
+			return x.WarrantedSession
+		}
+	}
+	return nil
+}
+
 func (x *AuditEvent) GetUnwarrantedSession() *UnwarrantedSessionEvent {
 	if x != nil {
 		if x, ok := x.Payload.(*AuditEvent_UnwarrantedSession); ok {
@@ -964,6 +974,10 @@ type AuditEvent_Fork struct {
 	Fork *ForkEvent `protobuf:"bytes,20,opt,name=fork,proto3,oneof"`
 }
 
+type AuditEvent_WarrantedSession struct {
+	WarrantedSession *WarrantedSessionEvent `protobuf:"bytes,21,opt,name=warranted_session,json=warrantedSession,proto3,oneof"`
+}
+
 type AuditEvent_UnwarrantedSession struct {
 	UnwarrantedSession *UnwarrantedSessionEvent `protobuf:"bytes,30,opt,name=unwarranted_session,json=unwarrantedSession,proto3,oneof"`
 }
@@ -993,6 +1007,8 @@ func (*AuditEvent_UdpSend) isAuditEvent_Payload() {}
 func (*AuditEvent_SelfProtection) isAuditEvent_Payload() {}
 
 func (*AuditEvent_Fork) isAuditEvent_Payload() {}
+
+func (*AuditEvent_WarrantedSession) isAuditEvent_Payload() {}
 
 func (*AuditEvent_UnwarrantedSession) isAuditEvent_Payload() {}
 
@@ -1709,6 +1725,84 @@ func (x *ForkEvent) GetChildStartTimeNs() uint64 {
 }
 
 // 차단하지 않고 기록 · 경보만
+// warrantd 가 영장을 찾아 세션 cgroup 에 태그한 순간. 무영장 세션과 짝을 이뤄 「조직 전체 SSH 접속 현황」이 된다.
+// 영장 · 주체 · 정책 · 모드는 바깥 AuditEvent 의 warrant_id · subject_id · policy_id · mode 에 싣는다.
+type WarrantedSessionEvent struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	LoginAccount      string                 `protobuf:"bytes,1,opt,name=login_account,json=loginAccount,proto3" json:"login_account,omitempty"`
+	SourceAddress     string                 `protobuf:"bytes,2,opt,name=source_address,json=sourceAddress,proto3" json:"source_address,omitempty"` // PAM_RHOST
+	CgroupId          uint64                 `protobuf:"fixed64,3,opt,name=cgroup_id,json=cgroupId,proto3" json:"cgroup_id,omitempty"`
+	SessionId         string                 `protobuf:"bytes,4,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`                           // XDG_SESSION_ID. 재사용되므로 참고용
+	SshKeyFingerprint string                 `protobuf:"bytes,5,opt,name=ssh_key_fingerprint,json=sshKeyFingerprint,proto3" json:"ssh_key_fingerprint,omitempty"` // 영장을 맞춘 키
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *WarrantedSessionEvent) Reset() {
+	*x = WarrantedSessionEvent{}
+	mi := &file_audit_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WarrantedSessionEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WarrantedSessionEvent) ProtoMessage() {}
+
+func (x *WarrantedSessionEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_audit_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WarrantedSessionEvent.ProtoReflect.Descriptor instead.
+func (*WarrantedSessionEvent) Descriptor() ([]byte, []int) {
+	return file_audit_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *WarrantedSessionEvent) GetLoginAccount() string {
+	if x != nil {
+		return x.LoginAccount
+	}
+	return ""
+}
+
+func (x *WarrantedSessionEvent) GetSourceAddress() string {
+	if x != nil {
+		return x.SourceAddress
+	}
+	return ""
+}
+
+func (x *WarrantedSessionEvent) GetCgroupId() uint64 {
+	if x != nil {
+		return x.CgroupId
+	}
+	return 0
+}
+
+func (x *WarrantedSessionEvent) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *WarrantedSessionEvent) GetSshKeyFingerprint() string {
+	if x != nil {
+		return x.SshKeyFingerprint
+	}
+	return ""
+}
+
 type UnwarrantedSessionEvent struct {
 	state             protoimpl.MessageState         `protogen:"open.v1"`
 	LoginAccount      string                         `protobuf:"bytes,1,opt,name=login_account,json=loginAccount,proto3" json:"login_account,omitempty"`
@@ -1723,7 +1817,7 @@ type UnwarrantedSessionEvent struct {
 
 func (x *UnwarrantedSessionEvent) Reset() {
 	*x = UnwarrantedSessionEvent{}
-	mi := &file_audit_proto_msgTypes[10]
+	mi := &file_audit_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1735,7 +1829,7 @@ func (x *UnwarrantedSessionEvent) String() string {
 func (*UnwarrantedSessionEvent) ProtoMessage() {}
 
 func (x *UnwarrantedSessionEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_audit_proto_msgTypes[10]
+	mi := &file_audit_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1748,7 +1842,7 @@ func (x *UnwarrantedSessionEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnwarrantedSessionEvent.ProtoReflect.Descriptor instead.
 func (*UnwarrantedSessionEvent) Descriptor() ([]byte, []int) {
-	return file_audit_proto_rawDescGZIP(), []int{10}
+	return file_audit_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *UnwarrantedSessionEvent) GetLoginAccount() string {
@@ -1803,7 +1897,7 @@ type DelegationAttemptEvent struct {
 
 func (x *DelegationAttemptEvent) Reset() {
 	*x = DelegationAttemptEvent{}
-	mi := &file_audit_proto_msgTypes[11]
+	mi := &file_audit_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1815,7 +1909,7 @@ func (x *DelegationAttemptEvent) String() string {
 func (*DelegationAttemptEvent) ProtoMessage() {}
 
 func (x *DelegationAttemptEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_audit_proto_msgTypes[11]
+	mi := &file_audit_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1828,7 +1922,7 @@ func (x *DelegationAttemptEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DelegationAttemptEvent.ProtoReflect.Descriptor instead.
 func (*DelegationAttemptEvent) Descriptor() ([]byte, []int) {
-	return file_audit_proto_rawDescGZIP(), []int{11}
+	return file_audit_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *DelegationAttemptEvent) GetVector() DelegationAttemptEvent_Vector {
@@ -1855,7 +1949,7 @@ type GraceEvent struct {
 
 func (x *GraceEvent) Reset() {
 	*x = GraceEvent{}
-	mi := &file_audit_proto_msgTypes[12]
+	mi := &file_audit_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1867,7 +1961,7 @@ func (x *GraceEvent) String() string {
 func (*GraceEvent) ProtoMessage() {}
 
 func (x *GraceEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_audit_proto_msgTypes[12]
+	mi := &file_audit_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1880,7 +1974,7 @@ func (x *GraceEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GraceEvent.ProtoReflect.Descriptor instead.
 func (*GraceEvent) Descriptor() ([]byte, []int) {
-	return file_audit_proto_rawDescGZIP(), []int{12}
+	return file_audit_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *GraceEvent) GetPhase() GraceEvent_Phase {
@@ -1907,7 +2001,7 @@ type ShellCommandLineEvent struct {
 
 func (x *ShellCommandLineEvent) Reset() {
 	*x = ShellCommandLineEvent{}
-	mi := &file_audit_proto_msgTypes[13]
+	mi := &file_audit_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1919,7 +2013,7 @@ func (x *ShellCommandLineEvent) String() string {
 func (*ShellCommandLineEvent) ProtoMessage() {}
 
 func (x *ShellCommandLineEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_audit_proto_msgTypes[13]
+	mi := &file_audit_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1932,7 +2026,7 @@ func (x *ShellCommandLineEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ShellCommandLineEvent.ProtoReflect.Descriptor instead.
 func (*ShellCommandLineEvent) Descriptor() ([]byte, []int) {
-	return file_audit_proto_rawDescGZIP(), []int{13}
+	return file_audit_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ShellCommandLineEvent) GetLine() string {
@@ -1955,7 +2049,7 @@ type WriteAggregate struct {
 
 func (x *WriteAggregate) Reset() {
 	*x = WriteAggregate{}
-	mi := &file_audit_proto_msgTypes[14]
+	mi := &file_audit_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1967,7 +2061,7 @@ func (x *WriteAggregate) String() string {
 func (*WriteAggregate) ProtoMessage() {}
 
 func (x *WriteAggregate) ProtoReflect() protoreflect.Message {
-	mi := &file_audit_proto_msgTypes[14]
+	mi := &file_audit_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1980,7 +2074,7 @@ func (x *WriteAggregate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WriteAggregate.ProtoReflect.Descriptor instead.
 func (*WriteAggregate) Descriptor() ([]byte, []int) {
-	return file_audit_proto_rawDescGZIP(), []int{14}
+	return file_audit_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *WriteAggregate) GetWarrantId() uint64 {
@@ -2025,7 +2119,7 @@ type GapReport struct {
 
 func (x *GapReport) Reset() {
 	*x = GapReport{}
-	mi := &file_audit_proto_msgTypes[15]
+	mi := &file_audit_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2037,7 +2131,7 @@ func (x *GapReport) String() string {
 func (*GapReport) ProtoMessage() {}
 
 func (x *GapReport) ProtoReflect() protoreflect.Message {
-	mi := &file_audit_proto_msgTypes[15]
+	mi := &file_audit_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2050,7 +2144,7 @@ func (x *GapReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GapReport.ProtoReflect.Descriptor instead.
 func (*GapReport) Descriptor() ([]byte, []int) {
-	return file_audit_proto_rawDescGZIP(), []int{15}
+	return file_audit_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *GapReport) GetFromUnixNs() uint64 {
@@ -2092,8 +2186,7 @@ var File_audit_proto protoreflect.FileDescriptor
 
 const file_audit_proto_rawDesc = "" +
 	"\n" +
-	"\vaudit.proto\x12\x11seswar.warrant.v1\x1a\rwarrant.proto\"\xcb\n" +
-	"\n" +
+	"\vaudit.proto\x12\x11seswar.warrant.v1\x1a\rwarrant.proto\"\xa4\v\n" +
 	"\n" +
 	"AuditEvent\x12\x19\n" +
 	"\bnode_seq\x18\x01 \x01(\x06R\anodeSeq\x12\x10\n" +
@@ -2121,7 +2214,8 @@ const file_audit_proto_rawDesc = "" +
 	"\aconnect\x18\x11 \x01(\v2\x1f.seswar.warrant.v1.ConnectEventH\x00R\aconnect\x12<\n" +
 	"\budp_send\x18\x12 \x01(\v2\x1f.seswar.warrant.v1.UdpSendEventH\x00R\audpSend\x12Q\n" +
 	"\x0fself_protection\x18\x13 \x01(\v2&.seswar.warrant.v1.SelfProtectionEventH\x00R\x0eselfProtection\x122\n" +
-	"\x04fork\x18\x14 \x01(\v2\x1c.seswar.warrant.v1.ForkEventH\x00R\x04fork\x12]\n" +
+	"\x04fork\x18\x14 \x01(\v2\x1c.seswar.warrant.v1.ForkEventH\x00R\x04fork\x12W\n" +
+	"\x11warranted_session\x18\x15 \x01(\v2(.seswar.warrant.v1.WarrantedSessionEventH\x00R\x10warrantedSession\x12]\n" +
 	"\x13unwarranted_session\x18\x1e \x01(\v2*.seswar.warrant.v1.UnwarrantedSessionEventH\x00R\x12unwarrantedSession\x12Z\n" +
 	"\x12delegation_attempt\x18\x1f \x01(\v2).seswar.warrant.v1.DelegationAttemptEventH\x00R\x11delegationAttempt\x125\n" +
 	"\x05grace\x18  \x01(\v2\x1d.seswar.warrant.v1.GraceEventH\x00R\x05grace\x12X\n" +
@@ -2208,7 +2302,14 @@ const file_audit_proto_rawDesc = "" +
 	"\x14KIND_SELF_FILE_WRITE\x10\x06\"W\n" +
 	"\tForkEvent\x12\x1b\n" +
 	"\tchild_pid\x18\x01 \x01(\rR\bchildPid\x12-\n" +
-	"\x13child_start_time_ns\x18\x02 \x01(\x06R\x10childStartTimeNs\"\xcf\x03\n" +
+	"\x13child_start_time_ns\x18\x02 \x01(\x06R\x10childStartTimeNs\"\xcf\x01\n" +
+	"\x15WarrantedSessionEvent\x12#\n" +
+	"\rlogin_account\x18\x01 \x01(\tR\floginAccount\x12%\n" +
+	"\x0esource_address\x18\x02 \x01(\tR\rsourceAddress\x12\x1b\n" +
+	"\tcgroup_id\x18\x03 \x01(\x06R\bcgroupId\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x04 \x01(\tR\tsessionId\x12.\n" +
+	"\x13ssh_key_fingerprint\x18\x05 \x01(\tR\x11sshKeyFingerprint\"\xcf\x03\n" +
 	"\x17UnwarrantedSessionEvent\x12#\n" +
 	"\rlogin_account\x18\x01 \x01(\tR\floginAccount\x12%\n" +
 	"\x0esource_address\x18\x02 \x01(\tR\rsourceAddress\x12\x1b\n" +
@@ -2316,7 +2417,7 @@ func file_audit_proto_rawDescGZIP() []byte {
 }
 
 var file_audit_proto_enumTypes = make([]protoimpl.EnumInfo, 11)
-var file_audit_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
+var file_audit_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
 var file_audit_proto_goTypes = []any{
 	(Hook)(0),                           // 0: seswar.warrant.v1.Hook
 	(Verdict)(0),                        // 1: seswar.warrant.v1.Verdict
@@ -2339,18 +2440,19 @@ var file_audit_proto_goTypes = []any{
 	(*UdpSendEvent)(nil),                // 18: seswar.warrant.v1.UdpSendEvent
 	(*SelfProtectionEvent)(nil),         // 19: seswar.warrant.v1.SelfProtectionEvent
 	(*ForkEvent)(nil),                   // 20: seswar.warrant.v1.ForkEvent
-	(*UnwarrantedSessionEvent)(nil),     // 21: seswar.warrant.v1.UnwarrantedSessionEvent
-	(*DelegationAttemptEvent)(nil),      // 22: seswar.warrant.v1.DelegationAttemptEvent
-	(*GraceEvent)(nil),                  // 23: seswar.warrant.v1.GraceEvent
-	(*ShellCommandLineEvent)(nil),       // 24: seswar.warrant.v1.ShellCommandLineEvent
-	(*WriteAggregate)(nil),              // 25: seswar.warrant.v1.WriteAggregate
-	(*GapReport)(nil),                   // 26: seswar.warrant.v1.GapReport
-	(Mode)(0),                           // 27: seswar.warrant.v1.Mode
+	(*WarrantedSessionEvent)(nil),       // 21: seswar.warrant.v1.WarrantedSessionEvent
+	(*UnwarrantedSessionEvent)(nil),     // 22: seswar.warrant.v1.UnwarrantedSessionEvent
+	(*DelegationAttemptEvent)(nil),      // 23: seswar.warrant.v1.DelegationAttemptEvent
+	(*GraceEvent)(nil),                  // 24: seswar.warrant.v1.GraceEvent
+	(*ShellCommandLineEvent)(nil),       // 25: seswar.warrant.v1.ShellCommandLineEvent
+	(*WriteAggregate)(nil),              // 26: seswar.warrant.v1.WriteAggregate
+	(*GapReport)(nil),                   // 27: seswar.warrant.v1.GapReport
+	(Mode)(0),                           // 28: seswar.warrant.v1.Mode
 }
 var file_audit_proto_depIdxs = []int32{
 	0,  // 0: seswar.warrant.v1.AuditEvent.hook:type_name -> seswar.warrant.v1.Hook
 	1,  // 1: seswar.warrant.v1.AuditEvent.verdict:type_name -> seswar.warrant.v1.Verdict
-	27, // 2: seswar.warrant.v1.AuditEvent.mode:type_name -> seswar.warrant.v1.Mode
+	28, // 2: seswar.warrant.v1.AuditEvent.mode:type_name -> seswar.warrant.v1.Mode
 	3,  // 3: seswar.warrant.v1.AuditEvent.tag_source:type_name -> seswar.warrant.v1.TagSource
 	12, // 4: seswar.warrant.v1.AuditEvent.process:type_name -> seswar.warrant.v1.ProcessIdentity
 	14, // 5: seswar.warrant.v1.AuditEvent.exec:type_name -> seswar.warrant.v1.ExecEvent
@@ -2360,30 +2462,31 @@ var file_audit_proto_depIdxs = []int32{
 	18, // 9: seswar.warrant.v1.AuditEvent.udp_send:type_name -> seswar.warrant.v1.UdpSendEvent
 	19, // 10: seswar.warrant.v1.AuditEvent.self_protection:type_name -> seswar.warrant.v1.SelfProtectionEvent
 	20, // 11: seswar.warrant.v1.AuditEvent.fork:type_name -> seswar.warrant.v1.ForkEvent
-	21, // 12: seswar.warrant.v1.AuditEvent.unwarranted_session:type_name -> seswar.warrant.v1.UnwarrantedSessionEvent
-	22, // 13: seswar.warrant.v1.AuditEvent.delegation_attempt:type_name -> seswar.warrant.v1.DelegationAttemptEvent
-	23, // 14: seswar.warrant.v1.AuditEvent.grace:type_name -> seswar.warrant.v1.GraceEvent
-	24, // 15: seswar.warrant.v1.AuditEvent.shell_command_line:type_name -> seswar.warrant.v1.ShellCommandLineEvent
-	2,  // 16: seswar.warrant.v1.AuditEvent.origin:type_name -> seswar.warrant.v1.Origin
-	13, // 17: seswar.warrant.v1.ExecEvent.file:type_name -> seswar.warrant.v1.FileRef
-	13, // 18: seswar.warrant.v1.FileWriteEvent.file:type_name -> seswar.warrant.v1.FileRef
-	13, // 19: seswar.warrant.v1.FileWriteEvent.parent:type_name -> seswar.warrant.v1.FileRef
-	4,  // 20: seswar.warrant.v1.InodeMutateEvent.op:type_name -> seswar.warrant.v1.InodeMutateEvent.Op
-	13, // 21: seswar.warrant.v1.InodeMutateEvent.dir:type_name -> seswar.warrant.v1.FileRef
-	13, // 22: seswar.warrant.v1.InodeMutateEvent.new_dir:type_name -> seswar.warrant.v1.FileRef
-	5,  // 23: seswar.warrant.v1.ConnectEvent.family:type_name -> seswar.warrant.v1.ConnectEvent.Family
-	17, // 24: seswar.warrant.v1.UdpSendEvent.destination:type_name -> seswar.warrant.v1.ConnectEvent
-	6,  // 25: seswar.warrant.v1.SelfProtectionEvent.kind:type_name -> seswar.warrant.v1.SelfProtectionEvent.Kind
-	13, // 26: seswar.warrant.v1.SelfProtectionEvent.file:type_name -> seswar.warrant.v1.FileRef
-	7,  // 27: seswar.warrant.v1.UnwarrantedSessionEvent.reason:type_name -> seswar.warrant.v1.UnwarrantedSessionEvent.Reason
-	8,  // 28: seswar.warrant.v1.DelegationAttemptEvent.vector:type_name -> seswar.warrant.v1.DelegationAttemptEvent.Vector
-	9,  // 29: seswar.warrant.v1.GraceEvent.phase:type_name -> seswar.warrant.v1.GraceEvent.Phase
-	10, // 30: seswar.warrant.v1.GapReport.cause:type_name -> seswar.warrant.v1.GapReport.Cause
-	31, // [31:31] is the sub-list for method output_type
-	31, // [31:31] is the sub-list for method input_type
-	31, // [31:31] is the sub-list for extension type_name
-	31, // [31:31] is the sub-list for extension extendee
-	0,  // [0:31] is the sub-list for field type_name
+	21, // 12: seswar.warrant.v1.AuditEvent.warranted_session:type_name -> seswar.warrant.v1.WarrantedSessionEvent
+	22, // 13: seswar.warrant.v1.AuditEvent.unwarranted_session:type_name -> seswar.warrant.v1.UnwarrantedSessionEvent
+	23, // 14: seswar.warrant.v1.AuditEvent.delegation_attempt:type_name -> seswar.warrant.v1.DelegationAttemptEvent
+	24, // 15: seswar.warrant.v1.AuditEvent.grace:type_name -> seswar.warrant.v1.GraceEvent
+	25, // 16: seswar.warrant.v1.AuditEvent.shell_command_line:type_name -> seswar.warrant.v1.ShellCommandLineEvent
+	2,  // 17: seswar.warrant.v1.AuditEvent.origin:type_name -> seswar.warrant.v1.Origin
+	13, // 18: seswar.warrant.v1.ExecEvent.file:type_name -> seswar.warrant.v1.FileRef
+	13, // 19: seswar.warrant.v1.FileWriteEvent.file:type_name -> seswar.warrant.v1.FileRef
+	13, // 20: seswar.warrant.v1.FileWriteEvent.parent:type_name -> seswar.warrant.v1.FileRef
+	4,  // 21: seswar.warrant.v1.InodeMutateEvent.op:type_name -> seswar.warrant.v1.InodeMutateEvent.Op
+	13, // 22: seswar.warrant.v1.InodeMutateEvent.dir:type_name -> seswar.warrant.v1.FileRef
+	13, // 23: seswar.warrant.v1.InodeMutateEvent.new_dir:type_name -> seswar.warrant.v1.FileRef
+	5,  // 24: seswar.warrant.v1.ConnectEvent.family:type_name -> seswar.warrant.v1.ConnectEvent.Family
+	17, // 25: seswar.warrant.v1.UdpSendEvent.destination:type_name -> seswar.warrant.v1.ConnectEvent
+	6,  // 26: seswar.warrant.v1.SelfProtectionEvent.kind:type_name -> seswar.warrant.v1.SelfProtectionEvent.Kind
+	13, // 27: seswar.warrant.v1.SelfProtectionEvent.file:type_name -> seswar.warrant.v1.FileRef
+	7,  // 28: seswar.warrant.v1.UnwarrantedSessionEvent.reason:type_name -> seswar.warrant.v1.UnwarrantedSessionEvent.Reason
+	8,  // 29: seswar.warrant.v1.DelegationAttemptEvent.vector:type_name -> seswar.warrant.v1.DelegationAttemptEvent.Vector
+	9,  // 30: seswar.warrant.v1.GraceEvent.phase:type_name -> seswar.warrant.v1.GraceEvent.Phase
+	10, // 31: seswar.warrant.v1.GapReport.cause:type_name -> seswar.warrant.v1.GapReport.Cause
+	32, // [32:32] is the sub-list for method output_type
+	32, // [32:32] is the sub-list for method input_type
+	32, // [32:32] is the sub-list for extension type_name
+	32, // [32:32] is the sub-list for extension extendee
+	0,  // [0:32] is the sub-list for field type_name
 }
 
 func init() { file_audit_proto_init() }
@@ -2400,6 +2503,7 @@ func file_audit_proto_init() {
 		(*AuditEvent_UdpSend)(nil),
 		(*AuditEvent_SelfProtection)(nil),
 		(*AuditEvent_Fork)(nil),
+		(*AuditEvent_WarrantedSession)(nil),
 		(*AuditEvent_UnwarrantedSession)(nil),
 		(*AuditEvent_DelegationAttempt)(nil),
 		(*AuditEvent_Grace)(nil),
@@ -2411,7 +2515,7 @@ func file_audit_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_audit_proto_rawDesc), len(file_audit_proto_rawDesc)),
 			NumEnums:      11,
-			NumMessages:   16,
+			NumMessages:   17,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
