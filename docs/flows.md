@@ -417,5 +417,5 @@ policyInstaller.recompile → Compile → Apply (같은 policy_id 로 덮어쓴�
 - **bbolt `store`:** 재시작한 warrantd 는 전에 받은 중앙 영장을 모른다. warrantd 가 꺼진 동안 서버에서 취소된 영장은
   맵에서 만료될 때까지 산다. 감사 큐도 재시작하면 잃는다.
 - **영장 세션 기록:** 영장이 맞은 세션은 서버에 안 올라간다. 「조직 전체 SSH 접속 현황」을 셀 수 없다.
-- **mTLS · Heartbeat · 연장 요청 · LookupActiveWarrant** (`upstream`).
+- **Heartbeat · 연장 요청 · LookupActiveWarrant** (`upstream`). mTLS 는 붙었다(2026-11-14) — 인증서 폐기(CRL)는 아직 없다.
 - **KILL · SESSION_ONLY_GRACE 만료 처리** (흐름 6).
