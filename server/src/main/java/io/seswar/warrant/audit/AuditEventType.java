@@ -24,6 +24,9 @@ public enum AuditEventType {
     /** 영장 없이 성공한 세션. 도입 2단계의 주력 데이터(§07 STEP 2). */
     UNWARRANTED_SESSION,
 
+    /** 영장이 맞아 태그된 세션. 무영장 세션과 합쳐 조직 전체 SSH 접속 현황이 된다. */
+    WARRANTED_SESSION,
+
     /** 위임 요청 자체 — 막지는 못해도 보이기는 한다(§18). */
     DELEGATION_ATTEMPT,
 
