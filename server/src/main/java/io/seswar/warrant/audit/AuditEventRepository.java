@@ -1,8 +1,8 @@
 package io.seswar.warrant.audit;
 
 import io.seswar.warrant.audit.AuditEvent;
-import org.springframework.data.domain.Limit;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -17,7 +17,7 @@ import java.util.UUID;
  * <p>적재는 saveAll + Hibernate JDBC 배치(application.yml {@code hibernate.jdbc.batch_size}).
  * 조회는 파티션 프루닝이 걸리게 항상 시간 범위를 받는다.
  */
-public interface AuditEventRepository extends JpaRepository<AuditEvent, UUID> {
+public interface AuditEventRepository extends JpaRepository<AuditEvent, UUID>, JpaSpecificationExecutor<AuditEvent> {
 
     // Called by AuditIngestService before saving a batch. Keys among [minSeq, maxSeq] already stored for this node.
     @Query("""
@@ -30,12 +30,6 @@ public interface AuditEventRepository extends JpaRepository<AuditEvent, UUID> {
 
     // Events attributed to one kernel warrant id within [from, to).
     long countByWarrantIdAndOccurredAtGreaterThanEqualAndOccurredAtLessThan(long warrantId, Instant from, Instant to);
-
-    // Called by AuditQueryController. Newest first, within a time range so partitions are pruned.
-    List<AuditEvent> findByOccurredAtGreaterThanEqualOrderByOccurredAtDesc(Instant since, Limit limit);
-
-    // Called by AuditQueryController for the dashboard's catch-up. No time range: the receive index serves it.
-    List<AuditEvent> findByReceivedSeqGreaterThanOrderByReceivedSeqAsc(long after, Limit limit);
 
     @Query("select coalesce(max(e.receivedSeq), 0) from AuditEvent e")
     long maxReceivedSeq();
