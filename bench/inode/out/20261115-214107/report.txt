@@ -1,0 +1,57 @@
+kernel   6.8.0-147-generic
+distro   Ubuntu 24.04.4 LTS
+fs       ext4 (/) · = /
+lab      /tmp/s4lab.X9xTcb (ext4)
+date     2026-11-15T21:41:07+09:00
+
+── 허용 목록 — 파일 inode 로 걸린다 ──
+   바뀌면 그 영장의 실행·쓰기 허용이 조용히 무효가 된다.
+
+   조작                              inode   dev  fanotify  판정
+   vim 저장(rename 방식)                 yes     -       1건  재컴파일 — fanotify 가 잡는다
+   편집기 제자리 덮어쓰기                       no     -       2건  그대로 (이벤트만 옴)
+   sed -i                            yes     -       1건  재컴파일 — fanotify 가 잡는다
+   cp 덮어쓰기                            no     -       2건  그대로 (이벤트만 옴)
+   mv 덮어쓰기                           yes     -       1건  재컴파일 — fanotify 가 잡는다
+   install(1)                        yes     -       2건  재컴파일 — fanotify 가 잡는다 · 번호 재사용
+   unlink 후 재생성                      yes     -       3건  재컴파일 — fanotify 가 잡는다 · 번호 재사용
+   chmod (내용 그대로)                     no     -       1건  그대로 (이벤트만 옴)
+   truncate + 재기록                     no     -       2건  그대로 (이벤트만 옴)
+   심링크 대상 교체                         yes     -       1건  재컴파일 — fanotify 가 잡는다
+   logrotate copytruncate             no     -       1건  그대로 (이벤트만 옴)
+   logrotate create(기본)              yes     -       2건  재컴파일 — fanotify 가 잡는다
+   apt --reinstall jq                yes     -       1건  재컴파일 — fanotify 가 잡는다
+
+── 금지 목록 — 디렉터리 inode 로 걸린다 (§15) ──
+   바뀌면 금지가 조용히 풀린다. 허용이 풀리는 것보다 훨씬 나쁘다.
+
+   조작                              inode   dev  fanotify  판정
+   디렉터리 안 파일 생성                       no     -       1건  그대로 (이벤트만 옴)
+   디렉터리 안 파일 mv 후 재생성                 no     -       3건  그대로 (이벤트만 옴)
+   디렉터리 자체 교체                        yes     -       4건  재컴파일 — fanotify 가 잡는다
+
+── 문서의 주장 검증 ──
+
+   bind mount        (dev,ino) 동일 — 우회 안 됨 ✓ §15 주장 참
+   바이너리 복사      (dev,ino) 다름 — 복사 우회 자동 차단 ✓
+   하드링크          (dev,ino) 동일 — ⚠ 허용이 딸려간다
+   다른 이름이 옛 번호  (dev,ino) 동일 — ⚠ 지운 파일의 규칙이 새 파일에 걸린다
+
+── 판정 ──
+
+   inode 가 바뀌는 조작   9/16
+   그중 fanotify 미검출   0
+
+   ✓ S4 통과. inode 가 바뀌는 지점이 목록화됐고, 전부 fanotify 로 잡힌다.
+     warrantd 가 이벤트를 받아 (dev, ino) 를 다시 컴파일하면 된다.
+     fanotify 범위 확대는 필요 없다.
+
+   ⚠ 파일은 새로 생겼는데 (dev, ino) 번호가 그대로인 조작이 있다:
+       install(1)
+       unlink 후 재생성
+     맵 키가 그대로 맞으므로 재stat 비교로는 바뀐 걸 모른다. i_generation 이 다르다.
+
+   ⚠ 금지 목록 쪽에서 디렉터리 inode 가 바뀐 조작이 있다:
+       디렉터리 자체 교체
+     금지는 허용과 달리 '조용히 풀리는' 방향이라 더 위험하다.
+     디렉터리 교체를 막는 규칙이 따로 필요한지 §15 로 돌아가 볼 것.
