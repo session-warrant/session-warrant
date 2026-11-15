@@ -45,6 +45,7 @@ def main():
             ch = r["changed"]
             devch = "바뀜" if r["dev_before"] != r["dev_after"] else "-"
             fan = int(r["fanotify"])
+            reused = r.get("reused") == "yes"
             if ch == "yes" and fan == 0:
                 v = "✗ 재컴파일 필요한데 못 잡는다"
             elif ch == "yes":
@@ -53,6 +54,8 @@ def main():
                 v = "그대로 (이벤트만 옴)"
             else:
                 v = "그대로"
+            if reused:
+                v += " · 번호 재사용"
             print(f"   {r['case']:<30} {ch:>6} {devch:>5} {fan:>7}건  {v}")
         print()
 
@@ -67,6 +70,9 @@ def main():
             elif r["case"] == "binary-copy":
                 print(f"   바이너리 복사      (dev,ino) {'동일' if same else '다름'} — "
                       + ("✗ 복사 우회가 뚫린다" if same else "복사 우회 자동 차단 ✓"))
+            elif r["case"] == "ino-reuse":
+                print(f"   다른 이름이 옛 번호  (dev,ino) {'동일' if same else '다름'} — "
+                      + ("⚠ 지운 파일의 규칙이 새 파일에 걸린다" if same else "재사용 안 됨"))
             elif r["case"] == "hardlink":
                 print(f"   하드링크          (dev,ino) {'동일' if same else '다름'} — "
                       + ("⚠ 허용이 딸려간다" if same else "별개 inode"))
@@ -94,6 +100,14 @@ def main():
             print(f"       {r['case']}  ({r['target']})")
         print("     → 정책이 조용히 무효가 되는 구간이다. fanotify 마스크·범위를")
         print("       넓히거나, 주기적 재stat 로 메워야 한다 (CLAUDE.md S4).")
+
+    reused = [r for r in cases if r.get("reused") == "yes"]
+    if reused:
+        print()
+        print("   ⚠ 파일은 새로 생겼는데 (dev, ino) 번호가 그대로인 조작이 있다:")
+        for r in reused:
+            print(f"       {r['case']}")
+        print("     맵 키가 그대로 맞으므로 재stat 비교로는 바뀐 걸 모른다. i_generation 이 다르다.")
 
     if deny_changed:
         print()
