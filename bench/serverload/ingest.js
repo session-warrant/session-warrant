@@ -10,10 +10,12 @@
 //   k6 run -e PKI= ingest.js                            평문 (mtls 프로필 없이 띄운 서버)
 //   k6 run -e PKI= -e ADDR=localhost:9091 ingest.js     t3.micro 컨테이너(dev 프로필)
 //   k6 run -e SESSION_EVERY=5 ingest.js                 세션 이벤트를 더 촘촘히
+//   k6 run -e DENY_PCT=10 ingest.js                     차단 판정을 더 섞는다
 //
 // 처리량을 **검산하려면** run.sh 로 돌린다. 적재가 멱등이라 보낸 것이 전건 중복으로
 // 걸러져도 k6 쪽은 빨랐다고 보고하는데, run.sh 는 DB 행수 증가분과 맞춰 본다.
 import grpc from 'k6/net/grpc';
+import encoding from 'k6/encoding';
 import { setTimeout } from 'k6/timers';
 import { Counter, Trend } from 'k6/metrics';
 import exec from 'k6/execution';
@@ -39,6 +41,8 @@ const CONNECT_TIMEOUT = __ENV.CONNECT_TIMEOUT || '10s';
 // 실제 비율을 흉내 낸다 — 로그인 한 번에 커널 판정이 수백 건 난다.
 const SESSION_EVERY = Number(__ENV.SESSION_EVERY || 20);
 const UNWARRANTED_PCT = Number(__ENV.UNWARRANTED_PCT || 20); // 세션 중 무영장 비율
+// 차단 비율. 영장이 감사 모드(OBSERVE)라 차단은 WOULD_DENY 로 나간다 — 실제로 막지는 않는다.
+const DENY_PCT = Number(__ENV.DENY_PCT || 3);
 // 서버에 없는 번호다. 화면에 #9500 처럼 보인다 (dev/dummy-audit.sh 의 9001~9060 과 안 겹친다).
 const WARRANT_BASE = Number(__ENV.WARRANT_BASE || 9500);
 
@@ -86,61 +90,110 @@ export const options = {
 const ACCOUNTS = ['ec2-user', 'ops', 'deploy', 'root'];
 const REASONS = ['REASON_NO_WARRANT', 'REASON_NO_KEY', 'REASON_KEY_MISMATCH', 'REASON_AGENT_UNREACHED'];
 
+// 한 세션이 내는 훅의 비율. exec 가 가장 잦고, 자기보호는 드물다.
+// 화면의 「훅별」 막대가 한 칸만 차지 않게 실제 세션의 성질을 흉내 낸다.
+const HOOKS = [
+  ['HOOK_BPRM_CHECK_SECURITY', 55],
+  ['HOOK_FILE_OPEN', 25],
+  ['HOOK_INODE_UNLINK', 7],
+  ['HOOK_INODE_RENAME', 5],
+  ['HOOK_SOCKET_CONNECT', 7],
+  ['HOOK_TASK_KILL', 1],
+];
+const HOOK_PICK = HOOKS.flatMap(([h, w]) => Array(w).fill(h));
+
 // 공통 칸. 커널 판정과 세션 기록이 같은 스트림에 섞여 온다.
-function base(seq, wall) {
+function base(seq) {
   return {
     nodeSeq: String(seq),
     cpuSeq: String(seq),
     bootTsNs: String(seq * 1000),
-    wallTsUnixNs: String(wall),
-    origin: 'ORIGIN_LSM',
+    wallTsUnixNs: String(Date.now() * 1000000),
   };
 }
 
-// 커널 판정 한 건. exec 는 빈도가 가장 높고 허용도 기록되는 훅이라 수집 경로의 최악 조건이다.
-function execEvent(seq, host, cgroup) {
-  return {
-    ...base(seq, Date.now() * 1000000),
+/**
+ * 커널 판정 한 건. **영장을 거느린 세션에서만 나온다** — 태그가 없으면 lookup_warrant 가
+ * 비어서 LSM 훅이 아무것도 안 남기고 빠져나가기 때문이다. warrant_id 가 0 인 커널 판정은
+ * 제품에서 생기지 않는 조합이고, 대시보드도 그런 건 판정 추이에서 뺀다
+ * (session-warrant-web src/lib/filters.ts — `if (!c.warranted) continue`).
+ */
+function kernelEvent(seq, host, ses) {
+  const hook = HOOK_PICK[seq % HOOK_PICK.length];
+  // 훅 고르기와 같은 수를 쓰면 안 된다 — HOOK_PICK 길이가 100 이라 차단이 exec 에만 몰린다
+  // (2026-11-16: WOULD_DENY 2,602건이 전건 EXEC 였다).
+  const denied = Math.random() * 100 < DENY_PCT;
+  const e = {
+    ...base(seq),
     cpu: seq % 8,
-    hook: 'HOOK_BPRM_CHECK_SECURITY',
-    verdict: 'VERDICT_ALLOW',
+    hook,
+    verdict: denied ? 'VERDICT_WOULD_DENY' : 'VERDICT_ALLOW',
     mode: 'MODE_OBSERVE',
-    warrantId: '0',
+    origin: 'ORIGIN_LSM',
     tagSource: 'TAG_CGROUP',
-    process: { pid: 1000 + (seq % 5000), tgid: 1000 + (seq % 5000), comm: 'k6load', cgroupId: String(cgroup) },
-    exec: { filename: '/usr/bin/true', argv: `true ${host} ${seq}`, iMode: 33261 },
+    warrantId: String(ses.warrantId),
+    subjectId: ses.subjectId,
+    policyId: ses.policyId,
+    process: {
+      pid: 1000 + (seq % 5000), tgid: 1000 + (seq % 5000),
+      comm: ['bash', 'tail', 'cp', 'curl', 'rm'][seq % 5], cgroupId: String(ses.cgroup),
+    },
   };
+  const file = { dev: 64769, ino: 20000 + (seq % 9000), path: denied ? `/etc/app/conf${seq % 50}` : '' };
+  switch (hook) {
+    case 'HOOK_BPRM_CHECK_SECURITY':
+      e.exec = { file, iMode: 33261, filename: `/usr/bin/${e.process.comm}`, argv: `${e.process.comm} ${seq}` };
+      break;
+    case 'HOOK_FILE_OPEN':
+      e.fileWrite = { file, fFlags: 577 }; // O_WRONLY|O_CREAT|O_TRUNC
+      break;
+    case 'HOOK_INODE_UNLINK':
+      e.inodeMutate = { op: 'OP_UNLINK', dir: file, name: `tmp${seq % 200}` };
+      break;
+    case 'HOOK_INODE_RENAME':
+      e.inodeMutate = { op: 'OP_RENAME', dir: file, name: `a${seq % 200}`, newDir: file, newName: `b${seq % 200}` };
+      break;
+    case 'HOOK_SOCKET_CONNECT':
+      // addr 은 네트워크 바이트 오더 4바이트. k6 는 bytes 를 base64 로 싣는다
+      e.connect = { family: 'FAMILY_INET', addr: encoding.b64encode('\x01\x01\x01\x01'), port: 443, sockType: 1 };
+      break;
+    case 'HOOK_TASK_KILL':
+      e.selfProtection = { file };
+      break;
+  }
+  return e;
 }
 
 // 영장 세션 한 건. warrantd binder 가 보내는 모양과 같다 (cmd/warrantd/binder.go).
 // 서버는 warrant_id 가 0 이면 거부한다.
-function warrantedSession(seq, host, cgroup, n) {
+function warrantedSession(seq, ses) {
   return {
-    ...base(seq, Date.now() * 1000000),
+    ...base(seq),
     cpu: 0,
     hook: 'HOOK_AGENT',
     verdict: 'VERDICT_ALLOW',
     mode: 'MODE_OBSERVE',
     origin: 'ORIGIN_AGENT',
     tagSource: 'TAG_CGROUP',
-    warrantId: String(WARRANT_BASE + (n % 60)),
-    subjectId: 1 + (n % 7),
-    policyId: 1 + (n % 3),
+    warrantId: String(ses.warrantId),
+    subjectId: ses.subjectId,
+    policyId: ses.policyId,
     warrantedSession: {
-      loginAccount: ACCOUNTS[n % ACCOUNTS.length],
-      sourceAddress: `10.0.${n % 256}.${(n * 7) % 256}`,
-      cgroupId: String(cgroup),
-      sessionId: String(100 + (n % 900)), // XDG_SESSION_ID 는 재사용된다. cgroup id 는 아니다
-      sshKeyFingerprint: `SHA256:k6load${String(n % 40).padStart(4, '0')}`,
+      loginAccount: ses.account,
+      sourceAddress: ses.rhost,
+      cgroupId: String(ses.cgroup),
+      sessionId: String(ses.sessionId), // XDG_SESSION_ID 는 재사용된다. cgroup id 는 아니다
+      sshKeyFingerprint: ses.fingerprint,
     },
   };
 }
 
-// 무영장 세션 한 건. 사유가 없으면 서버가 거부한다 — 사유별로 돌려 쓴다.
-function unwarrantedSession(seq, host, cgroup, n) {
+// 무영장 세션 한 건. **그 아래로 커널 판정은 안 나온다** — 태그가 없기 때문이다.
+// 사유가 없으면 서버가 거부하므로 사유별로 돌려 쓴다.
+function unwarrantedSession(seq, n) {
   const reason = REASONS[n % REASONS.length];
   return {
-    ...base(seq, Date.now() * 1000000),
+    ...base(seq),
     cpu: 0,
     hook: 'HOOK_AGENT',
     verdict: 'VERDICT_ALLOW',
@@ -150,12 +203,26 @@ function unwarrantedSession(seq, host, cgroup, n) {
     unwarrantedSession: {
       loginAccount: ACCOUNTS[n % ACCOUNTS.length],
       sourceAddress: `203.0.113.${n % 256}`,
-      cgroupId: String(cgroup),
+      cgroupId: String(90000000 + n),
       sessionId: String(100 + (n % 900)),
       reason,
       // REASON_NO_KEY 는 키가 없어서 생긴 사유다. 지문을 같이 보내면 거짓이 된다.
       sshKeyFingerprint: reason === 'REASON_NO_KEY' ? '' : `SHA256:k6load${String(n % 40).padStart(4, '0')}`,
     },
+  };
+}
+
+// 커널 판정이 달릴 세션 하나. 번호는 서버에 없는 것이라 화면에 #9500 처럼 보인다.
+function newSession(vu, n, cgroup) {
+  return {
+    warrantId: WARRANT_BASE + (n % 60),
+    subjectId: 1 + (n % 7),
+    policyId: 1 + (n % 3),
+    cgroup,
+    account: ACCOUNTS[n % ACCOUNTS.length],
+    rhost: `10.0.${n % 256}.${(n * 7) % 256}`,
+    sessionId: 100 + (n % 900),
+    fingerprint: `SHA256:k6load${String(n % 40).padStart(4, '0')}`,
   };
 }
 
@@ -197,6 +264,8 @@ export default async function () {
   let sessionCount = 0;
   // cgroup id 는 재사용되지 않는다 — 세션마다 새 값이어야 화면의 「최근 접속」이 섞이지 않는다.
   let cgroup = 90000 + vu * 1000000;
+  // 커널 판정이 달릴 영장 세션. 첫 배치에서 연다 — 이게 없으면 판정을 만들 수 없다.
+  let session = newSession(vu, vu * 10000, ++cgroup);
   const deadline = Date.now() + DURATION * 1000;
 
   while (Date.now() < deadline && !failed) {
@@ -208,18 +277,20 @@ export default async function () {
     const events = [];
 
     // 세션 하나가 열리고 그 아래로 커널 판정이 쏟아지는 모양을 흉내 낸다.
-    const openSession = SESSION_EVERY > 0 && batchNo % SESSION_EVERY === 0;
-    if (openSession) {
-      cgroup++;
+    if (SESSION_EVERY > 0 && batchNo % SESSION_EVERY === 0) {
       sessionCount++;
       const n = vu * 10000 + sessionCount;
-      events.push(sessionCount % 100 < UNWARRANTED_PCT
-        ? unwarrantedSession(++seq, host, cgroup, n)
-        : warrantedSession(++seq, host, cgroup, n));
+      if (sessionCount % 100 < UNWARRANTED_PCT) {
+        // 무영장 세션은 기록만 남고 커널 판정을 거느리지 않는다. 판정은 열려 있던 영장 세션이 계속 낸다.
+        events.push(unwarrantedSession(++seq, n));
+      } else {
+        session = newSession(vu, n, ++cgroup);
+        events.push(warrantedSession(++seq, session));
+      }
       sessions.add(1);
     }
     while (events.length < BATCH) {
-      events.push(execEvent(++seq, host, cgroup));
+      events.push(kernelEvent(++seq, host, session));
     }
 
     const batch = { events, lastNodeSeq: String(seq), seqEpoch: EPOCH };
