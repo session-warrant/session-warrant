@@ -8,6 +8,9 @@
 bypass/     §04 의 우회 경로 표가 그대로 bats 테스트 케이스다
 overhead/   훅별 오버헤드 실측. file_open 이 가장 위험한 미검증 가정이다
 e2e/        영장 세션 부하 → 커널 판정 기록이 서버 DB 까지 빠짐없이 오는가 (맥에서 돈다)
+inode/      inode 가 언제 바뀌고 fanotify 가 그걸 잡는가 (S4)
+pamtiming/  PAM session 단계에서 session-N.scope 가 확정돼 있는가 (S3)
+serverload/ 중앙 서버가 노드 수에 비례해 받는가 — k6. 커널이 아니라 서버 부하다
 ```
 
 ## 규칙
