@@ -264,6 +264,42 @@ dev/dummy-audit.sh clean      # 더미 노드에 딸린 것만 지우고 VACUUM 
 - **`received_seq` 가 음수다.** 대시보드는 「받은 순번 N 뒤」로 이어 받으므로, 양수로 넣으면 열려 있던 화면이 수백만 건을
   따라잡는다. 음수면 발생 시각으로 고르는 구간 조회 · 집계에만 잡힌다.
 
+## 컨테이너 — 운영 스펙으로 묶어 돌린다 (`Dockerfile` · compose `server`)
+
+평소 개발은 `./gradlew bootRun` 이다. 이 컨테이너는 **부하 측정에서 CPU · 메모리를
+운영 인스턴스와 같게 묶으려고** 만들었다(`bench/serverload`). `--profile t3micro`
+없이는 뜨지 않으므로 기존 흐름은 그대로다.
+
+```sh
+./gradlew bootJar                                              # 항아리를 먼저 만든다
+docker compose -f compose.yaml --profile t3micro up -d --build
+curl -s localhost:8081/actuator/health
+docker compose -f compose.yaml --profile t3micro down
+```
+
+| | |
+|---|---|
+| 스펙 | **2 vCPU · 1 GiB** — AWS t3.micro (`deploy.resources.limits`) |
+| 포트 | **8081 · 9091** — `bootRun`(8080 · 9090)과 같이 떠 있어도 안 부딪힌다 |
+| DB | compose 의 `postgres`. **제한을 걸지 않는다** — 운영에서 DB 가 RDS 로 빠지는 모양이고, 서버 자체의 한계를 분리해 본다 |
+| 프로필 | 기본 `dev`(Basic). `SERVER_PROFILES=dev,mtls` 처럼 바꾼다 |
+| 인증서 | `../.cache/pki` 를 `/pki` 로 읽기 전용 마운트(`WARRANT_TLS_DIR`) |
+| 서명키 | 볼륨 `warrant-server-state` 의 `/state/signing.key`. **컨테이너를 다시 만들어도 key id 가 그대로다** — 새로 생기면 노드의 `/etc/warrantd/keys` 와 어긋나 push 가 거부된다 |
+
+- **항아리는 호스트에서 만든다.** 이미지 안에서 Gradle 을 돌리면 JDK 25 툴체인과 의존성을
+  매번 다시 받는다. 항아리가 없으면 `COPY` 가 실패한다 — 조용히 옛 이미지를 쓰지 않는다.
+  **고친 코드를 재면서 `bootJar` 를 다시 안 돌리면 옛 항아리를 재게 된다.**
+- **JVM 에 1 GiB 를 다 주면 죽는다.** gRPC(Netty)가 힙 밖 직접 버퍼를 쓰고 그 기본값이
+  최대 힙과 같아서, 묶지 않으면 힙 + 직접 버퍼가 한도를 넘는다. Dockerfile 이
+  `-XX:MaxRAMPercentage=60 -XX:MaxDirectMemorySize=128m -XX:+ExitOnOutOfMemoryError` 로
+  고정한다. 2026-11-16 노드 4대 부하에서 **394 MiB / 1 GiB · OOM 0** 였다.
+- **`oidc` 는 이 컨테이너에서 그대로 안 된다.** 토큰의 발급자가 `localhost:8180` 인데
+  컨테이너 안의 `localhost` 는 자기 자신이라 JWKS 를 못 가져온다. 고치려면 `issuer-uri` 와
+  `jwk-set-uri` 를 따로 주거나 호스트 주소를 넣어야 한다 — 미구현.
+- **`dev` 프로필의 Basic 인증은 요청당 ~75ms 다**(bcrypt, 유휴 컨테이너 실측). 세션 쿠키가
+  없는 curl · k6 는 매 요청 다시 인증한다. 2 vCPU 에서는 이게 읽기 지연을 지배하므로
+  **Bearer(oidc) 로 잰 숫자와 섞어 비교하면 안 된다.**
+
 ## 의존성에서 한 번 걸리는 지점
 
 Spring Boot 4 는 Boot 3 과 스타터 좌표가 다르고, gRPC 는 아예 소속이 바뀌었다.
