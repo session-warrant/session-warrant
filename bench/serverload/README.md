@@ -4,28 +4,72 @@
 
 | | 무엇 | 왜 |
 |---|---|---|
-| 쓰기 `ingest.js` | gRPC `AuditIngestService/Stream` → `audit_event` | 노드 수에 비례해 들어온다. 여기가 막히면 감사 기록이 노드에 쌓인다 |
+| 쓰기 `ingest.js` | gRPC `AuditIngestService/Stream` → `audit_event` · `warranted_session` · `unwarranted_session` | 노드 수에 비례해 들어온다. 여기가 막히면 감사 기록이 노드에 쌓인다 |
 | 읽기 `read.js` | 대시보드가 부르는 `/api/audit/*` · `/api/nodes` | 쌓인 테이블에서 화면이 뜨는가 |
 
 **둘을 겹쳐 돌리는 게 이 하네스의 요점이다.** 적재가 받은 순번을 직렬화하는
 동안 읽기가 같이 느려지는지는 따로 재면 안 보인다.
 
-## 돌리기
+## 돌리기 — k6 가 직접 돈다
 
 전부 맥에서 돈다. `sudo` 가 필요 없다 — 커널을 건드리지 않는다.
 
 ```sh
-make check                      # k6 · 서버 · DB · 인증서
-make certs NODES=8              # mtls 프로필일 때만 (아래 「인증」)
-make test                       # 노드 1대 · 30초
-make test-scale                 # 노드 1 · 2 · 4 · 8 을 한 번에 — 직렬화 확인
-./run.sh --nodes 8 --duration 60
-./run.sh --both --nodes 4 --token "$T"      # 읽기까지. 인증 필요
-./run.sh --read-only --basic dev@example.com:<암호>
-make clean-rows CONFIRM=1       # 가짜 노드가 남긴 행을 지운다
+make check                                      # k6 · 서버 · DB · 인증서
+
+k6 run ingest.js                                # 노드 1대 · 30초 · 평문
+k6 run -e NODES=4 -e DURATION=60 ingest.js
+k6 run -e PKI=../../.cache/pki ingest.js        # mtls 프로필 서버 (make certs NODES=N 먼저)
+k6 run -e ADDR=localhost:9091 ingest.js         # t3.micro 컨테이너
+k6 run -e SESSION_EVERY=3 ingest.js             # 세션 이벤트를 촘촘히 — 화면 채우기
+
+k6 run -e BASIC=dev@example.com:<암호> read.js   # 읽기 (dev 프로필)
+k6 run -e TOKEN="$T" read.js                    # 읽기 (oidc 프로필)
 ```
 
-결과는 `out/<타임스탬프>/`. 종료 코드 0 통과 · 1 적재가 모자람 · 2 사전 조건 실패.
+각 스크립트가 끝에 처리량 · ack 지연 · 읽기 지연을 찍는다. 환경 변수는 파일 머리에 있다.
+
+### 숫자를 남길 거면 `run.sh`
+
+```sh
+./run.sh --nodes 8 --duration 60
+./run.sh --scale 1,2,4,8                        # 노드 수만 바꿔 연달아 — 서로 비교 가능
+./run.sh --both --nodes 4 --token "$T"          # 쓰기와 읽기를 겹쳐서
+./run.sh --read-only --basic dev@example.com:<암호>
+make clean-rows CONFIRM=1                       # 가짜 노드가 남긴 행을 지운다
+```
+
+`run.sh` 가 k6 보다 더 하는 일은 넷이다 — 사전 조건 확인 · 실행마다 새 epoch ·
+쓰기와 읽기 겹치기 · **DB 행수로 처리량 검산**. 결과는 `out/<타임스탬프>/` 에 남고,
+종료 코드는 0 통과 · 1 적재가 모자람 · 2 사전 조건 실패다.
+
+**`k6 run` 단독에는 검산이 없다.** 적재가 멱등이라 보낸 것이 전건 중복으로 걸러져도
+k6 쪽은 빨랐다고 보고한다. 단독 실행은 epoch 를 제가 뽑으므로 그 함정에 바로 빠지지는
+않지만, 「보낸 수」는 어디까지나 상한이다.
+
+## 세션 이벤트를 섞는다
+
+커널 판정만 보내면 **대시보드가 비어 보인다** — Grafana 의 「SSH 접속 현황」은
+`ssh_session` 뷰를, 「무영장 세션」은 `unwarranted_session` 을 읽기 때문이다.
+그래서 `ingest.js` 는 같은 스트림에 세션 기록을 섞는다(`warrantd` binder 와 같은 모양).
+
+| 변수 | 기본 | |
+|---|---|---|
+| `SESSION_EVERY` | 20 | 배치 몇 개마다 세션 한 건. 0 이면 안 섞는다 |
+| `UNWARRANTED_PCT` | 20 | 세션 중 무영장 비율. 나머지는 영장 세션 |
+| `WARRANT_BASE` | 9500 | 영장 번호. 서버에 없는 번호라 화면에 `#9500` 으로 보인다 |
+
+- **세션마다 cgroup id 가 새 값이다.** 재사용되지 않는 성질을 지켜야 화면의 「최근 접속」이
+  한 줄로 뭉치지 않는다. 2026-11-16 확인: 세션 530건 = 서로 다른 cgroup 530개.
+- **무영장 사유를 돌려 쓴다**(`NO_WARRANT` · `NO_KEY` · `KEY_MISMATCH` · `AGENT_UNREACHED`).
+  사유가 없으면 서버가 거부한다. `NO_KEY` 는 지문을 비워 보낸다 — 키가 없어서 생긴
+  사유에 지문을 실으면 거짓이다.
+- **영장 세션은 `warrant_id` 가 0 이면 서버가 거부한다.** 그래서 번호를 꼭 넣는다.
+- 계정 4개 · 출발지 · 지문 40개를 돌려 써서 「노드별 · 계정별」 패널이 한 칸으로
+  뭉치지 않게 한다.
+
+2026-11-16 확인: `SESSION_EVERY=3` · 노드 2대 · 10초에 세션 530건이 들어가
+Grafana 가 **접속 530 · 영장 412 · 무영장 118** 로 읽었다.
 
 ## 인증 — 서버를 어떤 프로필로 띄웠느냐에 달렸다
 
@@ -45,6 +89,7 @@ N개 있어야 한다. `make certs` 가 `deploy/pki/pki.sh` 로 만든다.
 ## 실측 (2026-11-16, 맥 M-시리즈 · 서버 · PostgreSQL · k6 가 같은 기계)
 
 `audit_event` 에 이미 550만 행이 있는 상태. 배치 100건 · 창 4개 · 15초.
+**세션 이벤트를 섞기 전의 측정이다** — 전건이 커널 판정(exec)이었다.
 
 | 노드 | DB 에 들어온 행/s | 노드 1대당 | ack 평균 | ack p95 |
 |---:|---:|---:|---:|---:|
@@ -151,11 +196,12 @@ PostgreSQL 에는 제한을 걸지 않는다 — 운영에서 DB 가 RDS 로 빠
 - **처리량은 DB 행수 기준이다.** `보낸 이벤트`는 상한이고, 둘이 어긋나면
   `report.py` 가 실패로 적는다.
 - **실행끼리 섞어 비교하지 말 것.** 서버 · DB · k6 가 한 기계에서 CPU 를 다툰다.
-  의미 있는 비교는 **같은 실행 안에서 노드 수만 바꾼 것**이다 — `make test-scale`
-  이 그래서 한 번에 돈다. (S1 에서 배운 것과 같은 규칙이다.)
+  의미 있는 비교는 **한 번의 호출 안에서 노드 수만 바꾼 것**이다 — `./run.sh --scale 1,2,4,8`
+  이 그래서 연달아 돈다. (S1 에서 배운 것과 같은 규칙이다.)
 - **`audit_event` 는 지금 DEFAULT 파티션 하나뿐이다.** 선언적 파티셔닝은 기술
   스택이 지목했지만 미구현이라, 행이 쌓이면 읽기가 같이 느려진다. 위 읽기 숫자는
-  550만 행에서의 값이다.
+  550만 행에서의 값이고, **세션 테이블은 거의 비어 있었다** — 세션을 섞어 다시 재면
+  `/api/audit/unwarranted` 와 「SSH 접속 현황」 쪽 숫자가 달라진다.
 - **가짜 노드 행은 대시보드 · Grafana 에 섞인다.** 호스트 이름이 `k6-node-*` 라
   눈에 보이고, `make clean-rows CONFIRM=1` 로 지운다. 지우기 전에 건수를 찍는다.
 - 이건 **서버 쪽 부하**다. 커널 훅의 비용은 `bench/overhead`(S1), 기록이
