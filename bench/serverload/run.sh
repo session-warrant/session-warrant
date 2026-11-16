@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # 중앙 서버의 감사 수집 · 조회 부하를 k6 로 재고, 적재가 실제로 일어났는지 DB 로 검산한다.
 #
+# 부하 자체는 k6 스크립트가 낸다 — 그냥 돌리려면 run.sh 없이도 된다:
+#   k6 run -e NODES=4 ingest.js
+#   k6 run -e BASIC=<계정>:<암호> read.js
+# run.sh 가 더 하는 일은 사전 조건 확인 · epoch 발급 · 쓰기와 읽기 겹치기 ·
+# **DB 행수로 처리량 검산** · out/ 보존이다.
+#
 #   ./run.sh                          노드 1대 · 30초 · 쓰기만
 #   ./run.sh --nodes 8 --duration 60  노드 8대. 처리량이 안 늘면 적재가 직렬화된 것이다
 #   ./run.sh --both --token "$T"      쓰기와 읽기를 겹쳐서. 읽기는 인증이 필요하다
@@ -11,6 +17,9 @@
 #   --duration 초 (30)       부하 시간
 #   --batch N (100)          배치당 이벤트 수
 #   --window N (4)           ack 안 된 배치를 몇 개까지 띄워 두는가
+#   --scale 1,2,4,8          노드 수만 바꿔 연달아 — 같은 묶음이라 서로 비교해도 된다
+#   --session-every N (20)   배치 몇 개마다 세션 이벤트 한 건. 0 이면 안 섞는다
+#   --unwarranted-pct N (20) 세션 중 무영장 비율
 #   --both                   읽기 부하를 같이 돌린다
 #   --read-only              읽기만
 #   --addr 주소 (localhost:9090)   gRPC
@@ -31,6 +40,9 @@ NODES=1
 DURATION=30
 BATCH=100
 WINDOW=4
+SCALE=""
+SESSION_EVERY=20
+UNWARRANTED_PCT=20
 MODE=ingest           # ingest | both | read
 ADDR=localhost:9090
 API=http://localhost:8080
@@ -41,7 +53,7 @@ BASIC=""
 PREFIX=k6-node-
 DB_CONTAINER=session-warrant-postgres-1
 
-usage() { sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,37p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -49,6 +61,9 @@ while [ $# -gt 0 ]; do
     --duration) DURATION=$2; shift 2 ;;
     --batch) BATCH=$2; shift 2 ;;
     --window) WINDOW=$2; shift 2 ;;
+    --scale) SCALE=$2; shift 2 ;;
+    --session-every) SESSION_EVERY=$2; shift 2 ;;
+    --unwarranted-pct) UNWARRANTED_PCT=$2; shift 2 ;;
     --both) MODE=both; shift ;;
     --read-only) MODE=read; shift ;;
     --addr) ADDR=$2; shift 2 ;;
@@ -65,6 +80,21 @@ while [ $# -gt 0 ]; do
 done
 
 fail() { echo "ERROR: $*" >&2; exit 2; }
+
+# 실행끼리 섞어 비교하면 안 되므로, 노드 수 비교는 한 번의 호출 안에서 연달아 돌린다.
+if [ -n "$SCALE" ]; then
+  rest=$(printf '%s' "$*")
+  for n in $(echo "$SCALE" | tr ',' ' '); do
+    echo; echo "=== 노드 $n 대 ==="
+    "$0" --nodes "$n" --duration "$DURATION" --batch "$BATCH" --window "$WINDOW" \
+      --session-every "$SESSION_EVERY" --unwarranted-pct "$UNWARRANTED_PCT" \
+      --addr "$ADDR" --api "$API" --certs "$CERTS" --prefix "$PREFIX" \
+      --db-container "$DB_CONTAINER" $([ "$TLS" = 0 ] && echo --no-tls) \
+      $([ -n "$TOKEN" ] && echo --token "$TOKEN") $([ -n "$BASIC" ] && echo --basic "$BASIC") \
+      $([ "$MODE" = both ] && echo --both) $([ "$MODE" = read ] && echo --read-only) || exit $?
+  done
+  exit 0
+fi
 psql() { docker exec -i "$DB_CONTAINER" psql -U warrant -d warrant -Atc "$1"; }
 
 # ── 사전 조건 ────────────────────────────────────────────────────────
@@ -102,6 +132,7 @@ EPOCH=$(( (RANDOM << 30) + (RANDOM << 15) + RANDOM + 1 ))
   echo "server ver  $(curl -fsS -m 5 "$API/actuator/health" | head -c 200)"
   echo "mode        $MODE"
   echo "nodes       $NODES · batch $BATCH · window $WINDOW · duration ${DURATION}s"
+  echo "sessions    배치 ${SESSION_EVERY}개마다 1건 · 무영장 ${UNWARRANTED_PCT}%"
   echo "epoch       $EPOCH"
   echo "k6          $(k6 version 2>&1 | head -1)"
   echo "host        $(uname -mrs)"
@@ -120,6 +151,7 @@ read_rc=0
 run_ingest() {
   OUT="$OUT" ADDR="$ADDR" NODES="$NODES" DURATION="$DURATION" BATCH="$BATCH" WINDOW="$WINDOW" \
     PREFIX="$PREFIX" EPOCH="$EPOCH" PKI="$([ "$TLS" = 1 ] && echo "$CERTS" || echo '')" \
+    SESSION_EVERY="$SESSION_EVERY" UNWARRANTED_PCT="$UNWARRANTED_PCT" \
     k6 run ingest.js > "$OUT/ingest.log" 2>&1 || return $?
 }
 

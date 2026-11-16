@@ -5,6 +5,10 @@
 //
 // 쓰기(ingest.js)와 같이 돌려야 의미가 있다 — 적재가 advisory lock 을 쥐는 동안
 // 읽기가 느려지는지가 이 둘을 겹쳐 보는 이유다. run.sh --both 가 그렇게 돌린다.
+//
+//   k6 run -e BASIC=dev@example.com:<암호> read.js      dev 프로필
+//   k6 run -e TOKEN="$T" read.js                        oidc 프로필
+//   k6 run -e API=http://localhost:8081 -e VUS=10 read.js
 import http from 'k6/http';
 import encoding from 'k6/encoding';
 import { check } from 'k6';
@@ -80,7 +84,26 @@ export default function () {
 }
 
 export function handleSummary(data) {
-  const out = {};
-  out[`${__ENV.OUT || '.'}/read-summary.json`] = JSON.stringify(data, null, 2);
+  const m = (name) => (data.metrics[name] || {}).values || {};
+  const fmt = (v) => (v === undefined ? '-' : `${v.toFixed(1)}ms`);
+  const line = (label, name) => {
+    const v = m(name);
+    return `  ${label.padEnd(18)} 평균 ${fmt(v.avg)} · 중위 ${fmt(v.med)} · p95 ${fmt(v['p(95)'])} · 최대 ${fmt(v.max)}`;
+  };
+  const text = [
+    '',
+    `  요청 ${(m('http_reqs').count || 0).toLocaleString()}건 · 200 아님 ${m('checks').fails || 0}건`,
+    line('처음 화면 events', 'read_events'),
+    line('이어 받기 after=', 'read_events_after'),
+    line('구간 집계 summary', 'read_summary'),
+    line('노드 목록', 'read_nodes'),
+    line('무영장 세션', 'read_unwarranted'),
+    '',
+  ].join('\n');
+
+  const out = { stdout: text };
+  if (__ENV.OUT) {
+    out[`${__ENV.OUT}/read-summary.json`] = JSON.stringify(data, null, 2);
+  }
   return out;
 }
