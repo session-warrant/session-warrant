@@ -71,7 +71,7 @@ rename · 접속 · 자기보호 기록이 `audit_event` 와 대시보드 감사
 | `bench/bypass/` | S2 §04 표 = bats 13케이스 + §18 4구멍(skip). **8 통과 · 0 실패**, 출력 커밋됨. 진짜 세션으로 재확인 남음 |
 | `bench/pamtiming/` | S3 하네스 — **통과**. sshd 11/11, 태깅 공백 없음 |
 | `bench/inode/` | S4 하네스 — fanotify 감시자 + 변형 카탈로그. **아직 안 돌렸다** |
-| `bench/serverload/` | 중앙 서버 부하 — k6(2026-11-16). gRPC 감사 스트림 · 대시보드 읽기 API, 맥에서 돈다. **노드 1 → 8 로 늘려도 처리량이 ~15,000건/s 에 평평하고 ack 지연만 정비례**(25 → 209ms) — 적재가 받은 순번을 advisory lock 으로 직렬화하는 대가다. 읽기를 겹치면 쓰기가 4배 느려진다(3,720건/s). 처리량은 k6 가 보낸 수가 아니라 **DB 행수 증가분**으로 잰다 — 적재가 멱등이라 epoch 를 새로 안 뽑으면 전건 중복으로 걸러지고도 빨랐다고 보고한다 |
+| `bench/serverload/` | 중앙 서버 부하 — k6(2026-11-16). gRPC 감사 스트림 · 대시보드 읽기 API, 맥에서 돈다. **노드 1 → 8 로 늘려도 처리량이 ~15,000건/s 에 평평하고 ack 지연만 정비례**(25 → 209ms) — 적재가 받은 순번을 advisory lock 으로 직렬화하는 대가다. 읽기를 겹치면 쓰기가 4배 느려진다(3,720건/s). 처리량은 k6 가 보낸 수가 아니라 **DB 행수 증가분**으로 잰다 — 적재가 멱등이라 epoch 를 새로 안 뽑으면 전건 중복으로 걸러지고도 빨랐다고 보고한다. `server/Dockerfile` + compose `--profile t3micro` 가 **서버를 2 vCPU · 1 GiB(t3.micro)로 묶어** 8081 · 9091 에 띄운다(`bootRun` 과 공존) — 쓰기는 13,440건/s 로 거의 안 떨어지고 읽기를 겹치면 무너진다. 버스트 크레딧 · x86 · 외부 DB 는 흉내 못 낸다 |
 | Grafana | `deploy/grafana` — compose 로 뜬다(:3000, 로그인 없이 보기 전용). 대시보드 「SSH 접속 현황」(2026-11-14, 뷰 `ssh_session` — 접속 · 영장 · 무영장 · 영장 비율, 노드별 · 계정별 · 최근 접속)과 「무영장 세션」: 건수 · 키 없음 · 유실 구간 · 노드 타일, 사유별 막대, 최근 세션 · 노드 · 유실 구간 표. PostgreSQL 을 직접 읽는다(로컬은 warrant 계정 — 운영은 SELECT 전용 계정으로). **경보**: 무영장 접속 · 감사 기록 유실 → 웹훅(`GRAFANA_ALERT_WEBHOOK_URL`, 로컬은 compose 의 `alert-sink`). 실제 세션으로 도착 확인(2026-10-29) |
 | 대시보드 | 별도 저장소 `session-warrant/session-warrant-web`(비공개, 2026-11-01 분리). React 19 + shadcn, 6화면. **서버가 떠 있으면 실데이터로 뜬다**(2026-11-08, `src/live.ts` — Vite 가 `/api` 를 :8080 으로 넘긴다). 영장 · 주체 · 노드 · 무영장 세션 · 유실 구간은 서버 값이고, 승인하면 서버에 실제로 발급된다(승인 단계는 화면에만 있다). 감사 검색 · 판정 추이도 서버의 커널 판정 기록이다(2026-11-09, `GET /api/audit/events` — kprobe 미러 · fork 는 화면에서 뺀다). **새로고침 없이 따라간다**(2026-11-09) — SSE 알림 → 받은 순번 뒤 차분 조회, 5초마다 시계가 움직인다. **기간은 「실시간」(최근 5분 · 5초 막대) 과 「구간」(시작 · 끝 직접 선택) 두 가지뿐이다**(2026-11-11) — 구간의 숫자 · 차트는 서버 집계, 막대는 72개 안팎이 되게 사다리(5초 ~ 1일)에서 고른다. 실제 VM 로그인 한 건이 새로고침 없이 떴다. 서버가 없으면 목 데이터. **macOS 앱**은 또 다른 별도 저장소 `session-warrant-desktop`(Electron, 2026-11-11) — 웹 저장소의 빌드를 감싸 같은 화면을 앱 안 서버 `127.0.0.1:5180` 으로 띄우고 `/api` 등은 중앙 서버로 넘긴다. Keycloak 에 그 주소가 등록돼 있어야 한다. 화면 담당이 없어 Grafana 가 주 화면이다 |
 
@@ -369,6 +369,7 @@ make clean-rows CONFIRM=1                      # 가짜 노드(k6-node-*) 행 �
 ```sh
 cd server
 docker compose -f compose.yaml up -d --wait   # 로컬 PostgreSQL 18(호스트 5433) + Grafana(:3000)
+./gradlew bootJar && docker compose -f compose.yaml --profile t3micro up -d --build   # 서버를 2 vCPU · 1 GiB 로 묶어 8081 · 9091 에. 부하 측정용
 ./gradlew bootRun                  # :8080 (health 만 공개) · Flyway 적용. OIDC · 노드 mTLS 는 SPRING_PROFILES_ACTIVE=oidc,mtls
 ./gradlew build                    # 컴파일 + 테스트 + bootJar
 ./gradlew generateProto            # proto/*.proto → Java (protobuf + grpc)
