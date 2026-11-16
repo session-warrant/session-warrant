@@ -26,6 +26,14 @@ const auth = __ENV.TOKEN
     ? `Basic ${encoding.b64encode(__ENV.BASIC)}`
     : '';
 
+// 인증이 없으면 전건 401 이 나고 지연만 재게 된다 — 측정이 아니라 거짓이다.
+if (!auth) {
+  throw new Error('읽기 API 는 인증이 필요하다. dev 프로필이면 -e BASIC=<계정>:<암호>, '
+    + 'oidc 프로필이면 -e TOKEN=<JWT>. 지금 뜬 서버의 모드는 make check 가 찍어 준다.');
+}
+
+console.log(`read: ${API} · ${__ENV.TOKEN ? 'Bearer' : 'Basic'} · VU ${VUS}개 · ${DURATION}초`);
+
 const latency = {
   events: new Trend('read_events', true),
   events_after: new Trend('read_events_after', true),

@@ -17,17 +17,26 @@
 ```sh
 make check                                      # k6 · 서버 · DB · 인증서
 
-k6 run ingest.js                                # 노드 1대 · 30초 · 평문
+k6 run ingest.js                                # 노드 1대 · 30초 · mTLS
 k6 run -e NODES=4 -e DURATION=60 ingest.js
-k6 run -e PKI=../../.cache/pki ingest.js        # mtls 프로필 서버 (make certs NODES=N 먼저)
-k6 run -e ADDR=localhost:9091 ingest.js         # t3.micro 컨테이너
 k6 run -e SESSION_EVERY=3 ingest.js             # 세션 이벤트를 촘촘히 — 화면 채우기
+k6 run -e PKI= ingest.js                        # 평문 (mtls 프로필 없이 띄운 서버)
+k6 run -e PKI= -e ADDR=localhost:9091 ingest.js # t3.micro 컨테이너(dev 프로필)
 
 k6 run -e BASIC=dev@example.com:<암호> read.js   # 읽기 (dev 프로필)
 k6 run -e TOKEN="$T" read.js                    # 읽기 (oidc 프로필)
 ```
 
-각 스크립트가 끝에 처리량 · ack 지연 · 읽기 지연을 찍는다. 환경 변수는 파일 머리에 있다.
+각 스크립트가 **시작할 때 어디로 · 어떤 방식으로 붙는지 한 줄 찍고**, 끝에 처리량 ·
+ack 지연 · 읽기 지연을 찍는다. 환경 변수는 파일 머리에 있다.
+
+**쓰기의 기본은 mTLS 다**(`PKI=../../.cache/pki`). 제품의 노드 ↔ 중앙이 mTLS 이고
+평문은 로컬 개발 전용이라서다. 서버를 `mtls` 없이 띄웠으면 `-e PKI=` 로 비운다.
+
+**서버 프로필과 안 맞으면 10초 안에 멈추고 무엇을 고칠지 찍는다.** 평문으로 TLS 서버에
+붙으면 서버가 핸드셰이크 전에 끊어 `error reading server preface: EOF` 가 난다 —
+warrantd 에서도 같은 모양이다(`deploy/README.md`). 읽기는 인증을 안 주면 아예 시작하지
+않는다. 전건 401 의 지연을 재면 측정이 아니라 거짓이기 때문이다.
 
 ### 숫자를 남길 거면 `run.sh`
 

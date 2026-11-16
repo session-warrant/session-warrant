@@ -5,10 +5,10 @@
 // 재는 건 두 가지다: 처리량(events/s)과 ack 지연. 노드를 늘려도 처리량이 안 늘면
 // 적재가 직렬화된 것이다 — 서버는 받은 순번(received_seq)을 advisory lock 으로 직렬화한다.
 //
-//   k6 run ingest.js                                    노드 1대 · 30초 · 평문
+//   k6 run ingest.js                                    노드 1대 · 30초 · mTLS
 //   k6 run -e NODES=4 -e DURATION=60 ingest.js
-//   k6 run -e PKI=../../.cache/pki ingest.js            mtls 프로필 서버
-//   k6 run -e ADDR=localhost:9091 ingest.js             t3.micro 컨테이너
+//   k6 run -e PKI= ingest.js                            평문 (mtls 프로필 없이 띄운 서버)
+//   k6 run -e PKI= -e ADDR=localhost:9091 ingest.js     t3.micro 컨테이너(dev 프로필)
 //   k6 run -e SESSION_EVERY=5 ingest.js                 세션 이벤트를 더 촘촘히
 //
 // 처리량을 **검산하려면** run.sh 로 돌린다. 적재가 멱등이라 보낸 것이 전건 중복으로
@@ -29,7 +29,11 @@ const DURATION = Number(__ENV.DURATION || 30); // 부하 시간(초)
 const BATCH = Number(__ENV.BATCH || 100); // 배치당 이벤트 수. warrantd 기본 묶음과 같게
 const WINDOW = Number(__ENV.WINDOW || 4); // ack 안 된 배치를 몇 개까지 띄워 두는가
 const PREFIX = __ENV.PREFIX || 'k6-node-';
-const PKI = __ENV.PKI || ''; // 비어 있으면 평문. mtls 프로필이면 인증서 디렉터리
+// 기본은 mTLS 다 — 제품의 노드 ↔ 중앙은 mTLS 이고, 평문은 로컬 개발 전용이다.
+// `-e PKI=` 로 비우면 평문. 서버 프로필과 안 맞으면 아래 connect 가 그걸 짚어 준다.
+const PKI = __ENV.PKI === undefined ? '../../.cache/pki' : __ENV.PKI;
+// 기본 60초는 너무 길다 — 프로필이 안 맞으면 1분을 기다린 뒤에야 알게 된다.
+const CONNECT_TIMEOUT = __ENV.CONNECT_TIMEOUT || '10s';
 
 // 세션 이벤트를 몇 배치마다 한 건 섞는가. 0 이면 안 섞는다.
 // 실제 비율을 흉내 낸다 — 로그인 한 번에 커널 판정이 수백 건 난다.
@@ -65,6 +69,8 @@ if (PKI) {
 
 const client = new grpc.Client();
 client.load(['../../proto'], 'agent.proto');
+
+console.log(`ingest: ${ADDR} · ${PKI ? `mTLS(${PKI})` : '평문'} · 노드 ${NODES}대 · ${DURATION}초 · epoch ${__ENV.EPOCH || '(새로 뽑음)'}`);
 
 export const options = {
   scenarios: {
@@ -156,7 +162,19 @@ function unwarrantedSession(seq, host, cgroup, n) {
 export default async function () {
   const vu = exec.vu.idInTest; // 1..NODES
   const host = PREFIX + String(vu).padStart(2, '0');
-  client.connect(ADDR, PKI ? { tls: certs[vu - 1] } : { plaintext: true });
+  try {
+    client.connect(ADDR, {
+      timeout: CONNECT_TIMEOUT,
+      ...(PKI ? { tls: certs[vu - 1] } : { plaintext: true }),
+    });
+  } catch (e) {
+    // 거의 언제나 서버 프로필과 안 맞는 것이다. 「server preface: EOF」는 평문으로
+    // TLS 서버에 붙었을 때 서버가 핸드셰이크 전에 끊는 모양이다 (deploy/README.md).
+    exec.test.abort(`${ADDR} 에 ${PKI ? 'mTLS' : '평문'}으로 못 붙었다: ${e.message}\n`
+      + `  서버가 mtls 프로필이면 -e PKI=<인증서 디렉터리>, 아니면 -e PKI= (평문) 로 맞춘다.\n`
+      + `  지금 뜬 서버의 모드는 make check 가 찍어 준다.`);
+    return;
+  }
 
   const stream = new grpc.Stream(client, 'seswar.warrant.v1.AuditIngestService/Stream');
   const pending = []; // [{seq, t, n}] — ack 를 기다리는 배치
