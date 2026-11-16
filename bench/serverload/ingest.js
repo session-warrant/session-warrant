@@ -11,18 +11,15 @@
 //   k6 run -e PKI= -e ADDR=localhost:9091 ingest.js     t3.micro 컨테이너(dev 프로필)
 //   k6 run -e SESSION_EVERY=5 ingest.js                 세션 이벤트를 더 촘촘히
 //   k6 run -e DENY_PCT=10 ingest.js                     차단 판정을 더 섞는다
+//   k6 run -e WARRANT_IDS=1,2,3 ingest.js               서버에 있는 영장 번호로 (대시보드 확인용)
 //
-// 처리량을 **검산하려면** run.sh 로 돌린다. 적재가 멱등이라 보낸 것이 전건 중복으로
-// 걸러져도 k6 쪽은 빨랐다고 보고하는데, run.sh 는 DB 행수 증가분과 맞춰 본다.
+
 import grpc from 'k6/net/grpc';
 import encoding from 'k6/encoding';
 import { setTimeout } from 'k6/timers';
 import { Counter, Trend } from 'k6/metrics';
 import exec from 'k6/execution';
 
-// k6 의 sleep() 은 VU 를 통째로 멈춘다 — 이벤트 루프까지 멈춰서 스트림의 ack 콜백이
-// 반복이 끝날 때까지 안 들어온다(2026-11-16 실측: ack 지연이 전건 40초로 찍혔다).
-// await 로 양보해야 ack 가 제때 들어온다.
 const tick = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const ADDR = __ENV.ADDR || 'localhost:9090';
@@ -43,8 +40,17 @@ const SESSION_EVERY = Number(__ENV.SESSION_EVERY || 20);
 const UNWARRANTED_PCT = Number(__ENV.UNWARRANTED_PCT || 20); // 세션 중 무영장 비율
 // 차단 비율. 영장이 감사 모드(OBSERVE)라 차단은 WOULD_DENY 로 나간다 — 실제로 막지는 않는다.
 const DENY_PCT = Number(__ENV.DENY_PCT || 3);
-// 서버에 없는 번호다. 화면에 #9500 처럼 보인다 (dev/dummy-audit.sh 의 9001~9060 과 안 겹친다).
+/**
+ * 세션에 붙일 영장 번호.
+ *
+ * 기본은 서버에 없는 번호(9500~)라 화면에 `#9500` 으로 보인다. **대시보드를 볼 거면
+ * 서버에 있는 번호를 줘야 한다** — 모르는 번호가 오면 화면이 「페이지가 열린 뒤 발급된
+ * 영장인가」 하고 전체를 다시 읽는데, 그때 들고 있던 기록이 최근 한 페이지로 갈려서
+ * 막대가 사라진다(2026-11-16). run.sh 가 인증을 받으면 GET /api/warrants 로 채워 준다.
+ */
+const WARRANT_IDS = (__ENV.WARRANT_IDS || '').split(',').map(Number).filter((n) => n > 0);
 const WARRANT_BASE = Number(__ENV.WARRANT_BASE || 9500);
+const warrantId = (n) => (WARRANT_IDS.length ? WARRANT_IDS[n % WARRANT_IDS.length] : WARRANT_BASE + (n % 60));
 
 // 실행마다 달라야 한다. 적재 키가 (node_id, seq_epoch, node_seq) 라 같은 epoch 를
 // 다시 쓰면 서버가 전건 중복으로 걸러 「빠르게 아무것도 안 하는」 측정이 된다.
@@ -74,7 +80,8 @@ if (PKI) {
 const client = new grpc.Client();
 client.load(['../../proto'], 'agent.proto');
 
-console.log(`ingest: ${ADDR} · ${PKI ? `mTLS(${PKI})` : '평문'} · 노드 ${NODES}대 · ${DURATION}초 · epoch ${__ENV.EPOCH || '(새로 뽑음)'}`);
+console.log(`ingest: ${ADDR} · ${PKI ? `mTLS(${PKI})` : '평문'} · 노드 ${NODES}대 · ${DURATION}초`
+  + ` · 영장 ${WARRANT_IDS.length ? WARRANT_IDS.join(',') : `#${WARRANT_BASE}~ (서버에 없는 번호 — 대시보드가 매번 다시 읽는다)`}`);
 
 export const options = {
   scenarios: {
@@ -215,7 +222,7 @@ function unwarrantedSession(seq, n) {
 // 커널 판정이 달릴 세션 하나. 번호는 서버에 없는 것이라 화면에 #9500 처럼 보인다.
 function newSession(vu, n, cgroup) {
   return {
-    warrantId: WARRANT_BASE + (n % 60),
+    warrantId: warrantId(n),
     subjectId: 1 + (n % 7),
     policyId: 1 + (n % 3),
     cgroup,

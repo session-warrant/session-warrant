@@ -20,6 +20,7 @@
 #   --scale 1,2,4,8          노드 수만 바꿔 연달아 — 같은 묶음이라 서로 비교해도 된다
 #   --session-every N (20)   배치 몇 개마다 세션 이벤트 한 건. 0 이면 안 섞는다
 #   --unwarranted-pct N (20) 세션 중 무영장 비율
+#   --warrants 1,2,3         세션에 붙일 영장 번호. --token · --basic 이 있으면 서버에서 읽어 온다
 #   --both                   읽기 부하를 같이 돌린다
 #   --read-only              읽기만
 #   --addr 주소 (localhost:9090)   gRPC
@@ -43,6 +44,7 @@ WINDOW=4
 SCALE=""
 SESSION_EVERY=20
 UNWARRANTED_PCT=20
+WARRANT_IDS=""
 MODE=ingest           # ingest | both | read
 ADDR=localhost:9090
 API=http://localhost:8080
@@ -64,6 +66,7 @@ while [ $# -gt 0 ]; do
     --scale) SCALE=$2; shift 2 ;;
     --session-every) SESSION_EVERY=$2; shift 2 ;;
     --unwarranted-pct) UNWARRANTED_PCT=$2; shift 2 ;;
+    --warrants) WARRANT_IDS=$2; shift 2 ;;
     --both) MODE=both; shift ;;
     --read-only) MODE=read; shift ;;
     --addr) ADDR=$2; shift 2 ;;
@@ -88,6 +91,7 @@ if [ -n "$SCALE" ]; then
     echo; echo "=== 노드 $n 대 ==="
     "$0" --nodes "$n" --duration "$DURATION" --batch "$BATCH" --window "$WINDOW" \
       --session-every "$SESSION_EVERY" --unwarranted-pct "$UNWARRANTED_PCT" \
+      $([ -n "$WARRANT_IDS" ] && echo --warrants "$WARRANT_IDS") \
       --addr "$ADDR" --api "$API" --certs "$CERTS" --prefix "$PREFIX" \
       --db-container "$DB_CONTAINER" $([ "$TLS" = 0 ] && echo --no-tls) \
       $([ -n "$TOKEN" ] && echo --token "$TOKEN") $([ -n "$BASIC" ] && echo --basic "$BASIC") \
@@ -118,6 +122,15 @@ if [ "$MODE" != ingest ] && [ -z "$TOKEN$BASIC" ]; then
   fail "읽기 부하는 인증이 필요하다. $AUTH_MODE 프로필이면 $([ "$AUTH_MODE" = oidc ] && echo --token || echo --basic) 를 준다"
 fi
 
+# 서버에 없는 영장 번호를 쓰면 대시보드가 기록이 올 때마다 전체를 다시 읽는다 —
+# 들고 있던 기록이 최근 한 페이지로 갈려 막대가 사라진다. 인증이 있으면 진짜 번호를 읽어 온다.
+if [ -z "$WARRANT_IDS" ] && [ -n "$TOKEN$BASIC" ]; then
+  WARRANT_IDS=$(curl -fsS -m 10 $([ -n "$TOKEN" ] && echo -H "Authorization: Bearer $TOKEN") \
+      $([ -n "$BASIC" ] && echo -u "$BASIC") "$API/api/warrants" 2>/dev/null \
+    | python3 -c 'import sys,json;print(",".join(str(w["warrantId"]) for w in json.load(sys.stdin)[:12]))' 2>/dev/null || true)
+  [ -n "$WARRANT_IDS" ] && echo "영장 번호를 서버에서 읽었다: $WARRANT_IDS"
+fi
+
 TS=$(date +%Y%m%d-%H%M%S)
 OUT="out/$TS"
 mkdir -p "$OUT"
@@ -133,6 +146,7 @@ EPOCH=$(( (RANDOM << 30) + (RANDOM << 15) + RANDOM + 1 ))
   echo "mode        $MODE"
   echo "nodes       $NODES · batch $BATCH · window $WINDOW · duration ${DURATION}s"
   echo "sessions    배치 ${SESSION_EVERY}개마다 1건 · 무영장 ${UNWARRANTED_PCT}%"
+  echo "warrants    ${WARRANT_IDS:-없음 (서버에 없는 #9500~ 을 쓴다)}"
   echo "epoch       $EPOCH"
   echo "k6          $(k6 version 2>&1 | head -1)"
   echo "host        $(uname -mrs)"
@@ -151,7 +165,7 @@ read_rc=0
 run_ingest() {
   OUT="$OUT" ADDR="$ADDR" NODES="$NODES" DURATION="$DURATION" BATCH="$BATCH" WINDOW="$WINDOW" \
     PREFIX="$PREFIX" EPOCH="$EPOCH" PKI="$([ "$TLS" = 1 ] && echo "$CERTS" || echo '')" \
-    SESSION_EVERY="$SESSION_EVERY" UNWARRANTED_PCT="$UNWARRANTED_PCT" \
+    SESSION_EVERY="$SESSION_EVERY" UNWARRANTED_PCT="$UNWARRANTED_PCT" WARRANT_IDS="$WARRANT_IDS" \
     k6 run ingest.js > "$OUT/ingest.log" 2>&1 || return $?
 }
 
