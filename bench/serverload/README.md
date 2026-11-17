@@ -18,7 +18,7 @@
 make check                                      # k6 · 서버 · DB · 인증서
 k6 run smoke.js                                 # 길이 뚫렸나 — 30건 보내고 ack 까지 확인
 
-k6 run ingest.js                                # 노드 1대 · 30초 · mTLS
+k6 run saturation.js                                # 노드 1대 · 30초 · mTLS
 k6 run -e NODES=4 -e DURATION=60 ingest.js
 k6 run -e SESSION_EVERY=3 ingest.js             # 세션 이벤트를 촘촘히 — 화면 채우기
 k6 run -e PKI= ingest.js                        # 평문 (mtls 프로필 없이 띄운 서버)

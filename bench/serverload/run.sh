@@ -166,7 +166,7 @@ run_ingest() {
   OUT="$OUT" ADDR="$ADDR" NODES="$NODES" DURATION="$DURATION" BATCH="$BATCH" WINDOW="$WINDOW" \
     PREFIX="$PREFIX" EPOCH="$EPOCH" PKI="$([ "$TLS" = 1 ] && echo "$CERTS" || echo '')" \
     SESSION_EVERY="$SESSION_EVERY" UNWARRANTED_PCT="$UNWARRANTED_PCT" WARRANT_IDS="$WARRANT_IDS" \
-    k6 run ingest.js > "$OUT/ingest.log" 2>&1 || return $?
+    k6 run saturation.js > "$OUT/ingest.log" 2>&1 || return $?
 }
 
 run_read() {
