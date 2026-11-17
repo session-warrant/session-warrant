@@ -16,6 +16,7 @@
 
 ```sh
 make check                                      # k6 · 서버 · DB · 인증서
+k6 run smoke.js                                 # 길이 뚫렸나 — 30건 보내고 ack 까지 확인
 
 k6 run ingest.js                                # 노드 1대 · 30초 · mTLS
 k6 run -e NODES=4 -e DURATION=60 ingest.js
@@ -29,6 +30,10 @@ k6 run -e TOKEN="$T" read.js                    # 읽기 (oidc 프로필)
 
 각 스크립트가 **시작할 때 어디로 · 어떤 방식으로 붙는지 한 줄 찍고**, 끝에 처리량 ·
 ack 지연 · 읽기 지연을 찍는다. 환경 변수는 파일 머리에 있다.
+
+**부하를 걸기 전에 `smoke.js` 를 먼저 돌린다.** health · gRPC 연결 · 스트림 · ack 네 가지를
+30건으로 확인하고, 하나라도 어긋나면 0 이 아닌 코드로 끝난다(`thresholds`). 설정이 틀렸을 때
+10분짜리 부하를 돌리고 나서 아무것도 안 들어온 걸 아는 일을 막는다. DB 에 30행을 남긴다.
 
 **쓰기의 기본은 mTLS 다**(`PKI=../../.cache/pki`). 제품의 노드 ↔ 중앙이 mTLS 이고
 평문은 로컬 개발 전용이라서다. 서버를 `mtls` 없이 띄웠으면 `-e PKI=` 로 비운다.

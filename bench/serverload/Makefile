@@ -5,6 +5,7 @@
 #   make clean-rows CONFIRM=1   가짜 노드가 남긴 행을 지운다
 #
 # 부하는 이렇게 돌린다 (sudo 불필요, 전부 맥에서):
+#   k6 run smoke.js                                 길 확인 (30건 · ack 까지)
 #   k6 run -e NODES=4 ingest.js                     쓰기
 #   k6 run -e BASIC=<계정>:<암호> read.js            읽기
 #   ./run.sh --scale 1,2,4,8                        DB 검산 · out/ 보존까지
