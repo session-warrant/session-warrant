@@ -22,6 +22,7 @@ import io.seswar.warrant.proto.AuditProtos.Origin;
 import io.seswar.warrant.proto.AuditProtos.ProcessIdentity;
 import io.seswar.warrant.proto.AuditProtos.TagSource;
 import io.seswar.warrant.proto.AuditProtos.UnwarrantedSessionEvent;
+import io.seswar.warrant.proto.AuditProtos.WarrantedSessionEvent;
 import io.seswar.warrant.proto.AuditProtos.WriteAggregate;
 import io.seswar.warrant.proto.WarrantProtos.Mode;
 import org.junit.jupiter.api.Test;
@@ -163,6 +164,50 @@ class AuditProtoMapperTest {
     @Test
     void 무영장_접속이_아니면_무영장세션은_생기지_않는다() {
         assertThat(map(base(1).setExec(ExecEvent.getDefaultInstance()).build()).unwarrantedSessions()).isEmpty();
+    }
+
+    private static AuditProtos.AuditEvent warranted(long seq) {
+        return AuditProtos.AuditEvent.newBuilder()
+                .setNodeSeq(seq).setWallTsUnixNs(T_NS)
+                .setHook(Hook.HOOK_AGENT).setVerdict(AuditProtos.Verdict.VERDICT_ALLOW).setMode(Mode.MODE_DRYRUN)
+                .setOrigin(Origin.ORIGIN_AGENT).setTagSource(TagSource.TAG_CGROUP)
+                .setWarrantId(9).setSubjectId(42).setPolicyId(7)
+                .setWarrantedSession(WarrantedSessionEvent.newBuilder()
+                        .setLoginAccount("ec2-user").setSourceAddress("10.0.0.5").setCgroupId(7594)
+                        .setSessionId("c1").setSshKeyFingerprint("SHA256:abc"))
+                .build();
+    }
+
+    // 무영장 세션과 짝을 이뤄 「조직 전체 SSH 접속 현황」이 된다.
+    @Test
+    void 영장_세션은_감사기록과_영장세션_두_곳에_함께_남는다() {
+        Batch b = map(warranted(9));
+
+        AuditEvent e = b.events().getFirst();
+        assertThat(e.getType()).isEqualTo(AuditEventType.WARRANTED_SESSION);
+        assertThat(e.getWarrantId()).isEqualTo(9);
+        assertThat(e.getCgroupId()).isEqualTo(7594L);  // process 가 없으니 payload 에서
+        assertThat(b.unwarrantedSessions()).isEmpty();
+
+        WarrantedSession s = b.warrantedSessions().getFirst();
+        assertThat(s.getNodeId()).isEqualTo(NODE);
+        assertThat(s.getSeqEpoch()).isEqualTo(EPOCH);
+        assertThat(s.getNodeSeq()).isEqualTo(9);
+        assertThat(s.getObservedAt()).isEqualTo(T);
+        assertThat(s.getWarrantId()).isEqualTo(9);
+        assertThat(s.getKernelSubjectId()).isEqualTo(42);
+        assertThat(s.getMode()).isEqualTo("DRYRUN");  // 접두사 MODE_ 없이
+        assertThat(s.getLoginAccount()).isEqualTo("ec2-user");
+        assertThat(s.getSourceAddress()).isEqualTo("10.0.0.5");
+        assertThat(s.getSshKeyFingerprint()).isEqualTo("SHA256:abc");
+        assertThat(s.getCgroupId()).isEqualTo(7594);
+    }
+
+    // 영장 번호 없이 「영장 세션」이라고 하면 누구 영장인지 모르는 줄이 현황에 섞인다.
+    @Test
+    void 영장_번호가_없는_영장_세션은_거부된다() {
+        assertThatThrownBy(() -> map(warranted(1).toBuilder().setWarrantId(0).build()))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

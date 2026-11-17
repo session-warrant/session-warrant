@@ -30,7 +30,7 @@ io.seswar.warrant
 ├── approval/     승인 — 신청 · 승인 큐 (골격)
 ├── policy/       정책 — 정책 · 실행/쓰기/네트워크 규칙 · lint, REST
 ├── node/         노드 — 등록 · 하트비트 (NodeRegistry), REST
-├── audit/        감사 — 감사 이벤트 · 무영장 세션 · 유실 구간, 수집 gRPC(클라이언트 스트리밍) · 변환 · 멱등 저장, 무영장 탐지, 조회 REST
+├── audit/        감사 — 감사 이벤트 · 영장 세션 · 무영장 세션 · 유실 구간, 수집 gRPC(클라이언트 스트리밍) · 변환 · 멱등 저장, 무영장 탐지, 조회 REST
 ├── signing/      서명 키 — Ed25519 키 관리 · 서명기, 공개키 REST. protobuf 바이트에 서명한다
 ├── common/       REST 오류 응답
 └── config/       시계 · gRPC · 가상 스레드
@@ -96,7 +96,7 @@ warrantd Subscribe → WarrantPushGrpcService 스트림 등록 → 그 호스트
 | `…&kind=verdict` · `…&node=<호스트>` | 두 형태 모두에 붙는다. `kind=verdict` 는 LSM 판정만(kprobe 미러 · fork 를 빼서 한도를 판정에 쓴다), `node` 는 호스트 이름 |
 | `GET /api/audit/events?after=<순번>&limit=` | 이어 받기. 서버가 그 순번 뒤에 **받은** 것, 받은 순(발생 시각은 과거일 수 있다). 두 형태 모두 헤더 `X-Audit-Cursor` 가 다음 `after` 다 |
 | `GET /api/audit/summary?from=&to=&bucketSeconds=&origin=&node=` | 「구간 선택」 막대 집계. `[from, to)` 를 막대로 나눠 막대 · 훅 · 판정 · 영장 여부(`warranted`)별 건수. LSM 판정만 센다. 막대 경계는 `origin` + k · bucket(대시보드는 지역 자정을 보낸다). 막대가 5000개를 넘거나 `from ≥ to` 면 400 |
-| `GET /api/audit/stream` | SSE. 처음에 `ready`, 새 행이 저장되면 `audit`(data 는 새 행 수 `{"events","gaps","unwarrantedSessions"}` 뿐 — 기록은 위 조회로). 25초마다 빈 주석, 30분이면 끊고 브라우저가 다시 붙는다. 서버 한 대 안에서만 퍼진다 |
+| `GET /api/audit/stream` | SSE. 처음에 `ready`, 새 행이 저장되면 `audit`(data 는 새 행 수 `{"events","gaps","unwarrantedSessions","warrantedSessions"}` 뿐 — 기록은 위 조회로). 25초마다 빈 주석, 30분이면 끊고 브라우저가 다시 붙는다. 서버 한 대 안에서만 퍼진다 |
 
 - **로그인은 두 가지다. 둘 다 `/api/**` 는 로그인해야 열리고(공개키만 예외), 역할 규칙 · CSRF 가 같다**(`identity/SecurityConfig`).
   - **`oidc` 프로필 — 기본으로 쓸 것.** 콘솔은 Keycloak 로그인(코드 흐름 + PKCE) → 세션, curl 은 Keycloak 액세스 토큰(Bearer).
@@ -145,15 +145,15 @@ warrantd → `AuditIngestGrpcService`(gRPC 스트림) → `AuditIngestService.in
 
 - **중복 수신을 전제로 한다.** warrantd 는 ack 를 못 받으면 마지막 ack 이후를 다시 보낸다. 보내는 쪽에서
   중복을 막는 대신 받는 쪽이 멱등하게 받는다.
-- **멱등 키.** 감사 이벤트 · 무영장 세션은 `(node_id, seq_epoch, node_seq)`, 유실 구간은 구간 자체
-  `(node_id, from_at, to_at, cause)`. 셋 다 DB UNIQUE 로 걸려 있다(V1 · V2). `seq_epoch` 가 키에 없으면
+- **멱등 키.** 감사 이벤트 · 영장 세션 · 무영장 세션은 `(node_id, seq_epoch, node_seq)`, 유실 구간은 구간 자체
+  `(node_id, from_at, to_at, cause)`. 모두 DB UNIQUE 로 걸려 있다(V1 · V2 · V5). `seq_epoch` 가 키에 없으면
   bbolt 초기화 뒤 1 로 돌아간 `node_seq` 의 새 이벤트가 중복으로 버려진다.
 - **저장 순서.** 이미 있는 키를 배치의 seq 범위로 한 번에 조회해 빼고(같은 배치 안의 중복도 뺀다),
   남은 것만 `saveAllAndFlush`. 조회와 저장 사이에 같은 키가 끼어들면 UNIQUE 가 막고 배치 전체가 롤백된다 —
   ack 가 안 나가니 재전송 때 건너뛴다.
 - **flush 는 `ingest` 안에서 한다.** 커밋 때로 미루면 UNIQUE 위반이 이 메서드 밖에서 터진다.
   ack 를 보내기 전에, `ingest` 가 예외로 끝나야 한다.
-- **세 테이블을 한 트랜잭션으로 묶는다.** 반쯤 저장된 배치가 남으면 그 뒤의 ack 가 거짓이 된다.
+- **네 테이블을 한 트랜잭션으로 묶는다.** 반쯤 저장된 배치가 남으면 그 뒤의 ack 가 거짓이 된다.
 - **ack 는 `ingest` 가 정상 반환한 뒤에만.** 저장 전에 ack 하면 서버가 죽었을 때 warrantd 는 이미 지운 기록을
   다시 보낼 수 없다.
 - **배치 안의 행은 전부 그 스트림의 노드 것이어야 한다.** 섞이면 거부한다 — 남의 노드 이름으로 기록된다.
@@ -186,7 +186,7 @@ warrantd → `AuditIngestGrpcService`(gRPC 스트림) → `AuditIngestService.in
   `Origin` 은 proto 의 0 이 UNSPECIFIED 라 LSM=1 부터다 — 순서로 저장하면 여기서 어긋난다.
   서버에만 있는 분류(`AuditEventType`, 각종 reason · cause)는 이름을 `TEXT` 로 저장한다.
 - **훅에 따라 비는 칸은 래퍼 타입**(`Long` · `Integer`). 기본형은 NULL 을 못 담아 읽을 때 터진다.
-- 만드는 방법: `AuditEvent.builder()`, `UnwarrantedSession.of(...)`, `EventGap.of(...)`. gRPC 층이 proto 에서 만든다.
+- 만드는 방법: `AuditEvent.builder()`, `WarrantedSession.of(...)`, `UnwarrantedSession.of(...)`, `EventGap.of(...)`. gRPC 층이 proto 에서 만든다.
 
 ### `AuditEvent` — 감사 레코드 한 건 (`audit_event`)
 
@@ -217,6 +217,26 @@ warrantd → `AuditIngestGrpcService`(gRPC 스트림) → `AuditIngestService.in
 | `sshKeyFingerprint` | 공개키 지문(`SHA256:...`). 비어 있으면 `NO_KEY`. **이 값으로 사람을 역추적한다** — 공유 계정에서 사람을 가르는 유일한 값 |
 | `reason` | proto `UnwarrantedSessionEvent.Reason`: `NO_WARRANT` · `NO_KEY` · `KEY_MISMATCH` · `AGENT_UNREACHED` · `CENTRAL_STALE` · `PAM_ABSENT` |
 | `observedEventCount` | 이 세션이 실제로 한 일 — 연결된 감사 이벤트 수. "무영장 세션이 몇 건"보다 "무영장 세션이 무엇을 했다"가 훨씬 강한 자료다. **아직 0 으로만 들어간다** |
+
+### `WarrantedSession` — 영장이 맞아 태그된 SSH 세션 (`warranted_session`, V5)
+
+warrantd binder 가 영장을 찾아 세션 cgroup 에 태그한 순간 올린다(`WarrantedSessionEvent`). 무영장 세션과 합치면
+**「조직 전체 SSH 접속 현황」** 이 된다 — 뷰 `ssh_session` 이 둘을 한 줄씩 합치고, Grafana 「SSH 접속 현황」이 그걸 읽는다.
+
+| 필드 | 뜻 · 제약 |
+|---|---|
+| `seqEpoch` · `nodeSeq` | 이 세션을 실어 온 감사 이벤트의 키. 재전송 멱등 키(V5 UNIQUE) |
+| `warrantId` | 커널 영장 번호(`warrant.warrant_id` 와 조인). **0 이면 매퍼가 거부한다** — 누구 영장인지 모르는 줄이 현황에 섞인다 |
+| `kernelSubjectId` · `mode` | 그 영장의 주체 · 모드(`OBSERVE` · `DRYRUN` · `ENFORCE`) |
+| `sshKeyFingerprint` · `sourceAddress` · `cgroupId` | 영장을 맞춘 키 · 출발지 · 세션 cgroup. cgroup 으로 그 세션의 커널 판정 기록과 맞춘다 |
+
+뷰 `ssh_session`: `observed_at · node_id · warranted · warrant_id(무영장은 0) · mode · reason · login_account · ssh_key_fingerprint · source_address · cgroup_id`.
+
+**2026-11-14 실서버로 확인:** 영장 #12(OBSERVE)를 받은 키로 VM 에 ssh 로그인 한 건 → binder 가 cgroup 26824 에 태그 →
+`warranted_session` 한 행(계정 · 출발지 · 키 지문 · 영장 #12) → 같은 cgroup 의 커널 판정 기록과 이어지고, Grafana 「SSH 접속 현황」에 떴다.
+
+**배포 순서: 서버를 먼저 올린다.** 옛 서버는 이 payload 를 모르고 「payload 없음」으로 배치를 거부한다 — 그 배치가 ack 되지 않아
+노드의 뒤따르는 감사 기록까지 막힌다.
 
 ### `EventGap` — 유실 구간 (`audit_gap`)
 

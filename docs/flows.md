@@ -13,7 +13,7 @@
 | 5 | [태그 전파 (fork)](#5-태그-전파-fork) | cgroup 을 벗어나도 표식이 따라간다 |
 | 6 | [만료 · 취소](#6-만료--취소) | 열린 세션 안에서 바로 먹는다 |
 | 7 | [자기보호](#7-자기보호) | 영장 세션이 집행 장치를 못 끄게 |
-| 8 | [무영장 세션 → 서버](#8-무영장-세션--서버) | 감사 큐 → gRPC → DB → Grafana |
+| 8 | [세션 기록 → 서버](#8-세션-기록--서버) | 영장 세션 · 무영장 세션 → 감사 큐 → gRPC → DB → Grafana |
 | 9 | [커널 기록과 유실 구간](#9-커널-기록과-유실-구간) | ringbuf 소비, 빠진 번호 = 유실 |
 | 10 | [정책 컴파일과 inode 감시](#10-정책-컴파일과-inode-감시) | 경로 → `(dev, ino)`, 파일이 바뀌면 다시 |
 | 11 | [실패할 때](#11-실패할-때) | 집행은 단단하게, 발급은 느슨하게 |
@@ -292,11 +292,12 @@ selfprotect
 
 ---
 
-## 8. 무영장 세션 → 서버
+## 8. 세션 기록 → 서버
 
 ```
-binder.unwarranted                   (흐름 3 에서 영장이 안 맞음)
-   │ AuditEvent{HOOK_AGENT, ALLOW, warrant 0, UnwarrantedSession{사유, 계정, 지문, 출발지, cgroup}}
+binder.Bind                          (흐름 3)
+   │ 영장이 맞아 태그됨 → AuditEvent{HOOK_AGENT, ALLOW, warrant N, TAG_CGROUP, WarrantedSession{계정, 지문, 출발지, cgroup}}
+   │ 영장이 안 맞음     → AuditEvent{HOOK_AGENT, ALLOW, warrant 0, UnwarrantedSession{사유, 계정, 지문, 출발지, cgroup}}
    ▼
 store.AuditQueue.Append              node_seq 를 매긴다. 상한 10,000 — 넘치면 오래된 것부터 버리고
    │                                 그 구간을 LOCAL_STORE_FULL gap 으로 남긴다
@@ -310,13 +311,15 @@ upstream.StreamAudit                 첫 배치에 NodeHello. 최대 500건씩
    ▼
 AuditAck{seq_epoch, acked_through} → AuditQueue.Ack → 그 번호까지 지운다
    ▼
-PostgreSQL unwarranted_session → Grafana 「무영장 세션」 → 경보(웹훅)
+PostgreSQL warranted_session · unwarranted_session ─ 뷰 ssh_session → Grafana 「SSH 접속 현황」
+                                 └ unwarranted_session → Grafana 「무영장 세션」 → 경보(웹훅)
 ```
 
 - **재전송이 전제다.** 스트림이 끊기면 마지막 ack 다음부터 다시 보낸다. 서버는 같은 키를 두 번 받아도 한 번만 저장한다.
 - **seq_epoch 는 0 이면 안 된다.** warrantd 프로세스마다 새로 뽑는다 — 재시작해서 node_seq 가 1 로 돌아가도 옛 키와 안 겹친다.
   다른 epoch 의 ack 로는 지우지 않는다.
-- 이 경로는 커널 ringbuf 를 거치지 않는다. 무영장 판정은 PAM 쪽 binder 가 한다 (4주 차 마일스톤).
+- 이 경로는 커널 ringbuf 를 거치지 않는다. 영장 · 무영장 판정은 PAM 쪽 binder 가 한다 (4주 차 마일스톤).
+- 둘을 합친 것이 「조직 전체 SSH 접속 현황」이다(2026-11-14). 영장 세션 기록은 태그가 붙은 **뒤에** 큐에 넣는다 — 태그에 실패한 세션은 무영장으로 남는다.
 - 큐가 메모리라서 warrantd 가 재시작하면 ack 안 된 기록을 잃는다. bbolt `store` 가 생기면 닫힌다.
 
 코드: `agent/cmd/warrantd/binder.go` `unwarranted` · `unwarrantedEvent`, `agent/internal/store/auditqueue.go`,
@@ -416,6 +419,5 @@ policyInstaller.recompile → Compile → Apply (같은 policy_id 로 덮어쓴�
 
 - **bbolt `store`:** 재시작한 warrantd 는 전에 받은 중앙 영장을 모른다. warrantd 가 꺼진 동안 서버에서 취소된 영장은
   맵에서 만료될 때까지 산다. 감사 큐도 재시작하면 잃는다.
-- **영장 세션 기록:** 영장이 맞은 세션은 서버에 안 올라간다. 「조직 전체 SSH 접속 현황」을 셀 수 없다.
 - **Heartbeat · 연장 요청 · LookupActiveWarrant** (`upstream`). mTLS 는 붙었다(2026-11-14) — 인증서 폐기(CRL)는 아직 없다.
 - **KILL · SESSION_ONLY_GRACE 만료 처리** (흐름 6).
