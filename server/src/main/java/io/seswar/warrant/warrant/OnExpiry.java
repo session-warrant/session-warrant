@@ -64,7 +64,6 @@ public enum OnExpiry {
 
     /** 유예 시한(grace) 설정이 필수인 모드인가. */
     public boolean requiresGraceWindow() {
-        // return this == SESSION_ONLY_GRACE;
-        throw new UnsupportedOperationException("미구현");
+        return this == SESSION_ONLY_GRACE;
     }
 }

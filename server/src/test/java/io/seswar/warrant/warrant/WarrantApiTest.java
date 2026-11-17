@@ -121,6 +121,17 @@ class WarrantApiTest {
     }
 
     @Test
+    void warrantd_자기_디렉터리_쓰기를_여는_정책은_400이고_저장되지_않는다() throws Exception {
+        mvc.perform(as(ALICE, post("/api/policies")).contentType(MediaType.APPLICATION_JSON).content("""
+                        {"name": "sneaky", "writeRules": [{"path": "/etc/warrantd/keys", "effect": "ALLOW"}]}"""))
+                .andExpect(status().isBadRequest());
+
+        mvc.perform(as(ALICE, get("/api/policies")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.name == 'sneaky')]").isEmpty());
+    }
+
+    @Test
     void 없는_정책으로_신청하면_400이다() throws Exception {
         mvc.perform(as(ALICE, post("/api/warrants")).contentType(MediaType.APPLICATION_JSON).content("""
                         {"loginAccount": "ec2-user", "reason": "r", "targetHosts": ["node-1"], "policyId": "%s"}"""

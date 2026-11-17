@@ -31,6 +31,7 @@ import java.util.UUID;
 public class PolicyController {
 
     private final PolicyRepository policies;
+    private final PolicyLinter linter;
 
     // Boxed fields: Jackson 3 rejects a missing primitive, and every field but name may be left out.
     public record CreatePolicy(@NotBlank String name, Boolean inspectUdp, List<String> execRules,
@@ -76,8 +77,10 @@ public class PolicyController {
         List<ExecRule> exec = orEmpty(body.execRules()).stream().map(ExecRule::new).toList();
         List<WriteRule> write = orEmpty(body.writeRules()).stream().map(WriteRuleBody::toRule).toList();
         List<NetRule> net = orEmpty(body.netRules()).stream().map(NetRuleBody::toRule).toList();
-        return PolicyView.of(policies.saveAndFlush(
-                Policy.of(body.name(), Boolean.TRUE.equals(body.inspectUdp()), exec, write, net)));
+        Policy policy = Policy.of(body.name(), Boolean.TRUE.equals(body.inspectUdp()), exec, write, net);
+        // Policies are created only here and never edited, so checking at creation covers every warrant.
+        linter.assertDoesNotWeakenSelfProtection(policy);
+        return PolicyView.of(policies.saveAndFlush(policy));
     }
 
     @GetMapping
