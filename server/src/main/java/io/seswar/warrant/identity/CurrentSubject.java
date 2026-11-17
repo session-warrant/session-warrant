@@ -1,5 +1,6 @@
 package io.seswar.warrant.identity;
 
+import io.seswar.warrant.warrant.api.WarrantController;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;

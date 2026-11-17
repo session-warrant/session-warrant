@@ -1,7 +1,5 @@
 package io.seswar.warrant.identity;
 
-import io.seswar.warrant.identity.Subject;
-import io.seswar.warrant.identity.SubjectRepository;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import lombok.RequiredArgsConstructor;

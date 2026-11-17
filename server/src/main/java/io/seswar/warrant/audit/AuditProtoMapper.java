@@ -1,13 +1,19 @@
 package io.seswar.warrant.audit;
 
-import io.seswar.warrant.audit.AuditIngestService;
+import io.seswar.warrant.audit.store.AuditEvent;
+import io.seswar.warrant.audit.store.AuditEventType;
+import io.seswar.warrant.audit.store.EventGap;
+import io.seswar.warrant.audit.store.UnwarrantedSession;
+import io.seswar.warrant.audit.store.Verdict;
+import io.seswar.warrant.audit.store.WarrantedSession;
+import io.seswar.warrant.warrant.store.WarrantMode;
 import io.seswar.warrant.node.NodeRegistry;
-import io.seswar.warrant.audit.AuditEvent;
-import io.seswar.warrant.audit.AuditEventType;
-import io.seswar.warrant.audit.EventGap;
-import io.seswar.warrant.audit.UnwarrantedSession;
-import io.seswar.warrant.audit.Verdict;
-import io.seswar.warrant.warrant.WarrantMode;
+import io.seswar.warrant.audit.store.AuditEvent;
+import io.seswar.warrant.audit.store.AuditEventType;
+import io.seswar.warrant.audit.store.EventGap;
+import io.seswar.warrant.audit.store.UnwarrantedSession;
+import io.seswar.warrant.audit.store.Verdict;
+import io.seswar.warrant.warrant.store.WarrantMode;
 import io.seswar.warrant.proto.AgentProtos.AuditBatch;
 import io.seswar.warrant.proto.AgentProtos.NodeHello;
 import io.seswar.warrant.proto.AuditProtos;

@@ -1,6 +1,7 @@
 package io.seswar.warrant.warrant;
 
-import io.seswar.warrant.warrant.Warrant;
+import io.seswar.warrant.warrant.store.Warrant;
+import io.seswar.warrant.warrant.store.Warrant;
 
 import java.time.Duration;
 import java.util.UUID;

@@ -1,6 +1,5 @@
 package io.seswar.warrant.identity;
 
-import io.seswar.warrant.identity.Subject;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.Optional;

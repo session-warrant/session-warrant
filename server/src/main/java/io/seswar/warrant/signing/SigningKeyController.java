@@ -1,6 +1,5 @@
 package io.seswar.warrant.signing;
 
-import io.seswar.warrant.signing.SigningKeyProvider;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
