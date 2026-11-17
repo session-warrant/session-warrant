@@ -28,12 +28,12 @@ done
 [[ -x ./inowatch ]] || { echo "ERROR: 빌드가 안 돼 있다. make" >&2; exit 1; }
 
 mkdir -p "$OUT"
-LAB=$(mktemp -d /tmp/s4lab.XXXXXX)
+LAB=$(mktemp -d "${SW_LAB:-/tmp}/s4lab.XXXXXX")
 trap 'rm -rf "$LAB"' EXIT
 
 CSV="$OUT/cases.csv"
 WLOG="$OUT/fanotify.log"
-echo "case,target,kind,dev_before,ino_before,dev_after,ino_after,changed,fanotify" > "$CSV"
+echo "case,target,kind,dev_before,ino_before,dev_after,ino_after,changed,fanotify,gen_before,gen_after,reused" > "$CSV"
 
 {
     echo "kernel   $(uname -r)"
@@ -56,16 +56,20 @@ grep -q '^READY' "$WLOG" || { echo "ERROR: inowatch READY 타임아웃" >&2; cat
 trap 'kill -INT "$WPID" 2>/dev/null || true; wait "$WPID" 2>/dev/null || true; rm -rf "$LAB"' EXIT
 
 devino() { stat -c '%d %i' "$1" 2>/dev/null || echo "0 0"; }
+# ext4 hands a freed inode number straight to the next file; only i_generation tells them apart.
+gen() { lsattr -vd "$1" 2>/dev/null | awk '{print $1}' | grep . || echo -; }
+# Events whose path is the target or under it (inowatch already drops the rest of the fs).
+fan_count() { tail -n +$(($2 + 1)) "$WLOG" | awk -v t="$1" '/^EV /{p=substr($NF,6); if (p==t || index(p, t"/")==1) n++} END{print n+0}'; }
 
 # case <이름> <대상경로> <kind: allow|deny> <조작...>
 #   allow — 허용 목록이 걸리는 자리(파일 inode)
 #   deny  — 금지 목록이 걸리는 자리(디렉터리 inode)
 run_case() {
     local name=$1 target=$2 kind=$3; shift 3
-    local before after b_dev b_ino a_dev a_ino changed fan mark
+    local before after b_dev b_ino a_dev a_ino b_gen a_gen changed reused fan mark
 
     mark=$(wc -l < "$WLOG")
-    before=$(devino "$target"); read -r b_dev b_ino <<< "$before"
+    before=$(devino "$target"); read -r b_dev b_ino <<< "$before"; b_gen=$(gen "$target")
 
     if ! "$@" >/dev/null 2>&1; then
         printf '  %-28s %s\n' "$name" "건너뜀 (조작 실패)"
@@ -73,13 +77,14 @@ run_case() {
     fi
     sync; sleep 0.3   # fanotify 이벤트가 도착할 시간
 
-    after=$(devino "$target"); read -r a_dev a_ino <<< "$after"
-    [[ "$b_dev $b_ino" == "$a_dev $a_ino" ]] && changed=no || changed=yes
+    after=$(devino "$target"); read -r a_dev a_ino <<< "$after"; a_gen=$(gen "$target")
+    [[ "$b_dev $b_ino $b_gen" == "$a_dev $a_ino $a_gen" ]] && changed=no || changed=yes
+    [[ $changed == yes && "$b_dev $b_ino" == "$a_dev $a_ino" ]] && reused=yes || reused=no
 
-    fan=$(tail -n +$((mark + 1)) "$WLOG" | grep -c '^EV ' || true)
+    fan=$(fan_count "$target" "$mark")
 
-    printf '  %-28s inode %-8s fanotify %s건\n' "$name" "$changed" "$fan"
-    echo "$name,$target,$kind,$b_dev,$b_ino,$a_dev,$a_ino,$changed,$fan" >> "$CSV"
+    printf '  %-28s inode %-4s 번호재사용 %-4s fanotify %s건\n' "$name" "$changed" "$reused" "$fan"
+    echo "$name,$target,$kind,$b_dev,$b_ino,$a_dev,$a_ino,$changed,$fan,$b_gen,$a_gen,$reused" >> "$CSV"
 }
 
 mkdir -p "$LAB/bin" "$LAB/etc" "$LAB/log"
@@ -155,10 +160,10 @@ if mount --bind "$LAB/bindsrc" "$LAB/binddst" 2>/dev/null; then
     src=$(devino "$LAB/bindsrc/prog"); dst=$(devino "$LAB/binddst/prog")
     if [[ "$src" == "$dst" ]]; then
         echo "  bind mount                   (dev,ino) 동일 — 우회 안 됨 ✓"
-        echo "bind-mount,$LAB/binddst/prog,claim,${src% *},${src#* },${dst% *},${dst#* },no,0" >> "$CSV"
+        echo "bind-mount,$LAB/binddst/prog,claim,${src% *},${src#* },${dst% *},${dst#* },no,0,,," >> "$CSV"
     else
         echo "  bind mount                   (dev,ino) 다름 — 문서 주장 반증 ✗"
-        echo "bind-mount,$LAB/binddst/prog,claim,${src% *},${src#* },${dst% *},${dst#* },yes,0" >> "$CSV"
+        echo "bind-mount,$LAB/binddst/prog,claim,${src% *},${src#* },${dst% *},${dst#* },yes,0,,," >> "$CSV"
     fi
     umount "$LAB/binddst" 2>/dev/null || true
 else
@@ -171,7 +176,7 @@ if [[ -f $LAB/bin/copied ]]; then
     a=$(devino /bin/sh); b=$(devino "$LAB/bin/copied")
     if [[ "$a" != "$b" ]]; then
         echo "  바이너리 복사                 (dev,ino) 다름 — 복사 우회 자동 차단 ✓"
-        echo "binary-copy,$LAB/bin/copied,claim,${a% *},${a#* },${b% *},${b#* },yes,0" >> "$CSV"
+        echo "binary-copy,$LAB/bin/copied,claim,${a% *},${a#* },${b% *},${b#* },yes,0,,," >> "$CSV"
     fi
 fi
 
@@ -180,8 +185,21 @@ if ln "$LAB/bin/tool" "$LAB/bin/hardlink" 2>/dev/null; then
     a=$(devino "$LAB/bin/tool"); b=$(devino "$LAB/bin/hardlink")
     if [[ "$a" == "$b" ]]; then
         echo "  하드링크                     (dev,ino) 동일 — 허용이 딸려간다 ⚠"
-        echo "hardlink,$LAB/bin/hardlink,claim,${a% *},${a#* },${b% *},${b#* },no,0" >> "$CSV"
+        echo "hardlink,$LAB/bin/hardlink,claim,${a% *},${a#* },${b% *},${b#* },no,0,,," >> "$CSV"
     fi
+fi
+
+# A freed number given to a different name: the map key (dev, ino) would then allow that file.
+printf 'x\n' > "$LAB/bin/victim"
+v=$(devino "$LAB/bin/victim"); rm -f "$LAB/bin/victim"; sync
+printf 'y\n' > "$LAB/bin/newcomer"
+w=$(devino "$LAB/bin/newcomer")
+if [[ "$v" == "$w" ]]; then
+    echo "  다른 이름이 옛 번호를 받음     (dev,ino) 동일 — 규칙이 새 파일로 옮겨간다 ⚠"
+    echo "ino-reuse,$LAB/bin/newcomer,claim,${v% *},${v#* },${w% *},${w#* },no,0,,," >> "$CSV"
+else
+    echo "  다른 이름이 옛 번호를 받음     (dev,ino) 다름 — 재사용 안 됨"
+    echo "ino-reuse,$LAB/bin/newcomer,claim,${v% *},${v#* },${w% *},${w#* },yes,0,,," >> "$CSV"
 fi
 
 if [[ $WITH_APT == 1 ]]; then
