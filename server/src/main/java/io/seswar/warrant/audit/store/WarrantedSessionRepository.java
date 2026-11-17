@@ -1,4 +1,4 @@
-package io.seswar.warrant.audit;
+package io.seswar.warrant.audit.store;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -12,7 +12,7 @@ public interface WarrantedSessionRepository extends JpaRepository<WarrantedSessi
 
     // Called by AuditIngestService before saving. Keys among [minSeq, maxSeq] already stored for this node.
     @Query("""
-            select new io.seswar.warrant.audit.SeqKey(s.seqEpoch, s.nodeSeq)
+            select new io.seswar.warrant.audit.store.SeqKey(s.seqEpoch, s.nodeSeq)
             from WarrantedSession s
             where s.nodeId = :nodeId and s.seqEpoch in :epochs and s.nodeSeq between :minSeq and :maxSeq
             """)

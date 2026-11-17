@@ -1,4 +1,4 @@
-package io.seswar.warrant.audit;
+package io.seswar.warrant.audit.store;
 
 /** 커널 훅의 판정 결과. 정수값은 proto {@code Verdict} 와 같다. */
 public enum Verdict {

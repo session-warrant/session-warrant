@@ -1,4 +1,4 @@
-package io.seswar.warrant.warrant;
+package io.seswar.warrant.warrant.store;
 
 /**
  * 영장의 일생(§11). 이 값은 <b>커널로 내려가지 않는다</b> — 커널은 expires/revoked 만 본다.

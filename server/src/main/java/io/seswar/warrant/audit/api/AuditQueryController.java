@@ -1,11 +1,22 @@
-package io.seswar.warrant.audit;
+package io.seswar.warrant.audit.api;
 
-import io.seswar.warrant.audit.EventGap;
-import io.seswar.warrant.audit.UnwarrantedSession;
+import io.seswar.warrant.audit.store.AuditEvent;
+import io.seswar.warrant.audit.AuditStream;
+import io.seswar.warrant.audit.store.AuditEventRepository;
+import io.seswar.warrant.audit.store.AuditEventType;
+import io.seswar.warrant.audit.store.AuditSummaryQuery;
+import io.seswar.warrant.audit.store.EventGap;
+import io.seswar.warrant.audit.store.EventGapRepository;
+import io.seswar.warrant.audit.store.SshSessionQuery;
+import io.seswar.warrant.audit.store.UnwarrantedSession;
+import io.seswar.warrant.audit.store.UnwarrantedSessionRepository;
+import io.seswar.warrant.audit.store.Verdict;
+import io.seswar.warrant.audit.store.EventGap;
+import io.seswar.warrant.audit.store.UnwarrantedSession;
 import io.seswar.warrant.node.Node;
-import io.seswar.warrant.audit.EventGapRepository;
+import io.seswar.warrant.audit.store.EventGapRepository;
 import io.seswar.warrant.node.NodeRepository;
-import io.seswar.warrant.audit.UnwarrantedSessionRepository;
+import io.seswar.warrant.audit.store.UnwarrantedSessionRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;

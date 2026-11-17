@@ -1,7 +1,8 @@
-package io.seswar.warrant.audit;
+package io.seswar.warrant.audit.api;
 
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import io.seswar.warrant.audit.AuditProtoMapper;
 import io.seswar.warrant.audit.AuditIngestService;
 import io.seswar.warrant.node.NodePeer;
 import io.seswar.warrant.node.NodeRegistry;

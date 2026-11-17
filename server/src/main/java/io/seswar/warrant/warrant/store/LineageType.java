@@ -1,4 +1,4 @@
-package io.seswar.warrant.warrant;
+package io.seswar.warrant.warrant.store;
 
 /**
  * 유효기간의 <b>모든</b> 변경은 영장에 계보로 남는다(§03).

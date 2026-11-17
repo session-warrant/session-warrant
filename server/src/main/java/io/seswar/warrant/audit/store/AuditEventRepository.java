@@ -1,6 +1,5 @@
-package io.seswar.warrant.audit;
+package io.seswar.warrant.audit.store;
 
-import io.seswar.warrant.audit.AuditEvent;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Query;
@@ -21,7 +20,7 @@ public interface AuditEventRepository extends JpaRepository<AuditEvent, UUID>, J
 
     // Called by AuditIngestService before saving a batch. Keys among [minSeq, maxSeq] already stored for this node.
     @Query("""
-            select new io.seswar.warrant.audit.SeqKey(e.seqEpoch, e.nodeSeq)
+            select new io.seswar.warrant.audit.store.SeqKey(e.seqEpoch, e.nodeSeq)
             from AuditEvent e
             where e.nodeId = :nodeId and e.seqEpoch in :epochs and e.nodeSeq between :minSeq and :maxSeq
             """)

@@ -1,4 +1,4 @@
-package io.seswar.warrant.warrant;
+package io.seswar.warrant.warrant.store;
 
 import org.springframework.data.repository.Repository;
 

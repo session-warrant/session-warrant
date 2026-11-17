@@ -1,5 +1,6 @@
 package io.seswar.warrant.audit;
 
+import io.seswar.warrant.audit.api.AuditQueryController;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
@@ -50,7 +51,7 @@ public class AuditStream {
     }
 
     // Called by AuditQueryController.stream. The first event commits the response so the browser sees "open".
-    SseEmitter subscribe() {
+    public SseEmitter subscribe() {
         SseEmitter e = new SseEmitter(TIMEOUT.toMillis());
         emitters.add(e);
         e.onCompletion(() -> emitters.remove(e));

@@ -1,6 +1,6 @@
-package io.seswar.warrant.audit;
+package io.seswar.warrant.audit.store;
 
-import io.seswar.warrant.audit.UnwarrantedSession;
+import io.seswar.warrant.audit.api.AuditQueryController;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -30,7 +30,7 @@ public interface UnwarrantedSessionRepository extends JpaRepository<UnwarrantedS
 
     // Called by AuditIngestService before saving. Keys among [minSeq, maxSeq] already stored for this node.
     @Query("""
-            select new io.seswar.warrant.audit.SeqKey(u.seqEpoch, u.nodeSeq)
+            select new io.seswar.warrant.audit.store.SeqKey(u.seqEpoch, u.nodeSeq)
             from UnwarrantedSession u
             where u.nodeId = :nodeId and u.seqEpoch in :epochs and u.nodeSeq between :minSeq and :maxSeq
             """)

@@ -1,6 +1,6 @@
-package io.seswar.warrant.audit;
+package io.seswar.warrant.audit.store;
 
-import io.seswar.warrant.audit.EventGap;
+import io.seswar.warrant.audit.api.AuditQueryController;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.time.Instant;

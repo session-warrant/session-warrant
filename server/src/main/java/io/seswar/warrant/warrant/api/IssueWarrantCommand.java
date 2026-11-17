@@ -1,7 +1,9 @@
-package io.seswar.warrant.warrant;
+package io.seswar.warrant.warrant.api;
 
-import io.seswar.warrant.warrant.OnExpiry;
-import io.seswar.warrant.warrant.WarrantMode;
+import io.seswar.warrant.warrant.store.OnExpiry;
+import io.seswar.warrant.warrant.store.WarrantMode;
+import io.seswar.warrant.warrant.store.OnExpiry;
+import io.seswar.warrant.warrant.store.WarrantMode;
 
 import java.time.Duration;
 import java.util.List;

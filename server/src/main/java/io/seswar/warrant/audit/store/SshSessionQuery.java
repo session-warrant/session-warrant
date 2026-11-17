@@ -1,5 +1,6 @@
-package io.seswar.warrant.audit;
+package io.seswar.warrant.audit.store;
 
+import io.seswar.warrant.audit.api.AuditQueryController;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
@@ -29,7 +30,7 @@ public class SshSessionQuery {
     }
 
     // Called by AuditQueryController.sessions. `nodes` null means every node.
-    List<Row> sessions(Instant since, Instant until, Collection<UUID> nodes, int limit) {
+    public List<Row> sessions(Instant since, Instant until, Collection<UUID> nodes, int limit) {
         var p = new MapSqlParameterSource()
                 .addValue("since", Timestamp.from(since))
                 .addValue("until", Timestamp.from(until))

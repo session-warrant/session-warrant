@@ -1,5 +1,6 @@
-package io.seswar.warrant.warrant;
+package io.seswar.warrant.warrant.store;
 
+import io.seswar.warrant.warrant.api.IssueWarrantCommand;
 import io.seswar.warrant.policy.Policy;
 import io.seswar.warrant.identity.Subject;
 import jakarta.persistence.CollectionTable;

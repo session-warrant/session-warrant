@@ -1,10 +1,13 @@
 package io.seswar.warrant.audit;
 
+import io.seswar.warrant.audit.store.AuditEvent;
+import io.seswar.warrant.audit.store.AuditEventRepository;
+import io.seswar.warrant.audit.store.AuditEventType;
+import io.seswar.warrant.audit.store.SeqKey;
+import io.seswar.warrant.audit.store.UnwarrantedSession;
+import io.seswar.warrant.audit.store.UnwarrantedSessionRepository;
+import io.seswar.warrant.audit.store.Verdict;
 import io.seswar.warrant.node.NodeRepository;
-import io.seswar.warrant.audit.AuditEvent;
-import io.seswar.warrant.audit.AuditEventType;
-import io.seswar.warrant.audit.UnwarrantedSession;
-import io.seswar.warrant.audit.Verdict;
 import io.seswar.warrant.node.Node;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;

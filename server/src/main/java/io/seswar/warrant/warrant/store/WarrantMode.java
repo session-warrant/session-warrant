@@ -1,4 +1,6 @@
-package io.seswar.warrant.warrant;
+package io.seswar.warrant.warrant.store;
+
+import io.seswar.warrant.audit.store.AuditEvent;
 
 /**
  * 영장의 집행 강도. {@code struct warrant.mode} 와 <b>정수값이 반드시 일치</b>해야 한다(§12).

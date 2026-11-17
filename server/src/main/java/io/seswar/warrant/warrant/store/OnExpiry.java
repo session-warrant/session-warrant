@@ -1,4 +1,4 @@
-package io.seswar.warrant.warrant;
+package io.seswar.warrant.warrant.store;
 
 /**
  * 만료 순간의 동작. {@code struct warrant.on_expiry} 한 바이트가 결정한다(§03, §12).

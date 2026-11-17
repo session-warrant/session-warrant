@@ -4,7 +4,6 @@ import io.grpc.Status;
 import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
 import io.seswar.warrant.node.NodePeer;
-import io.seswar.warrant.warrant.push.WarrantPushService;
 import io.seswar.warrant.proto.AgentProtos.PushMessage;
 import io.seswar.warrant.proto.AgentProtos.SubscribeRequest;
 import io.seswar.warrant.proto.WarrantPushServiceGrpc;

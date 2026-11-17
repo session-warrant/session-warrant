@@ -1,9 +1,10 @@
-package io.seswar.warrant.audit;
+package io.seswar.warrant.audit.store;
 
-import io.seswar.warrant.audit.AuditEnumConverters.OriginConverter;
-import io.seswar.warrant.audit.AuditEnumConverters.TagSourceConverter;
-import io.seswar.warrant.audit.AuditEnumConverters.VerdictConverter;
-import io.seswar.warrant.warrant.WarrantMode;
+import io.seswar.warrant.warrant.store.WarrantMode;
+import io.seswar.warrant.audit.store.AuditEnumConverters.OriginConverter;
+import io.seswar.warrant.audit.store.AuditEnumConverters.TagSourceConverter;
+import io.seswar.warrant.audit.store.AuditEnumConverters.VerdictConverter;
+import io.seswar.warrant.warrant.store.WarrantMode;
 import jakarta.persistence.Column;
 import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;

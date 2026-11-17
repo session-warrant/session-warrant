@@ -1,6 +1,5 @@
-package io.seswar.warrant.warrant;
+package io.seswar.warrant.warrant.store;
 
-import io.seswar.warrant.warrant.Warrant;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;

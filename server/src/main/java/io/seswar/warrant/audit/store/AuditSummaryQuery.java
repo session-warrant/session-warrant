@@ -1,5 +1,6 @@
-package io.seswar.warrant.audit;
+package io.seswar.warrant.audit.store;
 
+import io.seswar.warrant.audit.api.AuditQueryController;
 import io.seswar.warrant.proto.AuditProtos.Hook;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
@@ -23,7 +24,7 @@ import java.util.stream.Collectors;
 public class AuditSummaryQuery {
 
     /** 판정 기록의 종류. 원본 조회의 {@code kind=verdict} 도 같은 목록을 쓴다. */
-    static final Set<AuditEventType> VERDICTS = Set.of(AuditEventType.EXEC, AuditEventType.FILE_WRITE,
+    public static final Set<AuditEventType> VERDICTS = Set.of(AuditEventType.EXEC, AuditEventType.FILE_WRITE,
             AuditEventType.INODE_MUTATE, AuditEventType.CONNECT, AuditEventType.UDP_SEND, AuditEventType.SELF_PROTECTION_HIT);
 
     private final NamedParameterJdbcTemplate jdbc;
@@ -32,7 +33,7 @@ public class AuditSummaryQuery {
     }
 
     // Called by AuditQueryController.summary. `nodes` null means every node. Bucket edges are origin + k * bucket.
-    List<Row> summary(Instant from, Instant to, long bucketSeconds, Instant origin, Collection<UUID> nodes) {
+    public List<Row> summary(Instant from, Instant to, long bucketSeconds, Instant origin, Collection<UUID> nodes) {
         var p = new MapSqlParameterSource()
                 .addValue("bucket", bucketSeconds)
                 .addValue("origin", Timestamp.from(origin))
@@ -61,7 +62,7 @@ public class AuditSummaryQuery {
     }
 
     // Rows stored before V3 have no hook.
-    static String hookName(Short hook) {
+    public static String hookName(Short hook) {
         if (hook == null) {
             return null;
         }

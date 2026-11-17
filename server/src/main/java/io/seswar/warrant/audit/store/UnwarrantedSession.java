@@ -1,4 +1,4 @@
-package io.seswar.warrant.audit;
+package io.seswar.warrant.audit.store;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;

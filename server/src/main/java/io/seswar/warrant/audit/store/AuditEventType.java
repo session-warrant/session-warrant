@@ -1,4 +1,4 @@
-package io.seswar.warrant.audit;
+package io.seswar.warrant.audit.store;
 
 /** 감사 이벤트 종류. */
 public enum AuditEventType {

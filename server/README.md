@@ -20,17 +20,23 @@ Session Warrant 의 컨트롤 플레인. 영장 발급 · 승인 · 서명 · pu
 
 ## 패키지 배치
 
-도메인별로 나눈다. 한 패키지 안에 그 도메인의 엔티티 · 저장소 · 서비스 · gRPC · REST 가 같이 있다.
+도메인별로 나눈다. 파일이 열 개를 넘는 도메인(`warrant` · `audit`)은 그 안에서 **역할별로** 한 겹 더 나눈다 —
+`store/` 는 저장(엔티티 · 리포지터리 · 질의 클래스 · 변환기 · 열거형), `api/` 는 바깥 입구(REST · gRPC · 뷰/커맨드),
+도메인 루트에는 서비스와 매퍼가 남는다. 나머지 도메인은 파일이 적어 한 겹으로 둔다.
 
 ```
 io.seswar.warrant
-├── warrant/      영장 — 엔티티 · 계보 · 상태 · 모드, 발급 · 회수 · 연장, 서명 굳히기(WarrantSealer), proto 변환, REST
+├── warrant/      영장 — 발급 · 회수 · 연장, 서명 굳히기(WarrantSealer), proto 변환
+│   ├── store/    엔티티 · 계보 · 상태 · 모드 · 만료 동작, 리포지터리
+│   ├── api/      REST 컨트롤러 · 뷰 · 신청 커맨드
 │   └── push/     영장 전달 — 노드 구독 gRPC(서버 스트리밍), 열린 스트림 보관(NodeStreamRegistry), push
 ├── identity/     로그인 · 신원 — 주체(사람 + SSH 키 지문), REST, SecurityConfig(OIDC · dev 프로필)
 ├── approval/     승인 — 신청 · 승인 큐 (골격)
 ├── policy/       정책 — 정책 · 실행/쓰기/네트워크 규칙 · lint, REST
 ├── node/         노드 — 등록 · 하트비트 (NodeRegistry), REST
-├── audit/        감사 — 감사 이벤트 · 영장 세션 · 무영장 세션 · 유실 구간, 수집 gRPC(클라이언트 스트리밍) · 변환 · 멱등 저장, 무영장 탐지, 조회 REST
+├── audit/        감사 — 멱등 저장(AuditIngestService) · proto 변환 · 무영장 탐지 · 새 기록 알림(AuditStream)
+│   ├── store/    감사 이벤트 · 영장 세션 · 무영장 세션 · 유실 구간, 리포지터리, 구간 집계 · 접속 현황 질의
+│   └── api/      조회 REST · 수집 gRPC(클라이언트 스트리밍)
 ├── signing/      서명 키 — Ed25519 키 관리 · 서명기, 공개키 REST. protobuf 바이트에 서명한다
 ├── common/       REST 오류 응답
 └── config/       시계 · gRPC · 가상 스레드
@@ -39,6 +45,9 @@ io.seswar.warrant
 방향: `warrant` → `identity` · `policy` · `signing`, `audit` → `warrant`(모드 enum) · `node`. `warrant` 와 `warrant.push` 는 서로 부른다(REST 가 커밋 뒤 push). 그 밖의 반대 방향 참조를 만들지 말 것 —
 예전에 `Warrant` 가 `audit` 의 모드 변환기를 빌려 쓰던 것을 `WarrantMode.Converter` 로 옮겼다.
 JPQL 의 `select new …` 는 클래스 전체 이름이 문자열에 들어간다 — 패키지를 옮기면 컴파일러가 못 잡고 기동 때 깨진다.
+**2026-11-17 에 실제로 밟았다**: `SeqKey` 를 `audit.store` 로 옮겼는데 세 리포지터리의 JPQL 문자열이 옛 이름을 가리켜,
+컴파일은 통과하고 테스트가 기동에서 무더기로 깨졌다. 패키지를 옮긴 뒤에는 **문자열 안의 클래스 이름**을 따로 찾는다 —
+`grep -rn 'io\.seswar\.warrant\.[a-z]*\.[A-Z]' --include='*.java'`.
 
 ## 신청 · 승인 — 콘솔 자체 경로
 
