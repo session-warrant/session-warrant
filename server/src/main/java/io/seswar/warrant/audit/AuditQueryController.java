@@ -42,6 +42,7 @@ public class AuditQueryController {
     private final AuditEventRepository events;
     private final AuditStream stream;
     private final AuditSummaryQuery summaries;
+    private final SshSessionQuery sshSessions;
 
     static final int MAX_EVENTS = 5000;
     /** 이어 받을 시작점. 다음 요청의 {@code after} 로 그대로 돌려보낸다. */
@@ -171,6 +172,31 @@ public class AuditQueryController {
         return unwarranted.findAllByOrderByObservedAtDesc().stream()
                 .map((UnwarrantedSession u) -> new UnwarrantedView(u.getId(), host.get(u.getNodeId()), u.getObservedAt(),
                         u.getLoginAccount(), u.getSshKeyFingerprint(), u.getSourceAddress(), u.getCgroupId(), u.getReason()))
+                .toList();
+    }
+
+    public record SessionView(Instant observedAt, String node, boolean warranted, long warrantId, String mode,
+                              String reason, String loginAccount, String sshKeyFingerprint, String sourceAddress,
+                              long cgroupId) {
+    }
+
+    /**
+     * 「조직 전체 SSH 접속 현황」— 영장 세션과 무영장 세션을 한 줄기로. 접속 한 번이 한 행이고 최신 순이다.
+     * 기본은 최근 24시간. {@code node} 는 호스트 이름이고, 그 안에서 무슨 일이 있었는지는
+     * {@code /events} 를 cgroup 으로 보면 된다.
+     */
+    @GetMapping("/sessions")
+    public List<SessionView> sessions(@RequestParam(required = false) Instant since,
+                                      @RequestParam(required = false) Instant until,
+                                      @RequestParam(required = false) String node,
+                                      @RequestParam(defaultValue = "1000") int limit) {
+        int max = Math.min(Math.max(limit, 1), 5000);
+        Instant from = since != null ? since : Instant.now().minus(Duration.ofHours(24));
+        Instant to = until != null ? until : Instant.now().plus(Duration.ofDays(1));
+        Map<UUID, String> host = hostnames();
+        return sshSessions.sessions(from, to, nodeIds(node), max).stream()
+                .map(r -> new SessionView(r.observedAt(), host.get(r.nodeId()), r.warranted(), r.warrantId(),
+                        r.mode(), r.reason(), r.loginAccount(), r.sshKeyFingerprint(), r.sourceAddress(), r.cgroupId()))
                 .toList();
     }
 

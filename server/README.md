@@ -91,6 +91,7 @@ warrantd Subscribe → WarrantPushGrpcService 스트림 등록 → 그 호스트
 | `POST /api/approvals/{id}/approve` · `/reject` | 승인 · 반려(`{"reason": …}` 필수) |
 | `DELETE /api/warrants/{id}` | 회수 |
 | `GET /api/signing-key` | 노드에 심을 공개키 PEM. 헤더 `X-Key-Id` 가 파일 이름 |
+| `GET /api/audit/sessions?since=&until=&node=&limit=` | **조직 전체 SSH 접속 현황.** 영장 세션 + 무영장 세션(뷰 `ssh_session`), 접속 한 번이 한 행이고 최신 순. 기본 최근 24시간 · 1000건(최대 5000). 영장 세션은 `reason` 이 null, 무영장은 `warrantId` 가 0 이고 `mode` 가 null |
 | `GET /api/nodes` · `/api/audit/unwarranted` · `/api/audit/gaps` | 대시보드용 읽기. 감사 스트림으로 들어온 노드 · 무영장 세션 · 유실 구간, 최신 순. 기간 필터 · 페이지는 아직 없다 |
 | `GET /api/audit/events?since=&until=&limit=` | 커널 판정 기록, 최신 순. 기본 최근 24시간 · 1000건(최대 5000). `until` 은 그 시각 전까지. 헤더 `X-Audit-Total` 이 한도 없이 센 건수다. 훅은 proto 이름(`HOOK_FILE_OPEN`) |
 | `…&kind=verdict` · `…&node=<호스트>` | 두 형태 모두에 붙는다. `kind=verdict` 는 LSM 판정만(kprobe 미러 · fork 를 빼서 한도를 판정에 쓴다), `node` 는 호스트 이름 |
