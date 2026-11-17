@@ -20,6 +20,11 @@ public record ExecRule(@Column(nullable = false) String path) {
      * §04 의 3중 방어 중 첫 겹이 열린다. 정책 lint 가 반드시 경고해야 한다.
      */
     public boolean isDelegationVector() {
-        throw new UnsupportedOperationException("미구현");
+        // 이름으로 본다 — 서버는 노드의 inode 를 모른다. /usr/bin/docker 든 /snap/bin/docker 든 같은 위험이다.
+        String name = path.substring(path.lastIndexOf('/') + 1);
+        return DELEGATION_VECTORS.contains(name);
     }
+
+    private static final java.util.Set<String> DELEGATION_VECTORS =
+            java.util.Set.of("systemd-run", "systemctl", "at", "crontab", "docker");
 }

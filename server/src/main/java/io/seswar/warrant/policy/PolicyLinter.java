@@ -1,5 +1,7 @@
 package io.seswar.warrant.policy;
 
+import org.springframework.stereotype.Component;
+
 import java.util.List;
 
 /**
@@ -10,7 +12,7 @@ import java.util.List;
  * {@code /etc/systemd/system} 쓰기를 같이 열어주는 순간 임의 코드 실행 경로가 생긴다.
  * 둘 중 하나만 보고는 안전을 보장할 수 없다.
  */
-// @Component
+@Component
 public class PolicyLinter {
 
     public List<PolicyLintFinding> lint(Policy policy) {
@@ -38,8 +40,40 @@ public class PolicyLinter {
      * 유일한 예외는 break-glass 영장이며, 그건 별도 경로로 최고 등급 경보와 함께 발급된다.
      */
     public void assertDoesNotWeakenSelfProtection(Policy policy) {
-        // bpf() syscall · task_kill(warrantd·sshd) · sb_umount(/sys/fs/bpf)
-        // · ptrace_access_check · kernel_module_request · warrantd 자기 파일 쓰기
-        throw new UnsupportedOperationException("미구현");
+        // 여섯 중 다섯(bpf · task_kill · sb_umount · ptrace_access_check · kernel_module_request)은
+        // 규칙 조회가 없는 LSM 훅이라 정책으로는 열 수 없다(bpf/warrant.bpf.c 「자기보호 5종」).
+        // 정책이 열 수 있는 건 여섯 번째뿐이다 — warrantd 자기 파일 쓰기 금지는 agent/internal/policy 가
+        // 깔아 두는 DENY 규칙이고, 정책의 같은 경로 ALLOW 는 뒤에 들어가 이기고(같은 키),
+        // 그 아래 경로 ALLOW 는 최장 일치로 이긴다. 그래서 그 두 모양만 막으면 된다.
+        for (WriteRule r : policy.getWriteRules()) {
+            if (r.effect() != WriteRule.Effect.ALLOW) {
+                continue;
+            }
+            String path = normalize(r.path());
+            for (String dir : SELF_PROTECTED_DIRS) {
+                if (path.equals(dir) || path.startsWith(dir + "/")) {
+                    throw new IllegalArgumentException(
+                            "write rule " + r.path() + " opens warrantd's own state (" + dir + ", §16 self-protection)");
+                }
+            }
+        }
+    }
+
+    /**
+     * agent/internal/policy.DefaultDenyWrite 와 같은 목록이다 — <b>한쪽을 고치면 다른 쪽도 고친다.</b>
+     * {@code /var/run} 은 Ubuntu 에서 {@code /run} 의 심볼릭 링크다. warrantd 는 경로를 stat 해서
+     * inode 로 컴파일하므로 {@code /var/run/warrantd} ALLOW 도 같은 디렉터리를 연다.
+     */
+    static final List<String> SELF_PROTECTED_DIRS = List.of(
+            "/var/lib/warrantd",
+            "/run/warrantd",
+            "/var/run/warrantd",
+            "/etc/warrantd");
+
+    // "/etc//warrantd/", "/etc/./warrantd" 같은 표기로 비켜 가지 못하게 한다. 경로는 노드의 것이라
+    // 서버 파일 시스템을 보지 않고 문자열로만 정리한다.
+    private static String normalize(String path) {
+        String p = java.nio.file.Path.of(path).normalize().toString();
+        return p.length() > 1 && p.endsWith("/") ? p.substring(0, p.length() - 1) : p;
     }
 }

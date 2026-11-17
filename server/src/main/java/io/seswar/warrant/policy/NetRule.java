@@ -59,6 +59,9 @@ public record NetRule(@Column(nullable = false, columnDefinition = "cidr") @Colu
     public boolean isWideOpen() {
         // 0.0.0.0/0 · ::/0 처럼 사실상 전면 허용인가.
         // "범위가 전부 허용이면 아무것도 통제하지 않는다"(§06) — lint 경고 대상.
-        throw new UnsupportedOperationException("미구현");
+        // 포트는 보지 않는다: 0.0.0.0/0 의 443 만 열어도 아무 데로나 내보낼 수 있다.
+        // 접두사가 없으면 단일 호스트다(PostgreSQL cidr 도 그렇게 읽는다).
+        int slash = cidr.indexOf('/');
+        return slash >= 0 && cidr.substring(slash + 1).strip().equals("0");
     }
 }

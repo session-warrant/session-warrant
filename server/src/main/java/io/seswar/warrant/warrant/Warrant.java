@@ -232,14 +232,13 @@ public class Warrant {
 
     /** 유예 구간에 있는가 (만료했지만 grace 안). */
     public boolean isInGraceAt(Instant now) {
-        // return onExpiry == SESSION_ONLY_GRACE && now.isAfter(expiresAt) && now.isBefore(graceUntil());
-        throw new UnsupportedOperationException("미구현");
+        // isExpiredAt 과 경계를 맞춘다: expiresAt 그 순간부터 만료다. graceWindow 가 0 이면 구간이 비어 언제나 false.
+        return onExpiry == OnExpiry.SESSION_ONLY_GRACE && isExpiredAt(now) && now.isBefore(graceUntil());
     }
 
     /** 유예 종료 시각. 저장하지 않는 파생값 — expiresAt + graceWindow. */
     public Instant graceUntil() {
-        // return expiresAt.plus(graceWindow);
-        throw new UnsupportedOperationException("미구현");
+        return expiresAt.plus(graceWindow);
     }
 
     /** 원 발급 기간. 연장 누적 상한(§03)을 계산하는 기준값이 된다. */
