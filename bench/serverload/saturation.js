@@ -28,17 +28,15 @@ const DURATION = Number(__ENV.DURATION || 30); // 부하 시간(초)
 const BATCH = Number(__ENV.BATCH || 100); // 배치당 이벤트 수. warrantd 기본 묶음과 같게
 const WINDOW = Number(__ENV.WINDOW || 4); // ack 안 된 배치를 몇 개까지 띄워 두는가
 const PREFIX = __ENV.PREFIX || 'k6-node-';
-// 기본은 mTLS 다 — 제품의 노드 ↔ 중앙은 mTLS 이고, 평문은 로컬 개발 전용이다.
-// `-e PKI=` 로 비우면 평문. 서버 프로필과 안 맞으면 아래 connect 가 그걸 짚어 준다.
+// 기본 : mTLS / 평문 : 로컬 개발 
+// 평문 설정 : `-e PKI =`
 const PKI = __ENV.PKI === undefined ? '../../.cache/pki' : __ENV.PKI;
-// 기본 60초는 너무 길다 — 프로필이 안 맞으면 1분을 기다린 뒤에야 알게 된다.
 const CONNECT_TIMEOUT = __ENV.CONNECT_TIMEOUT || '10s';
-
-// 세션 이벤트를 몇 배치마다 한 건 섞는가. 0 이면 안 섞는다.
-// 실제 비율을 흉내 낸다 — 로그인 한 번에 커널 판정이 수백 건 난다.
+// 배치 당 세션 이벤트 수
+// 실 비율 모방 — 로그인 한 번에 커널 판정이 수백 건 발생
 const SESSION_EVERY = Number(__ENV.SESSION_EVERY || 20);
 const UNWARRANTED_PCT = Number(__ENV.UNWARRANTED_PCT || 20); // 세션 중 무영장 비율
-// 차단 비율. 영장이 감사 모드(OBSERVE)라 차단은 WOULD_DENY 로 나간다 — 실제로 막지는 않는다.
+// 차단 비율. 영장이 감사 모드일 시 차단은 WOULD_DENY로 배출됨
 const DENY_PCT = Number(__ENV.DENY_PCT || 3);
 /**
  * 세션에 붙일 영장 번호.
@@ -51,10 +49,6 @@ const DENY_PCT = Number(__ENV.DENY_PCT || 3);
 const WARRANT_IDS = (__ENV.WARRANT_IDS || '').split(',').map(Number).filter((n) => n > 0);
 const WARRANT_BASE = Number(__ENV.WARRANT_BASE || 9500);
 const warrantId = (n) => (WARRANT_IDS.length ? WARRANT_IDS[n % WARRANT_IDS.length] : WARRANT_BASE + (n % 60));
-
-// 실행마다 달라야 한다. 적재 키가 (node_id, seq_epoch, node_seq) 라 같은 epoch 를
-// 다시 쓰면 서버가 전건 중복으로 걸러 「빠르게 아무것도 안 하는」 측정이 된다.
-// run.sh 는 제 값을 넣어 주고, 단독 실행이면 여기서 뽑는다.
 const EPOCH = __ENV.EPOCH || String(Date.now() * 1000 + Math.floor(Math.random() * 1000));
 
 const sent = new Counter('ingest_events_sent');
@@ -63,8 +57,7 @@ const batches = new Counter('ingest_batches_sent');
 const sessions = new Counter('ingest_session_events');
 const ackLatency = new Trend('ingest_ack_latency', true);
 
-// 인증서는 init 단계에서만 읽을 수 있다. 노드마다 제 인증서가 필요하다 —
-// 서버는 NodeHello 의 hostname 이 인증서 CN 과 다르면 거부한다.
+
 const certs = [];
 if (PKI) {
   for (let i = 1; i <= NODES; i++) {
@@ -283,12 +276,12 @@ export default async function () {
     }
     const events = [];
 
-    // 세션 하나가 열리고 그 아래로 커널 판정이 쏟아지는 모양을 흉내 낸다.
+    // 세션 하나를 시작, 커널 판정 출력 모방
     if (SESSION_EVERY > 0 && batchNo % SESSION_EVERY === 0) {
       sessionCount++;
       const n = vu * 10000 + sessionCount;
       if (sessionCount % 100 < UNWARRANTED_PCT) {
-        // 무영장 세션은 기록만 남고 커널 판정을 거느리지 않는다. 판정은 열려 있던 영장 세션이 계속 낸다.
+        // 무영장 세션
         events.push(unwarrantedSession(++seq, n));
       } else {
         session = newSession(vu, n, ++cgroup);
@@ -318,7 +311,6 @@ export default async function () {
     batchNo++;
   }
 
-  // 남은 ack 를 받는다. 못 받은 건 acked 에 안 세어져 run.sh 의 검산에서 드러난다.
   for (let i = 0; i < 600 && pending.length && !failed; i++) {
     await tick(50);
   }
