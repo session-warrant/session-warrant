@@ -94,6 +94,7 @@ C 쪽 생성물은 없다 — PAM 은 protobuf 를 쓰지 않는다.
 | `Warrant.ssh_key_fingerprints` (13) | 발급 시 서버가 그 사람의 등록 키 지문을 채운다. **영장과 함께 서명**되므로 노드가 바꿔치기할 수 없다 |
 | `LookupRequest.ssh_key_fingerprint` (3) | 이번 세션이 실제로 쓴 키 |
 | `UnwarrantedSessionEvent.ssh_key_fingerprint` (6) | 무영장이어도 **누가** 들어왔는지 남는다 |
+| `WarrantedSessionEvent.ssh_key_fingerprint` (5) | 영장 세션이 실제로 쓴 키(2026-11-14 추가, `AuditEvent.warranted_session = 21`) |
 | `REASON_NO_KEY` · `REASON_KEY_MISMATCH` | 공개키 인증이 아닌 세션 / 같은 계정에 남의 영장만 있는 세션 |
 
 - **형식은 `SHA256:<base64, 패딩 없음>`** — `ssh-keygen -lf` 와 sshd 로그가 찍는 그대로.

@@ -208,7 +208,7 @@ func TestMatchWarrant(t *testing.T) {
 	}
 }
 
-// 맞는 영장이 있으면 세션 cgroup 에 붙이고, 무영장 기록은 남기지 않는다.
+// 맞는 영장이 있으면 세션 cgroup 에 붙이고, 무영장이 아니라 영장 세션으로 기록한다.
 func TestBindTagsSessionWithMatchingWarrant(t *testing.T) {
 	tg, s := &tagger{}, &sink{}
 	b := &binder{maps: tg, audit: s, warrants: warrantList{warrant(9)}, now: func() time.Time { return now }}
@@ -220,8 +220,30 @@ func TestBindTagsSessionWithMatchingWarrant(t *testing.T) {
 	if id != 9 || tg.tagged[7594] != 9 {
 		t.Fatalf("returned %d, tagged %v; want cgroup 7594 -> 9", id, tg.tagged)
 	}
-	if len(s.got) != 0 {
-		t.Fatalf("queued %d unwarranted events for a warranted session", len(s.got))
+	if len(s.got) != 1 || s.got[0].GetWarrantedSession() == nil {
+		t.Fatalf("queued %v, want one warranted session", s.got)
+	}
+}
+
+// 「조직 전체 SSH 접속 현황」의 한 줄 — 누가 · 어디서 · 어느 키로 · 어느 영장으로. 서버 매퍼가 받는 모양이어야 한다.
+func TestWarrantedEventSaysWhoCameInUnderWhichWarrant(t *testing.T) {
+	e := warrantedEvent(open(aliceKey), aliceFP, warrant(9), now)
+
+	if e.GetWallTsUnixNs() != uint64(now.UnixNano()) {
+		t.Errorf("wall_ts = %d, want %d", e.GetWallTsUnixNs(), now.UnixNano())
+	}
+	if e.GetHook() != pb.Hook_HOOK_AGENT || e.GetOrigin() != pb.Origin_ORIGIN_AGENT || e.GetTagSource() != pb.TagSource_TAG_CGROUP {
+		t.Errorf("hook %v origin %v tag %v", e.GetHook(), e.GetOrigin(), e.GetTagSource())
+	}
+	if e.GetVerdict() != pb.Verdict_VERDICT_ALLOW || e.GetWarrantId() != 9 || e.GetSubjectId() != 42 ||
+		e.GetPolicyId() != 7 || e.GetMode() != pb.Mode_MODE_DRYRUN {
+		t.Errorf("verdict %v warrant %d subject %d policy %d mode %v",
+			e.GetVerdict(), e.GetWarrantId(), e.GetSubjectId(), e.GetPolicyId(), e.GetMode())
+	}
+	w := e.GetWarrantedSession()
+	if w.GetLoginAccount() != "ec2-user" || w.GetSourceAddress() != "10.0.0.5" || w.GetCgroupId() != 7594 ||
+		w.GetSessionId() != "c1" || w.GetSshKeyFingerprint() != aliceFP {
+		t.Errorf("warranted session = %v", w)
 	}
 }
 
