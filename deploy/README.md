@@ -162,12 +162,13 @@ sudo deploy/systemd/install.sh -upstream host.lima.internal:9090 \
 화면은 React 목업(동결, 별도 저장소 `session-warrant-web`) 대신 Grafana 가 PostgreSQL 을 직접 읽는다. `server/compose.yaml` 이 띄운다.
 
 ```sh
-docker compose -f server/compose.yaml up -d --wait    # http://localhost:3000 → 대시보드 「무영장 세션」
+docker compose -f server/compose.yaml up -d --wait    # http://localhost:3000 → 대시보드 「SSH 접속 현황」 · 「무영장 세션」
 ```
 
 - `provisioning/datasources` — PostgreSQL 연결(uid `warrant-pg`). 로컬은 warrant 계정이다. **운영은 SELECT 만 가진 계정으로.**
 - `provisioning/dashboards` + `dashboards/*.json` — 대시보드는 파일이 원본이다. 화면에서 고쳐도 저장되지 않으니 JSON 을 고치고
   `docker compose -f server/compose.yaml restart grafana`.
+- 「SSH 접속 현황」은 뷰 `ssh_session`(영장 세션 + 무영장 세션)을 읽는다 — 접속 · 영장 · 무영장 · 영장 비율, 영장 여부별 막대, 노드별 · 계정별 · 최근 접속 표.
 - 사유(reason)마다 색이 고정이다(범주 색 1~6번 순서, 검증기 통과). 새 사유를 넣으면 다음 칸 색을 쓴다 — 기존 색을 바꾸지 말 것.
 - 「노드」 표의 마지막 등록은 감사 스트림을 연 시각이다. 하트비트가 붙기 전까지 '지금 살아 있음'을 뜻하지 않는다.
 

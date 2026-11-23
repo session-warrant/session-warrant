@@ -6,6 +6,7 @@ import io.seswar.warrant.audit.AuditEvent;
 import io.seswar.warrant.audit.AuditEventType;
 import io.seswar.warrant.audit.EventGap;
 import io.seswar.warrant.audit.UnwarrantedSession;
+import io.seswar.warrant.audit.WarrantedSession;
 import io.seswar.warrant.audit.Verdict;
 import io.seswar.warrant.node.Node;
 import io.seswar.warrant.node.NodeRepository;
@@ -111,6 +112,35 @@ class AuditIngestServiceTest {
                 List.of(gap, EventGap.of(nodeId, T, T.plusSeconds(5), 3L, "CPU_SEQ_SKIP")),
                 List.of());
         assertThat(ingest.ingest(nodeId, twice)).isEqualTo(new Result(1, 1, 0));
+    }
+
+    private Batch warrantedBatch(long epoch, long seq) {
+        AuditEvent e = AuditEvent.builder()
+                .occurredAt(T.plusSeconds(seq)).nodeId(nodeId).seqEpoch(epoch).nodeSeq(seq)
+                .type(AuditEventType.WARRANTED_SESSION).verdict(Verdict.ALLOW).warrantId(9L)
+                .tagSource(AuditEvent.TagSource.CGROUP).origin(AuditEvent.Origin.AGENT).cgroupId(7594L)
+                .build();
+        return new Batch(List.of(e), List.of(), List.of(), List.of(WarrantedSession.of(nodeId, epoch, seq,
+                T.plusSeconds(seq), 9, 42, "DRYRUN", "ec2-user", "SHA256:abc", "10.0.0.5", 7594)));
+    }
+
+    @Test
+    void 영장_세션도_다시_와도_한_번만_남는다() {
+        assertThat(ingest.ingest(nodeId, warrantedBatch(1, 1))).isEqualTo(new Result(1, 0, 0, 1));
+        assertThat(ingest.ingest(nodeId, warrantedBatch(1, 1))).isEqualTo(new Result(0, 0, 0, 0));
+        assertThat(jdbc.queryForObject("select source_address from warranted_session", String.class)).isEqualTo("10.0.0.5");
+        assertThat(count("warranted_session")).isEqualTo(1);
+    }
+
+    // 「조직 전체 SSH 접속 현황」은 영장 세션과 무영장 세션을 한 줄씩 나란히 본다.
+    @Test
+    void 접속_현황에는_영장_세션과_무영장_세션이_함께_보인다() {
+        ingest.ingest(nodeId, batch(1, 1));
+        ingest.ingest(nodeId, warrantedBatch(1, 2));
+        assertThat(jdbc.queryForList("select warranted from ssh_session order by observed_at", Boolean.class))
+                .containsExactly(false, true);
+        assertThat(jdbc.queryForObject("select reason from ssh_session where warranted", String.class)).isNull();
+        assertThat(jdbc.queryForObject("select warrant_id from ssh_session where not warranted", Long.class)).isZero();
     }
 
     @Test

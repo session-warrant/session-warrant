@@ -15,6 +15,7 @@ import io.seswar.warrant.proto.AuditProtos.ConnectEvent;
 import io.seswar.warrant.proto.AuditProtos.FileRef;
 import io.seswar.warrant.proto.AuditProtos.GapReport;
 import io.seswar.warrant.proto.AuditProtos.UnwarrantedSessionEvent;
+import io.seswar.warrant.proto.AuditProtos.WarrantedSessionEvent;
 import lombok.NoArgsConstructor;
 
 import java.net.InetAddress;
@@ -43,15 +44,19 @@ public final class AuditProtoMapper {
         long epoch = batch.getSeqEpoch();
         List<AuditEvent> events = new ArrayList<>();
         List<UnwarrantedSession> sessions = new ArrayList<>();
+        List<WarrantedSession> warranted = new ArrayList<>();
         for (AuditProtos.AuditEvent p : batch.getEventsList()) {
             AuditEvent e = toEvent(nodeId, epoch, p);
             events.add(e);
             if (p.hasUnwarrantedSession()) {
                 sessions.add(toSession(e, p.getUnwarrantedSession()));
             }
+            if (p.hasWarrantedSession()) {
+                warranted.add(toWarranted(e, p.getWarrantedSession()));
+            }
         }
         List<EventGap> gaps = batch.getGapsList().stream().map(g -> toGap(nodeId, g)).toList();
-        return new AuditIngestService.Batch(events, gaps, sessions);
+        return new AuditIngestService.Batch(events, gaps, sessions, warranted);
     }
 
     /** 첫 배치에 실려온 NodeHello를 노드 등록에 쓸 NodeRegistry.Report로 전환*/
@@ -117,6 +122,11 @@ public final class AuditProtoMapper {
                     b.cgroupId(p.getUnwarrantedSession().getCgroupId());
                 }
             }
+            case WARRANTED_SESSION -> {
+                if (!p.hasProcess()) {
+                    b.cgroupId(p.getWarrantedSession().getCgroupId());
+                }
+            }
             default -> {
                 // FORK · DELEGATION_ATTEMPT · GRACE · SHELL_COMMAND_LINE: 공통 칸만. 칸별 변환은 필요할 때 늘린다
             }
@@ -134,6 +144,7 @@ public final class AuditProtoMapper {
             case SELF_PROTECTION -> AuditEventType.SELF_PROTECTION_HIT;
             case FORK -> AuditEventType.FORK;
             case UNWARRANTED_SESSION -> AuditEventType.UNWARRANTED_SESSION;
+            case WARRANTED_SESSION -> AuditEventType.WARRANTED_SESSION;
             case DELEGATION_ATTEMPT -> AuditEventType.DELEGATION_ATTEMPT;
             case GRACE -> AuditEventType.GRACE;
             case SHELL_COMMAND_LINE -> AuditEventType.SHELL_COMMAND_LINE;
@@ -149,6 +160,17 @@ public final class AuditProtoMapper {
         return UnwarrantedSession.of(e.getNodeId(), e.getSeqEpoch(), e.getNodeSeq(), e.getOccurredAt(),
                 emptyToNull(u.getLoginAccount()), emptyToNull(u.getSshKeyFingerprint()),
                 emptyToNull(u.getSourceAddress()), u.getCgroupId(), stripPrefix(u.getReason().name(), "REASON_"));
+    }
+
+    // A warranted session without its warrant would be an unattributed line in the login report.
+    private static WarrantedSession toWarranted(AuditEvent e, WarrantedSessionEvent w) {
+        if (e.getWarrantId() == 0) {
+            throw new IllegalArgumentException("warranted session without warrant_id");
+        }
+        return WarrantedSession.of(e.getNodeId(), e.getSeqEpoch(), e.getNodeSeq(), e.getOccurredAt(),
+                e.getWarrantId(), e.getKernelSubjectId(), e.getMode().name(),
+                emptyToNull(w.getLoginAccount()), emptyToNull(w.getSshKeyFingerprint()),
+                emptyToNull(w.getSourceAddress()), w.getCgroupId());
     }
 
     private static EventGap toGap(UUID nodeId, GapReport g) {

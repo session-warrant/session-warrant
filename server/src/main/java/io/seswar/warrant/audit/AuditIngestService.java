@@ -34,24 +34,35 @@ public class AuditIngestService {
     private final AuditEventRepository events;
     private final EventGapRepository gaps;
     private final UnwarrantedSessionRepository unwarranted;
+    private final WarrantedSessionRepository warranted;
     private final ApplicationEventPublisher publisher;
 
     // pg_advisory_xact_lock key for audit ingest. Any constant works; this one is "swaudit\0" in ASCII.
     static final long INGEST_LOCK = 0x7377617564697400L;
 
 
-    public record Batch(List<AuditEvent> events, List<EventGap> gaps, List<UnwarrantedSession> unwarrantedSessions) {
+    public record Batch(List<AuditEvent> events, List<EventGap> gaps, List<UnwarrantedSession> unwarrantedSessions,
+                        List<WarrantedSession> warrantedSessions) {
         public Batch {
             events = List.copyOf(events);
             gaps = List.copyOf(gaps);
             unwarrantedSessions = List.copyOf(unwarrantedSessions);
+            warrantedSessions = List.copyOf(warrantedSessions);
+        }
+
+        public Batch(List<AuditEvent> events, List<EventGap> gaps, List<UnwarrantedSession> unwarrantedSessions) {
+            this(events, gaps, unwarrantedSessions, List.of());
         }
     }
 
     /** 이번 배치에서 새로 들어간 행 수. 재전송이면 전부 0 이다. 새 행이 있으면 커밋 뒤 AuditStream 이 화면에 알린다. */
-    public record Result(int events, int gaps, int unwarrantedSessions) {
+    public record Result(int events, int gaps, int unwarrantedSessions, int warrantedSessions) {
+        public Result(int events, int gaps, int unwarrantedSessions) {
+            this(events, gaps, unwarrantedSessions, 0);
+        }
+
         boolean empty() {
-            return events == 0 && gaps == 0 && unwarrantedSessions == 0;
+            return events == 0 && gaps == 0 && unwarrantedSessions == 0 && warrantedSessions == 0;
         }
     }
 
@@ -70,6 +81,9 @@ public class AuditIngestService {
         List<UnwarrantedSession> newSessions = onlyNew(batch.unwarrantedSessions(),
                 UnwarrantedSession::getSeqEpoch, UnwarrantedSession::getNodeSeq,
                 (epochs, min, max) -> unwarranted.findExistingKeys(nodeId, epochs, min, max));
+        List<WarrantedSession> newWarranted = onlyNew(batch.warrantedSessions(),
+                WarrantedSession::getSeqEpoch, WarrantedSession::getNodeSeq,
+                (epochs, min, max) -> warranted.findExistingKeys(nodeId, epochs, min, max));
         Set<List<Object>> gapKeys = new HashSet<>();
         List<EventGap> newGaps = batch.gaps().stream()
                 .filter(g -> gapKeys.add(List.of(g.getFrom(), g.getTo(), g.getCause())))
@@ -79,7 +93,8 @@ public class AuditIngestService {
         events.saveAllAndFlush(newEvents);
         gaps.saveAllAndFlush(newGaps);
         unwarranted.saveAllAndFlush(newSessions);
-        Result result = new Result(newEvents.size(), newGaps.size(), newSessions.size());
+        warranted.saveAllAndFlush(newWarranted);
+        Result result = new Result(newEvents.size(), newGaps.size(), newSessions.size(), newWarranted.size());
         if (!result.empty()) {
             publisher.publishEvent(result);
         }
@@ -130,7 +145,8 @@ public class AuditIngestService {
     private static void requireNode(UUID nodeId, Batch batch) {
         boolean ok = batch.events().stream().allMatch(x -> nodeId.equals(x.getNodeId()))
                 && batch.gaps().stream().allMatch(x -> nodeId.equals(x.getNodeId()))
-                && batch.unwarrantedSessions().stream().allMatch(x -> nodeId.equals(x.getNodeId()));
+                && batch.unwarrantedSessions().stream().allMatch(x -> nodeId.equals(x.getNodeId()))
+                && batch.warrantedSessions().stream().allMatch(x -> nodeId.equals(x.getNodeId()));
         if (!ok) {
             throw new IllegalArgumentException("batch contains rows for a node other than " + nodeId);
         }
