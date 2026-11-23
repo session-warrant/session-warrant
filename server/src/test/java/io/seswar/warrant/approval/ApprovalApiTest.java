@@ -1,10 +1,10 @@
 package io.seswar.warrant.approval;
 
+import io.seswar.warrant.warrant.store.Warrant;
+import io.seswar.warrant.warrant.store.WarrantRepository;
 import io.seswar.warrant.identity.Subject;
 import io.seswar.warrant.identity.SubjectRepository;
 import io.seswar.warrant.signing.WarrantSigner;
-import io.seswar.warrant.warrant.Warrant;
-import io.seswar.warrant.warrant.WarrantRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;

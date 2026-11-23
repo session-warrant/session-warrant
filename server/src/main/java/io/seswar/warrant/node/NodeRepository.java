@@ -1,6 +1,5 @@
 package io.seswar.warrant.node;
 
-import io.seswar.warrant.node.Node;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.time.Instant;

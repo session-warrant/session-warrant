@@ -20,17 +20,23 @@ Session Warrant 의 컨트롤 플레인. 영장 발급 · 승인 · 서명 · pu
 
 ## 패키지 배치
 
-도메인별로 나눈다. 한 패키지 안에 그 도메인의 엔티티 · 저장소 · 서비스 · gRPC · REST 가 같이 있다.
+도메인별로 나눈다. 파일이 열 개를 넘는 도메인(`warrant` · `audit`)은 그 안에서 **역할별로** 한 겹 더 나눈다 —
+`store/` 는 저장(엔티티 · 리포지터리 · 질의 클래스 · 변환기 · 열거형), `api/` 는 바깥 입구(REST · gRPC · 뷰/커맨드),
+도메인 루트에는 서비스와 매퍼가 남는다. 나머지 도메인은 파일이 적어 한 겹으로 둔다.
 
 ```
 io.seswar.warrant
-├── warrant/      영장 — 엔티티 · 계보 · 상태 · 모드, 발급 · 회수 · 연장, 서명 굳히기(WarrantSealer), proto 변환, REST
+├── warrant/      영장 — 발급 · 회수 · 연장, 서명 굳히기(WarrantSealer), proto 변환
+│   ├── store/    엔티티 · 계보 · 상태 · 모드 · 만료 동작, 리포지터리
+│   ├── api/      REST 컨트롤러 · 뷰 · 신청 커맨드
 │   └── push/     영장 전달 — 노드 구독 gRPC(서버 스트리밍), 열린 스트림 보관(NodeStreamRegistry), push
 ├── identity/     로그인 · 신원 — 주체(사람 + SSH 키 지문), REST, SecurityConfig(OIDC · dev 프로필)
 ├── approval/     승인 — 신청 · 승인 큐 (골격)
 ├── policy/       정책 — 정책 · 실행/쓰기/네트워크 규칙 · lint, REST
 ├── node/         노드 — 등록 · 하트비트 (NodeRegistry), REST
-├── audit/        감사 — 감사 이벤트 · 영장 세션 · 무영장 세션 · 유실 구간, 수집 gRPC(클라이언트 스트리밍) · 변환 · 멱등 저장, 무영장 탐지, 조회 REST
+├── audit/        감사 — 멱등 저장(AuditIngestService) · proto 변환 · 무영장 탐지 · 새 기록 알림(AuditStream)
+│   ├── store/    감사 이벤트 · 영장 세션 · 무영장 세션 · 유실 구간, 리포지터리, 구간 집계 · 접속 현황 질의
+│   └── api/      조회 REST · 수집 gRPC(클라이언트 스트리밍)
 ├── signing/      서명 키 — Ed25519 키 관리 · 서명기, 공개키 REST. protobuf 바이트에 서명한다
 ├── common/       REST 오류 응답
 └── config/       시계 · gRPC · 가상 스레드
@@ -39,6 +45,9 @@ io.seswar.warrant
 방향: `warrant` → `identity` · `policy` · `signing`, `audit` → `warrant`(모드 enum) · `node`. `warrant` 와 `warrant.push` 는 서로 부른다(REST 가 커밋 뒤 push). 그 밖의 반대 방향 참조를 만들지 말 것 —
 예전에 `Warrant` 가 `audit` 의 모드 변환기를 빌려 쓰던 것을 `WarrantMode.Converter` 로 옮겼다.
 JPQL 의 `select new …` 는 클래스 전체 이름이 문자열에 들어간다 — 패키지를 옮기면 컴파일러가 못 잡고 기동 때 깨진다.
+**2026-11-17 에 실제로 밟았다**: `SeqKey` 를 `audit.store` 로 옮겼는데 세 리포지터리의 JPQL 문자열이 옛 이름을 가리켜,
+컴파일은 통과하고 테스트가 기동에서 무더기로 깨졌다. 패키지를 옮긴 뒤에는 **문자열 안의 클래스 이름**을 따로 찾는다 —
+`grep -rn 'io\.seswar\.warrant\.[a-z]*\.[A-Z]' --include='*.java'`.
 
 ## 신청 · 승인 — 콘솔 자체 경로
 
@@ -91,6 +100,7 @@ warrantd Subscribe → WarrantPushGrpcService 스트림 등록 → 그 호스트
 | `POST /api/approvals/{id}/approve` · `/reject` | 승인 · 반려(`{"reason": …}` 필수) |
 | `DELETE /api/warrants/{id}` | 회수 |
 | `GET /api/signing-key` | 노드에 심을 공개키 PEM. 헤더 `X-Key-Id` 가 파일 이름 |
+| `GET /api/audit/sessions?since=&until=&node=&limit=` | **조직 전체 SSH 접속 현황.** 영장 세션 + 무영장 세션(뷰 `ssh_session`), 접속 한 번이 한 행이고 최신 순. 기본 최근 24시간 · 1000건(최대 5000). 영장 세션은 `reason` 이 null, 무영장은 `warrantId` 가 0 이고 `mode` 가 null |
 | `GET /api/nodes` · `/api/audit/unwarranted` · `/api/audit/gaps` | 대시보드용 읽기. 감사 스트림으로 들어온 노드 · 무영장 세션 · 유실 구간, 최신 순. 기간 필터 · 페이지는 아직 없다 |
 | `GET /api/audit/events?since=&until=&limit=` | 커널 판정 기록, 최신 순. 기본 최근 24시간 · 1000건(최대 5000). `until` 은 그 시각 전까지. 헤더 `X-Audit-Total` 이 한도 없이 센 건수다. 훅은 proto 이름(`HOOK_FILE_OPEN`) |
 | `…&kind=verdict` · `…&node=<호스트>` | 두 형태 모두에 붙는다. `kind=verdict` 는 LSM 판정만(kprobe 미러 · fork 를 빼서 한도를 판정에 쓴다), `node` 는 호스트 이름 |
@@ -263,6 +273,42 @@ dev/dummy-audit.sh clean      # 더미 노드에 딸린 것만 지우고 VACUUM 
 - 영장 번호 9001~9060 은 서버에 없는 번호라 화면에 `#9001` 로 보인다. 무영장 세션 400건 · 유실 구간 40건도 같이 넣는다.
 - **`received_seq` 가 음수다.** 대시보드는 「받은 순번 N 뒤」로 이어 받으므로, 양수로 넣으면 열려 있던 화면이 수백만 건을
   따라잡는다. 음수면 발생 시각으로 고르는 구간 조회 · 집계에만 잡힌다.
+
+## 컨테이너 — 운영 스펙으로 묶어 돌린다 (`Dockerfile` · compose `server`)
+
+평소 개발은 `./gradlew bootRun` 이다. 이 컨테이너는 **부하 측정에서 CPU · 메모리를
+운영 인스턴스와 같게 묶으려고** 만들었다(`bench/serverload`). `--profile t3micro`
+없이는 뜨지 않으므로 기존 흐름은 그대로다.
+
+```sh
+./gradlew bootJar                                              # 항아리를 먼저 만든다
+docker compose -f compose.yaml --profile t3micro up -d --build
+curl -s localhost:8081/actuator/health
+docker compose -f compose.yaml --profile t3micro down
+```
+
+| | |
+|---|---|
+| 스펙 | **2 vCPU · 1 GiB** — AWS t3.micro (`deploy.resources.limits`) |
+| 포트 | **8081 · 9091** — `bootRun`(8080 · 9090)과 같이 떠 있어도 안 부딪힌다 |
+| DB | compose 의 `postgres`. **제한을 걸지 않는다** — 운영에서 DB 가 RDS 로 빠지는 모양이고, 서버 자체의 한계를 분리해 본다 |
+| 프로필 | 기본 `dev`(Basic). `SERVER_PROFILES=dev,mtls` 처럼 바꾼다 |
+| 인증서 | `../.cache/pki` 를 `/pki` 로 읽기 전용 마운트(`WARRANT_TLS_DIR`) |
+| 서명키 | 볼륨 `warrant-server-state` 의 `/state/signing.key`. **컨테이너를 다시 만들어도 key id 가 그대로다** — 새로 생기면 노드의 `/etc/warrantd/keys` 와 어긋나 push 가 거부된다 |
+
+- **항아리는 호스트에서 만든다.** 이미지 안에서 Gradle 을 돌리면 JDK 25 툴체인과 의존성을
+  매번 다시 받는다. 항아리가 없으면 `COPY` 가 실패한다 — 조용히 옛 이미지를 쓰지 않는다.
+  **고친 코드를 재면서 `bootJar` 를 다시 안 돌리면 옛 항아리를 재게 된다.**
+- **JVM 에 1 GiB 를 다 주면 죽는다.** gRPC(Netty)가 힙 밖 직접 버퍼를 쓰고 그 기본값이
+  최대 힙과 같아서, 묶지 않으면 힙 + 직접 버퍼가 한도를 넘는다. Dockerfile 이
+  `-XX:MaxRAMPercentage=60 -XX:MaxDirectMemorySize=128m -XX:+ExitOnOutOfMemoryError` 로
+  고정한다. 2026-11-16 노드 4대 부하에서 **394 MiB / 1 GiB · OOM 0** 였다.
+- **`oidc` 는 이 컨테이너에서 그대로 안 된다.** 토큰의 발급자가 `localhost:8180` 인데
+  컨테이너 안의 `localhost` 는 자기 자신이라 JWKS 를 못 가져온다. 고치려면 `issuer-uri` 와
+  `jwk-set-uri` 를 따로 주거나 호스트 주소를 넣어야 한다 — 미구현.
+- **`dev` 프로필의 Basic 인증은 요청당 ~75ms 다**(bcrypt, 유휴 컨테이너 실측). 세션 쿠키가
+  없는 curl · k6 는 매 요청 다시 인증한다. 2 vCPU 에서는 이게 읽기 지연을 지배하므로
+  **Bearer(oidc) 로 잰 숫자와 섞어 비교하면 안 된다.**
 
 ## 의존성에서 한 번 걸리는 지점
 

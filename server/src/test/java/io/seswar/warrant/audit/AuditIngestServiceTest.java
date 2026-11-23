@@ -1,13 +1,13 @@
 package io.seswar.warrant.audit;
 
+import io.seswar.warrant.audit.store.AuditEvent;
+import io.seswar.warrant.audit.store.AuditEventType;
+import io.seswar.warrant.audit.store.EventGap;
+import io.seswar.warrant.audit.store.UnwarrantedSession;
+import io.seswar.warrant.audit.store.Verdict;
+import io.seswar.warrant.audit.store.WarrantedSession;
 import io.seswar.warrant.audit.AuditIngestService.Batch;
 import io.seswar.warrant.audit.AuditIngestService.Result;
-import io.seswar.warrant.audit.AuditEvent;
-import io.seswar.warrant.audit.AuditEventType;
-import io.seswar.warrant.audit.EventGap;
-import io.seswar.warrant.audit.UnwarrantedSession;
-import io.seswar.warrant.audit.WarrantedSession;
-import io.seswar.warrant.audit.Verdict;
 import io.seswar.warrant.node.Node;
 import io.seswar.warrant.node.NodeRepository;
 import org.junit.jupiter.api.BeforeEach;

@@ -1,8 +1,10 @@
 package io.seswar.warrant.approval;
 
+import io.seswar.warrant.warrant.api.WarrantViews;
+import io.seswar.warrant.warrant.store.Warrant;
 import io.seswar.warrant.identity.CurrentSubject;
-import io.seswar.warrant.warrant.Warrant;
-import io.seswar.warrant.warrant.WarrantViews;
+import io.seswar.warrant.warrant.store.Warrant;
+import io.seswar.warrant.warrant.api.WarrantViews;
 import io.seswar.warrant.warrant.push.WarrantPushService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;

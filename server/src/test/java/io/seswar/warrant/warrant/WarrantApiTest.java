@@ -1,5 +1,7 @@
 package io.seswar.warrant.warrant;
 
+import io.seswar.warrant.audit.store.AuditEvent;
+import io.seswar.warrant.audit.store.Verdict;
 import io.seswar.warrant.identity.Subject;
 import io.seswar.warrant.identity.SubjectRepository;
 import org.junit.jupiter.api.BeforeEach;

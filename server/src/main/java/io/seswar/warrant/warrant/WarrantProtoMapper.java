@@ -1,11 +1,12 @@
 package io.seswar.warrant.warrant;
 
+import io.seswar.warrant.warrant.store.Warrant;
 import io.seswar.warrant.policy.ExecRule;
 import io.seswar.warrant.policy.NetRule;
 import io.seswar.warrant.policy.Policy;
 import io.seswar.warrant.policy.WriteRule;
 import io.seswar.warrant.identity.Subject;
-import io.seswar.warrant.warrant.Warrant;
+import io.seswar.warrant.warrant.store.Warrant;
 import io.seswar.warrant.proto.WarrantProtos;
 import org.springframework.stereotype.Component;
 
