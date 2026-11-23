@@ -23,7 +23,7 @@ import java.util.UUID;
 
 /**
  * 정책 등록 · 목록. 한 행 = 한 버전이고 고치지 않는다 — 바꾸려면 새로 만든다.
- * 아직 없는 것: {@code POST /api/policies/{id}/lint} (실행 · 쓰기 허용 조합 경고, §04).
+ * 등록 때 {@link PolicyLinter} 를 돌린다 — ERROR 면 400 으로 저장하지 않고, WARN 은 {@code warnings} 로 같이 내린다.
  */
 @RestController
 @RequestMapping("/api/policies")
@@ -60,14 +60,16 @@ public class PolicyController {
 
     // Not the domain records: Jackson would call their is*() lint methods as properties.
     public record PolicyView(UUID id, int kernelPolicyId, String name, boolean inspectUdp,
-                             List<String> execRules, List<WriteRuleBody> writeRules, List<NetRuleBody> netRules) {
-        static PolicyView of(Policy p) {
+                             List<String> execRules, List<WriteRuleBody> writeRules, List<NetRuleBody> netRules,
+                             List<PolicyLintFinding> warnings) {
+        static PolicyView of(Policy p, List<PolicyLintFinding> warnings) {
             return new PolicyView(p.getId(), p.getKernelPolicyId(), p.getName(), p.isInspectUdp(),
                     p.getExecRules().stream().map(ExecRule::path).sorted().toList(),
                     p.getWriteRules().stream().sorted(Comparator.comparing(WriteRule::path))
                             .map(r -> new WriteRuleBody(r.path(), r.recursive(), r.effect())).toList(),
                     p.getNetRules().stream().sorted(Comparator.comparing(NetRule::cidr))
-                            .map(r -> new NetRuleBody(r.cidr(), r.port(), r.proto())).toList());
+                            .map(r -> new NetRuleBody(r.cidr(), r.port(), r.proto())).toList(),
+                    warnings);
         }
     }
 
@@ -79,13 +81,15 @@ public class PolicyController {
         List<NetRule> net = orEmpty(body.netRules()).stream().map(NetRuleBody::toRule).toList();
         Policy policy = Policy.of(body.name(), Boolean.TRUE.equals(body.inspectUdp()), exec, write, net);
         // Policies are created only here and never edited, so checking at creation covers every warrant.
-        linter.assertDoesNotWeakenSelfProtection(policy);
-        return PolicyView.of(policies.saveAndFlush(policy));
+        // WarrantIssuanceService.request checks again for rows stored before the linter existed.
+        linter.assertNoErrors(policy);
+        Policy saved = policies.saveAndFlush(policy);
+        return PolicyView.of(saved, linter.warnings(saved));
     }
 
     @GetMapping
     public List<PolicyView> list() {
-        return policies.findAll().stream().map(PolicyView::of).toList();
+        return policies.findAll().stream().map(p -> PolicyView.of(p, linter.warnings(p))).toList();
     }
 
     private static <T> List<T> orEmpty(List<T> l) {

@@ -45,7 +45,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Testcontainers
 @Import({WarrantIssuanceService.class, WarrantRevocationService.class, WarrantSealer.class,
-        WarrantProtoMapper.class, WarrantSigner.class, WarrantIssuanceServiceTest.Fixed.class})
+        WarrantProtoMapper.class, WarrantSigner.class, io.seswar.warrant.policy.PolicyLinter.class,
+        WarrantIssuanceServiceTest.Fixed.class})
 class WarrantIssuanceServiceTest {
 
     @Container

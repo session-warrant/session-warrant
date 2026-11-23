@@ -4,6 +4,7 @@ import io.seswar.warrant.policy.Policy;
 import io.seswar.warrant.identity.Subject;
 import io.seswar.warrant.warrant.OnExpiry;
 import io.seswar.warrant.warrant.Warrant;
+import io.seswar.warrant.policy.PolicyLinter;
 import io.seswar.warrant.policy.PolicyRepository;
 import io.seswar.warrant.identity.SubjectRepository;
 import io.seswar.warrant.warrant.WarrantRepository;
@@ -17,7 +18,10 @@ import java.time.Clock;
  * 영장의 T0. {@link #request} 는 신청(REQUESTED)만 저장하고, 서명 · push 는 다른 사람이 승인할 때
  * (approval.ApprovalService) 한다. {@link #issue} 는 승인 없이 바로 발급한다 — 테스트 · 내부용이다.
  *
- * <p>설계상 남은 것: PolicyLinter, (subject, 호스트, loginAccount) 활성 1개 불변식, 재발급.
+ * <p>신청 때 정책 lint 를 다시 돌린다 — ERROR 면 큐에 올리지도 않는다(server/README). 정책은 등록 때도
+ * 검사하지만, lint 가 생기기 전에 저장된 행과 규칙이 바뀐 뒤의 행을 여기서 걸러낸다.
+ *
+ * <p>설계상 남은 것: (subject, 호스트, loginAccount) 활성 1개 불변식, 재발급.
  */
 @Service
 @RequiredArgsConstructor
@@ -28,6 +32,7 @@ public class WarrantIssuanceService {
     private final PolicyRepository policies;
     private final WarrantSealer sealer;
     private final WarrantLineageRepository lineage;
+    private final PolicyLinter linter;
     private final Clock clock;
 
     /** 신청. 신청자 = 영장의 주체(로그인한 사람). 노드로는 아무것도 내려가지 않는다. */
@@ -38,6 +43,7 @@ public class WarrantIssuanceService {
         Policy policy = policies.findById(cmd.policyId())
                 .orElseThrow(() -> new IllegalArgumentException("unknown policy " + cmd.policyId()));
         validate(cmd);
+        linter.assertNoErrors(policy);
         Warrant w = warrants.saveAndFlush(Warrant.request(subject, policy, cmd.loginAccount(), cmd.reason(),
                 cmd.targetHosts(), clock.instant(), cmd.duration(), cmd.mode(), onExpiry(cmd)));
         lineage.save(WarrantLineage.of(w.getId(), LineageType.REQUESTED, clock.instant(), subject.getId(),

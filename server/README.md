@@ -3,7 +3,8 @@
 Session Warrant 의 컨트롤 플레인. 영장 발급 · 승인 · 서명 · push · 취소 · 감사 조회를 담당한다.
 
 **현재 상태:** 감사 수집 경로와 **영장 신청 → 다른 사람의 승인 → 서명 · push → 회수** 가 돈다(계보 포함).
-연장 · 정책 lint · 승인자 자격(팀 · 상급자)은 아직 골격(시그니처와 의사코드 주석)이다.
+연장 · 승인자 자격(팀 · 상급자)은 아직 골격(시그니처와 의사코드 주석)이다.
+정책 lint 는 돈다 — ERROR 는 정책 등록(`POST /api/policies`)과 영장 신청에서 400, WARN 은 정책 응답의 `warnings` 와 승인 큐의 `policyWarnings` 로 승인자에게 보인다. 규칙 목록은 `policy/PolicyLinter` 주석.
 설계 원본은 `docs/session-warrant-plan.html`(§ 번호) 과 `docs/session-warrant-tech-stack.html` 이다.
 
 ## 이 서버가 지는 책임과 지지 않는 책임
@@ -85,9 +86,9 @@ warrantd Subscribe → WarrantPushGrpcService 스트림 등록 → 그 호스트
 | 메서드 · 경로 | 하는 일 |
 |---|---|
 | `POST /api/subjects` · `GET` | 주체(사람) 등록. `sshKeyFingerprints` 가 비면 영장이 어떤 세션에도 안 붙는다 |
-| `POST /api/policies` · `GET` | 정책 등록. 한 행 = 한 버전, 고치지 않는다 |
+| `POST /api/policies` · `GET` | 정책 등록. 한 행 = 한 버전, 고치지 않는다. lint ERROR 면 400, WARN 은 `warnings` |
 | `POST /api/warrants` · `GET` · `GET /{id}` | 신청 · 목록 · 단건(계보 포함). `duration` 생략 시 `warrant.default-duration`(30분), `mode` 생략 시 OBSERVE |
-| `GET /api/approvals` | 승인 큐(REQUESTED). 본인 신청은 `approvable: false` |
+| `GET /api/approvals` | 승인 큐(REQUESTED). 본인 신청은 `approvable: false`, 정책 lint WARN 은 `policyWarnings` |
 | `POST /api/approvals/{id}/approve` · `/reject` | 승인 · 반려(`{"reason": …}` 필수) |
 | `DELETE /api/warrants/{id}` | 회수 |
 | `GET /api/signing-key` | 노드에 심을 공개키 PEM. 헤더 `X-Key-Id` 가 파일 이름 |
