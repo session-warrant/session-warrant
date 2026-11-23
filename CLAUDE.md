@@ -47,7 +47,7 @@ SSH 세션에 범위·유효기간을 가진 **영장(warrant)** 을 붙이고, 
 
 ## 현재 상태 (2026-10-24)
 
-**S0 · S1 · S2 · S3 전부 통과. 남은 스파이크는 S4 뿐이고, 그건 제품 코드와 병행 가능하다.**
+**S0 · S1 · S2 · S3 · S4 전부 통과.** S4(inode 안정성)는 2026-11-15 Lima VM 에서 돌았다 — 아래 「S4에서 실측된 것」.
 BPF LSM이 붙고 돌고, 쓰기 포화 조건에서 오버헤드가 **1% 미만**이며, 태그 두 겹이 §04 표대로 동작하고,
 PAM session 단계에서 `session-N.scope` 가 이미 확정돼 있다(태깅 공백 없음).
 실험 경위 전체는 `docs/experiments.md` 에 있다.
@@ -206,6 +206,24 @@ D 위에 읽기 감시를 얹는 티어 R · I · I2 를 쟀다. 읽기 지배 `
 - 위임 경로의 진짜 방어선(실행 화이트리스트 · AF_UNIX 차단 · spool 차단)은
   셋 다 미구현이라 skip이다. **"끊긴다"는 검증했고 "막는다"는 아직이다** — 이 구분을
   흐리지 말 것.
+
+## S4에서 실측된 것 (2026-11-15, Lima VM · 커널 6.8.0-147 · aarch64 · ext4) — 통과
+
+`bench/inode`, `out/20261115-214107`. 조작 16개(랩 15 + `apt --reinstall jq`).
+
+- **inode 가 바뀌는 조작 9개를 fanotify 가 전부 잡았다.** vim 저장 · `sed -i` · `mv` ·
+  `install(1)` · unlink 후 재생성 · 심링크 교체 · logrotate `create` · `apt --reinstall` ·
+  디렉터리 자체 교체. 제자리 덮어쓰기 · `cp` 덮어쓰기 · `chmod` · truncate · `copytruncate` 는 그대로다.
+- **첫 실행은 「틀린 실패」였다.** 디렉터리 마크는 바로 아래 자식만 봐서 거의 전부 0건이었다.
+  **fanotify 마크는 언제나 `FAN_MARK_FILESYSTEM`** — 제품에 넣을 때도 같다.
+- **★ `(dev, ino)` 가 같아도 새 파일일 수 있다.** ext4 는 지운 번호를 바로 다음 파일에 준다.
+  `install(1)` · unlink 후 재생성은 번호가 그대로고 generation 만 다르다.
+  **같은 디렉터리의 다른 이름도 옛 번호를 받는다** — 지운 파일의 규칙이 새 파일에 걸린다.
+  재`stat` Watcher 는 같은 자리 재사용을 원리적으로 못 보고, fanotify 는 이벤트를 준다.
+  그래도 다시 컴파일하면 같은 키가 나온다 — **구분하려면 키에 `i_generation` 이 들어가야 한다.**
+- **디렉터리 교체는 금지를 푼다.** fanotify 는 잡지만 다시 컴파일할 때까지 금지가 비어 있다.
+- **`dpkg` 는 `X.dpkg-new` 를 써서 rename 한다** — 패키지 교체는 새 번호다.
+- 큐 넘침(`FAN_Q_OVERFLOW`)은 안 쟀다. 제품에 넣으면 넘침 = 전체 재`stat` 이 필요하다.
 
 ## 아키텍처 — 세 평면 (§10)
 
@@ -487,7 +505,7 @@ bench/    bypass/(§04 우회) · overhead/(훅별 실측) · pamtiming/(PAM 타
 | **S1** ✅ | **`file_open` 오버헤드** — 5티어 비교, p99까지 | 한 자릿수 % | — (통과, **1% 미만**) |
 | S2 ✅ | 태그 두 겹 — cgroup + fork 전파, §04 표 = bats | 앞 3줄(6건) 초록, 뒤 4줄 '끊김'이 확인됨 | — (통과) |
 | S3 ✅ | PAM 타이밍 — `bench/pamtiming` (sshd 11/11) | `present_t0` 전건 yes | — (통과, 태깅 공백 없음) |
-| **S4** ← 마지막 | inode 안정성 — `bench/inode` (하네스 완성, 미실행) | inode 가 바뀌는 조작을 fanotify 가 **전부** 잡는다 | fanotify 범위 확대 · 주기적 재stat |
+| S4 ✅ | inode 안정성 — `bench/inode` (9/9 검출) | inode 가 바뀌는 조작을 fanotify 가 **전부** 잡는다 | — (통과, 번호 재사용은 남음) |
 
 ### S1은 3단이 아니라 4단이다
 

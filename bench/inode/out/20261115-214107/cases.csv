@@ -1,0 +1,21 @@
+case,target,kind,dev_before,ino_before,dev_after,ino_after,changed,fanotify,gen_before,gen_after,reused
+vim 저장(rename 방식),/tmp/s4lab.X9xTcb/etc/conf,allow,64769,2379998,64769,2380000,yes,1,1164441535,2423954821,no
+편집기 제자리 덮어쓰기,/tmp/s4lab.X9xTcb/etc/conf,allow,64769,2380000,64769,2380000,no,2,2423954821,2423954821,no
+sed -i,/tmp/s4lab.X9xTcb/etc/conf,allow,64769,2380000,64769,2379998,yes,1,2423954821,1407660209,no
+cp 덮어쓰기,/tmp/s4lab.X9xTcb/bin/tool,allow,64769,2379997,64769,2379997,no,2,1314369643,1314369643,no
+mv 덮어쓰기,/tmp/s4lab.X9xTcb/bin/tool,allow,64769,2379997,64769,2380001,yes,1,1314369643,316950132,no
+install(1),/tmp/s4lab.X9xTcb/bin/tool,allow,64769,2380001,64769,2380001,yes,2,316950132,3406922547,yes
+unlink 후 재생성,/tmp/s4lab.X9xTcb/bin/tool,allow,64769,2380001,64769,2380001,yes,3,3406922547,396635172,yes
+chmod (내용 그대로),/tmp/s4lab.X9xTcb/bin/tool,allow,64769,2380001,64769,2380001,no,1,396635172,396635172,no
+truncate + 재기록,/tmp/s4lab.X9xTcb/bin/tool,allow,64769,2380001,64769,2380001,no,2,396635172,396635172,no
+심링크 대상 교체,/tmp/s4lab.X9xTcb/bin/link,allow,64769,2380002,64769,2380004,yes,1,-,-,no
+logrotate copytruncate,/tmp/s4lab.X9xTcb/log/app.log,allow,64769,2379999,64769,2379999,no,1,1191108526,1191108526,no
+logrotate create(기본),/tmp/s4lab.X9xTcb/log/app.log,allow,64769,2379999,64769,2380005,yes,2,1191108526,3715468947,no
+디렉터리 안 파일 생성,/tmp/s4lab.X9xTcb/etc,deny,64769,2379995,64769,2379995,no,1,1614538319,1614538319,no
+디렉터리 안 파일 mv 후 재생성,/tmp/s4lab.X9xTcb/etc,deny,64769,2379995,64769,2379995,no,3,1614538319,1614538319,no
+디렉터리 자체 교체,/tmp/s4lab.X9xTcb/etc,deny,64769,2379995,64769,2380008,yes,4,1614538319,2408528225,no
+bind-mount,/tmp/s4lab.X9xTcb/binddst/prog,claim,64769,2380006,64769,2380006,no,0,,,
+binary-copy,/tmp/s4lab.X9xTcb/bin/copied,claim,64769,1699,64769,2380007,yes,0,,,
+hardlink,/tmp/s4lab.X9xTcb/bin/hardlink,claim,64769,2380001,64769,2380001,no,0,,,
+ino-reuse,/tmp/s4lab.X9xTcb/bin/newcomer,claim,64769,2380012,64769,2380012,no,0,,,
+apt --reinstall jq,/usr/bin/jq,allow,64769,2436,64769,2553,yes,1,2381697337,614012651,no

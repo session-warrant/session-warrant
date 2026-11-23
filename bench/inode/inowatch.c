@@ -23,6 +23,41 @@
 static volatile sig_atomic_t iw_stop;
 static void iw_sig(int s) { (void)s; iw_stop = 1; }
 
+// Watched prefixes and an open dir on each one's filesystem, for open_by_handle_at.
+#define IW_MAX 16
+static char iw_prefix[IW_MAX][PATH_MAX];
+static int iw_mntfd[IW_MAX];
+static int iw_n;
+
+// Called per event: parent handle -> current path of that directory, or 0 when it is gone.
+static int iw_resolve(struct file_handle *fh, char *out, size_t n)
+{
+    for (int i = 0; i < iw_n; i++) {
+        int fd = open_by_handle_at(iw_mntfd[i], fh, O_PATH);
+        if (fd < 0)
+            continue;
+        char link[64];
+        snprintf(link, sizeof(link), "/proc/self/fd/%d", fd);
+        ssize_t l = readlink(link, out, n - 1);
+        close(fd);
+        if (l > 0) {
+            out[l] = 0;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int iw_watched(const char *path)
+{
+    for (int i = 0; i < iw_n; i++) {
+        size_t l = strlen(iw_prefix[i]);
+        if (strncmp(path, iw_prefix[i], l) == 0 && (path[l] == 0 || path[l] == '/'))
+            return 1;
+    }
+    return 0;
+}
+
 static unsigned long long iw_now_us(void)
 {
     struct timespec ts;
@@ -63,13 +98,15 @@ int main(int argc, char **argv)
     if (argc < 2) {
         fprintf(stderr,
             "usage: inowatch <감시대상> [...]\n"
-            "  경로가 마운트포인트면 그 파일시스템 전체(FAN_MARK_FILESYSTEM),\n"
-            "  아니면 그 디렉터리만(FAN_MARK_ADD) 감시한다.\n");
+            "  각 경로가 속한 파일시스템 전체를 감시하고(FAN_MARK_FILESYSTEM),\n"
+            "  그 경로 아래 이벤트만 path= 로 찍는다.\n");
         return 2;
     }
 
-    signal(SIGINT, iw_sig);
-    signal(SIGTERM, iw_sig);
+    // No SA_RESTART: read() must return EINTR so the loop sees iw_stop.
+    struct sigaction sa = { .sa_handler = iw_sig };
+    sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGTERM, &sa, NULL);
 
     // FAN_REPORT_DFID_NAME: 이벤트에 부모 디렉터리 file_handle 과 이름이 실린다.
     // 5.9+ 필요. 이게 없으면 "무언가 바뀌었다"만 알고 무엇인지 모른다.
@@ -89,22 +126,21 @@ int main(int argc, char **argv)
                               FAN_MOVED_TO | FAN_MODIFY | FAN_ATTRIB |
                               FAN_DELETE_SELF | FAN_MOVE_SELF | FAN_ONDIR;
 
-    for (int i = 1; i < argc; i++) {
-        // 마운트포인트면 파일시스템 전체를 잡는다.
-        struct stat st, pst;
-        char parent[PATH_MAX];
-        snprintf(parent, sizeof(parent), "%s/..", argv[i]);
-        unsigned int flags = FAN_MARK_ADD;
-        if (stat(argv[i], &st) == 0 && stat(parent, &pst) == 0 &&
-            st.st_dev != pst.st_dev)
-            flags |= FAN_MARK_FILESYSTEM;
-
-        if (fanotify_mark(fd, flags, mask, AT_FDCWD, argv[i]) < 0) {
+    // A directory mark only sees direct children, so always mark the whole filesystem
+    // and keep events under the given paths (2026-11-15: lab/bin/* came back 0).
+    for (int i = 1; i < argc && iw_n < IW_MAX; i++) {
+        if (!realpath(argv[i], iw_prefix[iw_n])) {
+            fprintf(stderr, "ERROR: realpath %s: %s\n", argv[i], strerror(errno));
+            return 1;
+        }
+        iw_mntfd[iw_n] = open(iw_prefix[iw_n], O_RDONLY | O_DIRECTORY);
+        if (iw_mntfd[iw_n] < 0 ||
+            fanotify_mark(fd, FAN_MARK_ADD | FAN_MARK_FILESYSTEM, mask, AT_FDCWD, iw_prefix[iw_n]) < 0) {
             fprintf(stderr, "ERROR: mark %s: %s\n", argv[i], strerror(errno));
             return 1;
         }
-        printf("MARK %s %s\n", argv[i],
-               (flags & FAN_MARK_FILESYSTEM) ? "(filesystem)" : "(directory)");
+        printf("MARK %s (filesystem)\n", iw_prefix[iw_n]);
+        iw_n++;
     }
 
     printf("READY\n");
@@ -125,24 +161,36 @@ int main(int argc, char **argv)
             char ms[192];
             iw_mask(m->mask, ms, sizeof(ms));
 
-            // 이름은 info 레코드에 붙어 온다. DFID_NAME 이면 부모 handle + 이름.
-            const char *name = "-";
+            // DFID_NAME carries the parent handle + name; DFID (self events) the dir itself.
+            const char *name = "";
+            struct file_handle *fh = NULL;
             struct fanotify_event_info_header *h =
                 (struct fanotify_event_info_header *)(m + 1);
             char *end = (char *)m + m->event_len;
             while ((char *)h + sizeof(*h) <= end && h->len > 0) {
-                if (h->info_type == FAN_EVENT_INFO_TYPE_DFID_NAME) {
+                if (h->info_type == FAN_EVENT_INFO_TYPE_DFID_NAME ||
+                    h->info_type == FAN_EVENT_INFO_TYPE_DFID ||
+                    h->info_type == FAN_EVENT_INFO_TYPE_FID) {
                     struct fanotify_event_info_fid *fid =
                         (struct fanotify_event_info_fid *)h;
-                    struct file_handle *fh = (struct file_handle *)fid->handle;
-                    name = (const char *)fh->f_handle + fh->handle_bytes;
+                    fh = (struct file_handle *)fid->handle;
+                    if (h->info_type == FAN_EVENT_INFO_TYPE_DFID_NAME)
+                        name = (const char *)fh->f_handle + fh->handle_bytes;
                     break;
                 }
                 h = (struct fanotify_event_info_header *)((char *)h + h->len);
             }
 
-            printf("EV us=%llu mask=%s name=%s\n", t, ms, name);
-            fflush(stdout);
+            char dir[PATH_MAX], path[PATH_MAX + NAME_MAX + 2];
+            if (fh && iw_resolve(fh, dir, sizeof(dir))) {
+                snprintf(path, sizeof(path), "%s%s%s", dir, name[0] ? "/" : "", name);
+                if (iw_watched(path)) {
+                    printf("EV us=%llu mask=%s path=%s\n", t, ms, path);
+                    fflush(stdout);
+                }
+            }
+            if (m->fd >= 0)
+                close(m->fd);
             m = FAN_EVENT_NEXT(m, n);
         }
     }
