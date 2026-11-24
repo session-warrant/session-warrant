@@ -38,7 +38,7 @@ bpf/                bpf2go 생성물 (커밋한다)
 | `loader` · `bpfmap` · `ringbuf` · `policy` | 구현 · 테스트 있음 (A) |
 | `pamsock` | 구현 · 테스트 있음 (C) |
 | `cmd/warrantd` | BPF 로드 · 훅 부착 · 맵 · PAM 소켓 · ringbuf(로그만) · `-upstream` 으로 무영장 세션 업로드 · 영장 `registry`(로컬 파일 + 중앙 push → 맵 · 세션 태그) |
-| `store` | **메모리 `AuditQueue` 만.** bbolt `Store`(영장 캐시 · 감사 영속)는 `panic("미구현")`. 재시작하면 ack 안 된 기록을 잃고 새 seq_epoch 로 시작한다 |
+| `store` | 메모리 `AuditQueue` 와 그걸 bbolt 에 비추는 `Store`(감사 영속 · 영장 캐시, 2026-11-24). `Store` 는 `AuditQueue` 와 같은 메서드라 그 자리에 그대로 들어간다. 200ms 마다 모아 쓰므로 비정상 종료면 그 뒤의 기록을 잃는다 — 대신 다음 기동이 그 구간을 `AGENT_DOWN` 으로 남기고 번호를 다시 쓰지 않는다. seq_epoch 는 파일과 함께 산다. **warrantd 는 아직 `AuditQueue` 를 쓴다** — `store.Open` 으로 바꾸는 건 `cmd/warrantd`(C) |
 | `upstream` | 평문 `Dial` · `StreamAudit` · `Subscribe` · `Verify`(Ed25519) · `LoadTrustKeys`. **mTLS · `Heartbeat` · 연장 · `LookupActiveWarrant` 는 `panic("미구현")`.** 시각 변환 · 맵 쓰기는 여기서 하지 않는다 — `cmd/warrantd` 의 `registry` 가 한다 |
 
 리눅스 전용 상수 때문에 맥에서는 `cmd/warrantd` · `bpfmap` 이 빌드되지 않는다.
