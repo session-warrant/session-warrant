@@ -4,6 +4,10 @@ import io.grpc.Status;
 import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
 import io.seswar.warrant.node.NodePeer;
+import io.seswar.warrant.proto.AgentProtos.HeartbeatRequest;
+import io.seswar.warrant.proto.AgentProtos.HeartbeatResponse;
+import io.seswar.warrant.proto.AgentProtos.LookupRequest;
+import io.seswar.warrant.proto.AgentProtos.LookupResponse;
 import io.seswar.warrant.proto.AgentProtos.PushMessage;
 import io.seswar.warrant.proto.AgentProtos.SubscribeRequest;
 import io.seswar.warrant.proto.WarrantPushServiceGrpc;
@@ -51,5 +55,52 @@ public class WarrantPushGrpcService extends WarrantPushServiceGrpc.WarrantPushSe
             initial.forEach(out::onNext);
         }
         log.info("node {} subscribed: {} active warrants", host, initial.size() - 1);
+    }
+
+    @Override
+    public void heartbeat(HeartbeatRequest req, StreamObserver<HeartbeatResponse> out) {
+        String host = req.getNode().getHostname();
+        String identity = identify(host, out);
+        if (identity == null) {
+            return;
+        }
+        int expected = push.heartbeat(identity, host);
+        if (expected != req.getActiveWarrants()) {
+            log.info("node {} holds {} active warrants, the server has {}: it should resubscribe",
+                    host, req.getActiveWarrants(), expected);
+        }
+        out.onNext(HeartbeatResponse.newBuilder().setExpectedActiveWarrants(expected).build());
+        out.onCompleted();
+    }
+
+    @Override
+    public void lookupActiveWarrant(LookupRequest req, StreamObserver<LookupResponse> out) {
+        if (identify(req.getHostname(), out) == null) {
+            return;
+        }
+        out.onNext(LookupResponse.newBuilder()
+                .addAllWarrants(push.lookup(req.getHostname(), req.getLoginAccount(), req.getSshKeyFingerprint()))
+                .build());
+        out.onCompleted();
+    }
+
+    // Same rule as subscribe and the audit stream: with a certificate the node is that certificate and must use its
+    // name; in plaintext (local development) it is its reported hostname. Answers the call with an error and
+    // returns null when the caller may not speak for that host.
+    private static String identify(String host, StreamObserver<?> out) {
+        if (host.isBlank()) {
+            out.onError(Status.INVALID_ARGUMENT.withDescription("hostname is empty").asRuntimeException());
+            return null;
+        }
+        NodePeer peer = NodePeer.current();
+        if (peer == null) {
+            return "dev:" + host;
+        }
+        if (!host.equals(peer.hostname())) {
+            out.onError(Status.PERMISSION_DENIED
+                    .withDescription("certificate is for " + peer.hostname() + ", request says " + host).asRuntimeException());
+            return null;
+        }
+        return peer.identity();
     }
 }

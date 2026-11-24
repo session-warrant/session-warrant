@@ -1,16 +1,17 @@
 // Package upstream 은 중앙 gRPC 클라이언트다 (mTLS). 끊겨도 커널의 집행은 계속된다.
 //
 // 하는 일:
-//   - Dial · Heartbeat: 중앙에 붙고 살아 있음을 알린다
+//   - Dial · Heartbeat · HeartbeatLoop (node.go): 중앙에 붙고 살아 있음을 알린다
 //   - Subscribe (subscribe.go): 영장 push 를 받아 Applier 로 넘긴다. 끊기면 다시 붙는다
 //   - Verify · LoadTrustKeys (verify.go): 받은 바이트 그대로 Ed25519 서명을 검증한다
-//   - LookupActiveWarrant: PAM 세션의 계정 · 지문으로 영장을 찾는다
+//   - LookupActiveWarrant (node.go): PAM 세션의 계정 · 지문으로 영장을 찾는다
 //   - StreamAudit · RequestExtension: 감사 이벤트를 올리고 연장을 요청한다
 //
 // boot 기준 시각 변환 · 정책 컴파일 · 맵 쓰기는 여기서 하지 않는다 — Applier(cmd/warrantd)가 한다.
 //
 // 부르는 쪽: cmd/warrantd 기동 5단계, binder.
-// 상태: Dial(mTLS · 로컬 개발용 평문) · StreamAudit · Subscribe · Verify 구현. Heartbeat · 연장 · Lookup 은 미구현.
+// 상태: Dial(mTLS · 로컬 개발용 평문) · StreamAudit · Subscribe · Verify · Heartbeat · Lookup 구현. 연장은 미구현.
+// Heartbeat · Lookup 을 warrantd 에서 부르는 건 cmd/warrantd(C) 의 몫이다.
 package upstream
 
 import (
@@ -97,15 +98,6 @@ func (c *Client) Close() error {
 	return c.conn.Close()
 }
 
-func (c *Client) Heartbeat(ctx context.Context) error {
-	panic("미구현")
-}
-
 func (c *Client) RequestExtension(ctx context.Context, warrantID uint64, detectedWorkload string, ns uint64) error {
-	panic("미구현")
-}
-
-// LookupActiveWarrant 는 캐시가 비었을 때만 부른다. 타임아웃이면 fail-open.
-func (c *Client) LookupActiveWarrant(ctx context.Context, loginAccount, fingerprint string) ([][]byte, error) {
 	panic("미구현")
 }

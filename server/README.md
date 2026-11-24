@@ -90,6 +90,8 @@ POST /api/approvals/{id}/reject {reason}    REJECTED, 계보 REJECTED(승인자 
 DELETE /api/warrants/{id}                   ISSUED 만. revoked=true · revision+1 → 다시 서명 → push, 계보 REVOKED(회수한 사람)
 
 warrantd Subscribe → WarrantPushGrpcService 스트림 등록 → 그 호스트의 ISSUED 영장 전부 → ResyncComplete
+warrantd Heartbeat → 노드 lastSeenAt 갱신 → 그 호스트의 활성 영장 수로 답. 노드는 자기 맵과 다르면 다시 구독한다
+warrantd LookupActiveWarrant → 호스트 · 계정 · 키 지문 셋 다 맞는 활성 영장(캐시가 빈 노드용). 하나라도 비면 빈 응답
 ```
 
 | 메서드 · 경로 | 하는 일 |
