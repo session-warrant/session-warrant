@@ -242,24 +242,28 @@ public class Warrant {
         return expiresAt.plus(graceWindow);
     }
 
-    /** 원 발급 기간. 연장 누적 상한(§03)을 계산하는 기준값이 된다. */
-    public Duration originalDuration() {
-        // 계보에서 ISSUED 이벤트를 찾아 그때의 (expiresAt - issuedAt) 를 돌려준다.
-        // 현재 expiresAt 은 연장으로 밀려 있으므로 그대로 쓰면 안 된다.
-        throw new UnsupportedOperationException("미구현");
+    /**
+     * 연장 — 만료 시각만 미룬 새 revision. 재서명(WarrantSealer)과 push 는 호출자가 그다음에 한다.
+     * 누적 상한 · 자동 승인 범위는 계보를 읽는 WarrantExtensionService 가 판단한다(원 기간과 연장 총량이 계보에 있다).
+     * 여기서는 연장할 수 있는 상태인지만 다시 막는다: 발급된 · 회수 안 된 · 아직 안 끝난 영장만.
+     * 끝난 영장은 연장이 아니라 새 신청이다.
+     */
+    public void extend(Duration by, Instant now) {
+        if (by == null || !by.isPositive()) {
+            throw new IllegalArgumentException("extension must be positive");
+        }
+        requireExtendable(now);
+        expiresAt = expiresAt.plus(by);
+        revision++;
     }
 
-    /** 지금까지 연장으로 늘어난 총량. */
-    public Duration totalExtendedBy() {
-        throw new UnsupportedOperationException("미구현");
-    }
-
-    public void extend(Duration by, UUID approverId, String reason, boolean autoApproved) {
-        // 1. 누적 상한 검사는 호출자(WarrantExtensionService)가 이미 했다고 가정하지 말고 여기서도 방어한다
-        // 2. expiresAt = expiresAt.plus(by), revision++
-        // 3. lineage.add(EXTENDED 또는 AUTO_EXTENDED)
-        // 4. 재서명은 호출자가 한다 — 새 revision 의 signedPayload 가 나와야 push 할 수 있다
-        throw new UnsupportedOperationException("미구현");
+    public void requireExtendable(Instant now) {
+        if (state != WarrantState.ISSUED || revoked) {
+            throw new IllegalStateException("warrant " + displayId + " is " + state + ", not ISSUED");
+        }
+        if (isExpiredAt(now)) {
+            throw new IllegalStateException("warrant " + displayId + " already expired — request a new one");
+        }
     }
 
     /**

@@ -22,6 +22,8 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.seswar.warrant.node.Node;
 import io.seswar.warrant.node.NodeRepository;
+import io.seswar.warrant.proto.AgentProtos.ExtensionAck;
+import io.seswar.warrant.proto.AgentProtos.ExtensionRequest;
 import io.seswar.warrant.proto.AgentProtos.HeartbeatRequest;
 import io.seswar.warrant.proto.AgentProtos.LookupRequest;
 import io.seswar.warrant.proto.AgentProtos.LookupResponse;
@@ -70,7 +72,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @Import({WarrantPushGrpcService.class, WarrantPushService.class, NodeStreamRegistry.class,
         WarrantIssuanceService.class, WarrantRevocationService.class, WarrantSealer.class,
         WarrantProtoMapper.class, WarrantSigner.class, io.seswar.warrant.policy.PolicyLinter.class,
-        WarrantPushGrpcServiceTest.Keys.class})
+        io.seswar.warrant.warrant.WarrantExtensionService.class, WarrantPushGrpcServiceTest.Keys.class})
 class WarrantPushGrpcServiceTest {
 
     @Container
@@ -293,5 +295,34 @@ class WarrantPushGrpcServiceTest {
         String fp = alice.getSshKeyFingerprints().iterator().next();
 
         assertThat(lookup(host, "ec2-user", fp).getWarrantsList()).isEmpty();
+    }
+
+    // ── RequestExtension ────────────────────────────────────────────────────────
+
+    ExtensionAck requestExtension(long warrantId) {
+        return WarrantPushServiceGrpc.newBlockingStub(channel).requestExtension(ExtensionRequest.newBuilder()
+                .setWarrantId(warrantId).setDetectedWorkload("deploy.sh (pid 4821)").build());
+    }
+
+    // 이 테스트의 정책은 쓰기 규칙이 없다 — 자동 승인 범위라 즉답이 AUTO_APPROVED 이고 새 revision 이 바로 push 된다.
+    @Test
+    void 자동_승인된_연장은_새_revision으로_바로_내려간다() throws Exception {
+        Warrant w = issueFor(host);
+        BlockingQueue<PushMessage> q = subscribe(host);
+        next(q);
+        next(q);
+
+        ExtensionAck ack = requestExtension(w.getWarrantId());
+
+        assertThat(ack.getOutcome()).isEqualTo(ExtensionAck.Outcome.OUTCOME_AUTO_APPROVED);
+        WarrantProtos.Warrant p = warrantOf(next(q));
+        assertThat(p.getWarrantId()).isEqualTo(w.getWarrantId());
+        assertThat(p.getRevision()).isEqualTo(2);
+        assertThat(p.getRevoked()).isFalse();
+    }
+
+    @Test
+    void 모르는_영장의_연장_요청은_거부로_답한다() {
+        assertThat(requestExtension(Long.MAX_VALUE).getOutcome()).isEqualTo(ExtensionAck.Outcome.OUTCOME_REJECTED);
     }
 }

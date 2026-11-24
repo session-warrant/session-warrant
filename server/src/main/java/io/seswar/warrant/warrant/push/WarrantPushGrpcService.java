@@ -4,6 +4,9 @@ import io.grpc.Status;
 import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
 import io.seswar.warrant.node.NodePeer;
+import io.seswar.warrant.proto.AgentProtos.ExtensionAck;
+import io.seswar.warrant.proto.AgentProtos.ExtensionRequest;
+import io.seswar.warrant.warrant.WarrantExtensionService;
 import io.seswar.warrant.proto.AgentProtos.HeartbeatRequest;
 import io.seswar.warrant.proto.AgentProtos.HeartbeatResponse;
 import io.seswar.warrant.proto.AgentProtos.LookupRequest;
@@ -32,6 +35,7 @@ public class WarrantPushGrpcService extends WarrantPushServiceGrpc.WarrantPushSe
 
     private final WarrantPushService push;
     private final NodeStreamRegistry streams;
+    private final WarrantExtensionService extensions;
 
     @Override
     public void subscribe(SubscribeRequest req, StreamObserver<PushMessage> out) {
@@ -80,6 +84,27 @@ public class WarrantPushGrpcService extends WarrantPushServiceGrpc.WarrantPushSe
         }
         out.onNext(LookupResponse.newBuilder()
                 .addAllWarrants(push.lookup(req.getHostname(), req.getLoginAccount(), req.getSshKeyFingerprint()))
+                .build());
+        out.onCompleted();
+    }
+
+    /**
+     * warrantd 의 T-5분 연장 요청. 결과는 즉답(접수 · 자동 승인 · 중복 · 상한 · 거부)이고, 연장 자체는 새 revision
+     * push 로 간다 — 자동 승인이면 여기서 바로, 사람 승인이면 승인할 때. 인증서가 있으면 그 노드가 대상 호스트여야 한다.
+     */
+    @Override
+    public void requestExtension(ExtensionRequest req, StreamObserver<ExtensionAck> out) {
+        NodePeer peer = NodePeer.current();
+        WarrantExtensionService.Result r = extensions.requestAutomatically(req.getWarrantId(),
+                peer == null ? null : peer.hostname(), req.getDetectedWorkload(),
+                java.time.Duration.ofNanos(req.getRequestedExtensionNs()));
+        if (r.warrant() != null) {
+            push.push(r.warrant()); // after the commit: requestAutomatically is its own transaction
+        }
+        log.info("extension request for warrant {}: {} ({})", req.getWarrantId(), r.outcome(), r.message());
+        out.onNext(ExtensionAck.newBuilder()
+                .setOutcome(ExtensionAck.Outcome.valueOf("OUTCOME_" + r.outcome().name()))
+                .setMessage(r.message())
                 .build());
         out.onCompleted();
     }

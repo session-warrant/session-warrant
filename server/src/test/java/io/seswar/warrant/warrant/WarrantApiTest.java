@@ -114,6 +114,60 @@ class WarrantApiTest {
     }
 
     @Test
+    void 주체가_연장을_요청하면_승인_큐에_뜨고_다른_사람이_승인하면_새_revision이다() throws Exception {
+        String id = field(postJson(ALICE, "/api/warrants", """
+                {"loginAccount": "ec2-user", "reason": "INC-2", "targetHosts": ["node-1"], "policyId": "%s",
+                 "duration": "PT15M", "mode": "DRYRUN"}""".formatted(policy())), "id");
+        mvc.perform(as(BOB, post("/api/approvals/" + id + "/approve"))).andExpect(status().isOk());
+
+        mvc.perform(as(ALICE, post("/api/warrants/" + id + "/extensions")).contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"duration": "PT10M", "reason": "배포 지연"}"""))
+                .andExpect(status().isAccepted());
+        mvc.perform(as(ALICE, post("/api/warrants/" + id + "/extensions")).contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"duration": "PT10M", "reason": "또"}"""))
+                .andExpect(status().isConflict());
+
+        String queue = mvc.perform(as(BOB, get("/api/approvals?kind=EXTENSION")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.warrant.id == '%s')].kind".formatted(id)).value("EXTENSION"))
+                .andExpect(jsonPath("$[?(@.warrant.id == '%s')].extension.requestedSeconds".formatted(id)).value(600))
+                .andExpect(jsonPath("$[?(@.warrant.id == '%s')].extension.requestedBy".formatted(id)).value(ALICE))
+                .andReturn().getResponse().getContentAsString();
+        String item = queue.substring(queue.indexOf("\"id\":\"" + id + "\""));
+        String requestLineageId = field(item, "requestLineageId");
+
+        mvc.perform(as(ALICE, post("/api/approvals/" + id + "/approve"))).andExpect(status().isForbidden());
+        mvc.perform(as(BOB, post("/api/approvals/" + id + "/approve")).contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"requestLineageId": "%s"}""".formatted(requestLineageId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.revision").value(2))
+                .andExpect(jsonPath("$.state").value("ISSUED"))
+                .andExpect(jsonPath("$.lineage[-1].type").value("EXTENDED"));
+    }
+
+    @Test
+    void 연장_요청을_반려하면_사유가_계보에_남는다() throws Exception {
+        String id = field(postJson(ALICE, "/api/warrants", """
+                {"loginAccount": "ec2-user", "reason": "INC-3", "targetHosts": ["node-1"], "policyId": "%s",
+                 "duration": "PT15M", "mode": "DRYRUN"}""".formatted(policy())), "id");
+        mvc.perform(as(BOB, post("/api/approvals/" + id + "/approve"))).andExpect(status().isOk());
+        mvc.perform(as(ALICE, post("/api/warrants/" + id + "/extensions")).contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"duration": "PT10M", "reason": "배포 지연"}""")).andExpect(status().isAccepted());
+
+        mvc.perform(as(BOB, post("/api/approvals/" + id + "/reject")).contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"reason": "작업 범위 밖"}"""))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.revision").value(1))
+                .andExpect(jsonPath("$.lineage[-1].type").value("EXTENSION_DENIED"))
+                .andExpect(jsonPath("$.lineage[-1].reason").value("작업 범위 밖"));
+    }
+
+    @Test
     void 기간을_안_주면_기본_30분이다() throws Exception {
         mvc.perform(as(ALICE, post("/api/warrants")).contentType(MediaType.APPLICATION_JSON).content("""
                         {"loginAccount": "ec2-user", "reason": "점검", "targetHosts": ["node-1"], "policyId": "%s"}"""

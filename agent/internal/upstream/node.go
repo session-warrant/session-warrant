@@ -70,3 +70,15 @@ func (c *Client) LookupActiveWarrant(ctx context.Context, hostname, loginAccount
 	}
 	return resp.GetWarrants(), nil
 }
+
+// RequestExtension asks the server to extend a warrant before it expires (warrantd does this at T-5min while work
+// is still running). by 0 means "as long as the original". The answer comes at once — queued for an approver,
+// auto-approved, duplicate, over the cap, or rejected — and the extension itself arrives later as a new revision
+// on the Subscribe stream; nothing on the node changes because of this call.
+func (c *Client) RequestExtension(ctx context.Context, warrantID uint64, detectedWorkload string, by time.Duration) (*pb.ExtensionAck, error) {
+	return c.push.RequestExtension(ctx, &pb.ExtensionRequest{
+		WarrantId:            warrantID,
+		DetectedWorkload:     detectedWorkload,
+		RequestedExtensionNs: uint64(max(by, 0)),
+	})
+}

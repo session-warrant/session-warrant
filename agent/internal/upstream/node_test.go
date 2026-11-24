@@ -25,6 +25,14 @@ type fakeNode struct {
 	fail     bool
 	lookups  []*pb.LookupRequest
 	found    []*pb.SignedWarrant
+	exts     []*pb.ExtensionRequest
+}
+
+func (f *fakeNode) RequestExtension(_ context.Context, req *pb.ExtensionRequest) (*pb.ExtensionAck, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.exts = append(f.exts, req)
+	return &pb.ExtensionAck{Outcome: pb.ExtensionAck_OUTCOME_PENDING_APPROVAL, Message: "waiting"}, nil
 }
 
 func (f *fakeNode) Heartbeat(_ context.Context, req *pb.HeartbeatRequest) (*pb.HeartbeatResponse, error) {
@@ -172,6 +180,25 @@ func TestLookupActiveWarrant(t *testing.T) {
 	}
 	r := f.lookups[0]
 	if r.GetHostname() != "n1" || r.GetLoginAccount() != "ec2-user" || r.GetSshKeyFingerprint() != "SHA256:abc" {
+		t.Fatalf("request = %v", r)
+	}
+}
+
+// 연장 요청은 영장 번호 · 감지한 작업 · 원하는 길이(ns)를 싣고, 즉답을 그대로 돌려준다.
+func TestRequestExtension(t *testing.T) {
+	f := &fakeNode{}
+	c := startNode(t, f)
+
+	ack, err := c.RequestExtension(context.Background(), 42, "deploy.sh (pid 4821)", 10*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ack.GetOutcome() != pb.ExtensionAck_OUTCOME_PENDING_APPROVAL {
+		t.Fatalf("outcome = %v", ack.GetOutcome())
+	}
+	r := f.exts[0]
+	if r.GetWarrantId() != 42 || r.GetDetectedWorkload() != "deploy.sh (pid 4821)" ||
+		r.GetRequestedExtensionNs() != uint64(10*time.Minute) {
 		t.Fatalf("request = %v", r)
 	}
 }
