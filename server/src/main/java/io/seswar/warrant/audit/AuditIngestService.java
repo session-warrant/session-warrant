@@ -16,12 +16,19 @@ import io.seswar.warrant.audit.store.AuditEventRepository;
 import io.seswar.warrant.audit.store.EventGapRepository;
 import io.seswar.warrant.audit.store.SeqKey;
 import io.seswar.warrant.audit.store.UnwarrantedSessionRepository;
+import io.seswar.warrant.audit.store.AuditEnumConverters.OriginConverter;
+import io.seswar.warrant.audit.store.AuditEnumConverters.TagSourceConverter;
+import io.seswar.warrant.audit.store.AuditEnumConverters.VerdictConverter;
+import io.seswar.warrant.warrant.store.WarrantMode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.sql.Types;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -45,9 +52,22 @@ public class AuditIngestService {
     private final UnwarrantedSessionRepository unwarranted;
     private final WarrantedSessionRepository warranted;
     private final ApplicationEventPublisher publisher;
+    private final JdbcTemplate jdbc;
 
     // pg_advisory_xact_lock key for audit ingest. Any constant works; this one is "swaudit\0" in ASCII.
     static final long INGEST_LOCK = 0x7377617564697400L;
+
+    // id and received_seq are DB defaults (gen_random_uuid · nextval), the same as the JPA path left them.
+    static final String INSERT_EVENT = """
+            INSERT INTO audit_event (occurred_at, node_id, seq_epoch, node_seq, warrant_id, kernel_subject_id, type,
+                verdict, mode, tag_source, origin, pid, cgroup_id, uid, device_id, inode, resolved_path,
+                argv_truncated, destination, hook, comm)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""";
+
+    private static final VerdictConverter VERDICT = new VerdictConverter();
+    private static final TagSourceConverter TAG_SOURCE = new TagSourceConverter();
+    private static final OriginConverter ORIGIN = new OriginConverter();
+    private static final WarrantMode.Converter MODE = new WarrantMode.Converter();
 
 
     public record Batch(List<AuditEvent> events, List<EventGap> gaps, List<UnwarrantedSession> unwarrantedSessions,
@@ -99,7 +119,7 @@ public class AuditIngestService {
                 .filter(g -> !gaps.existsByNodeIdAndFromAndToAndCause(nodeId, g.getFrom(), g.getTo(), g.getCause()))
                 .toList();
 
-        events.saveAllAndFlush(newEvents);
+        insertEvents(newEvents);
         gaps.saveAllAndFlush(newGaps);
         unwarranted.saveAllAndFlush(newSessions);
         warranted.saveAllAndFlush(newWarranted);
@@ -126,6 +146,39 @@ public class AuditIngestService {
     public void ingestWriteAggregate(UUID nodeId, UUID warrantId, Instant bucket, long count) {
 
         throw new UnsupportedOperationException("미구현");
+    }
+
+    // Called by ingest. Plain JDBC instead of saveAll: Hibernate's per-row work was most of INSERT time and a
+    // StatelessSession was no faster (spike.js, 2026-11-24 — numbers in the commit that added this).
+    // Shares the transaction's connection, so the ingest lock still covers it.
+    // A new audit_event column must be added here too — AuditIngestServiceTest fails until it is.
+    private void insertEvents(List<AuditEvent> rows) {
+        if (rows.isEmpty()) {
+            return;
+        }
+        jdbc.batchUpdate(INSERT_EVENT, rows, rows.size(), (ps, e) -> {
+            ps.setObject(1, e.getOccurredAt().atOffset(ZoneOffset.UTC));
+            ps.setObject(2, e.getNodeId());
+            ps.setLong(3, e.getSeqEpoch());
+            ps.setLong(4, e.getNodeSeq());
+            ps.setLong(5, e.getWarrantId());
+            ps.setObject(6, e.getKernelSubjectId(), Types.INTEGER);
+            ps.setString(7, e.getType().name());
+            ps.setObject(8, VERDICT.convertToDatabaseColumn(e.getVerdict()), Types.SMALLINT);
+            ps.setObject(9, MODE.convertToDatabaseColumn(e.getMode()), Types.SMALLINT);
+            ps.setObject(10, TAG_SOURCE.convertToDatabaseColumn(e.getTagSource()), Types.SMALLINT);
+            ps.setObject(11, ORIGIN.convertToDatabaseColumn(e.getOrigin()), Types.SMALLINT);
+            ps.setObject(12, e.getPid(), Types.BIGINT);
+            ps.setObject(13, e.getCgroupId(), Types.BIGINT);
+            ps.setObject(14, e.getUid(), Types.INTEGER);
+            ps.setObject(15, e.getDeviceId(), Types.BIGINT);
+            ps.setObject(16, e.getInode(), Types.BIGINT);
+            ps.setString(17, e.getResolvedPath());
+            ps.setString(18, e.getArgvTruncated());
+            ps.setString(19, e.getDestination());
+            ps.setObject(20, e.getHook(), Types.SMALLINT);
+            ps.setString(21, e.getComm());
+        });
     }
 
     private interface KeyLookup {
