@@ -1,10 +1,10 @@
 package io.seswar.warrant.warrant;
 
+import io.seswar.warrant.warrant.store.Warrant;
 import io.seswar.warrant.signing.WarrantSigner;
 import io.seswar.warrant.policy.Policy;
 import io.seswar.warrant.identity.Subject;
-import io.seswar.warrant.warrant.Warrant;
-import io.seswar.warrant.warrant.WarrantProtoMapper;
+import io.seswar.warrant.warrant.store.Warrant;
 import io.seswar.warrant.policy.PolicyRepository;
 import io.seswar.warrant.identity.SubjectRepository;
 import lombok.RequiredArgsConstructor;

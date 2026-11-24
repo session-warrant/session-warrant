@@ -1,5 +1,7 @@
 package io.seswar.warrant.audit;
 
+import io.seswar.warrant.audit.store.AuditEvent;
+import io.seswar.warrant.audit.store.Verdict;
 import com.jayway.jsonpath.JsonPath;
 import io.seswar.warrant.node.NodeRegistry;
 import io.seswar.warrant.proto.AgentProtos.AuditBatch;

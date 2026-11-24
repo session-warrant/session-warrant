@@ -1,7 +1,5 @@
 package io.seswar.warrant.node;
 
-import io.seswar.warrant.node.Node;
-import io.seswar.warrant.node.NodeRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;

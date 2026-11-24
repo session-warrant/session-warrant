@@ -1,5 +1,11 @@
 package io.seswar.warrant.warrant;
 
+import io.seswar.warrant.warrant.api.IssueWarrantCommand;
+import io.seswar.warrant.warrant.store.OnExpiry;
+import io.seswar.warrant.warrant.store.Warrant;
+import io.seswar.warrant.warrant.store.WarrantMode;
+import io.seswar.warrant.warrant.store.WarrantRepository;
+import io.seswar.warrant.warrant.store.WarrantState;
 import io.seswar.warrant.signing.SigningKeyProvider;
 import io.seswar.warrant.signing.WarrantSigner;
 import io.seswar.warrant.policy.ExecRule;
@@ -7,15 +13,9 @@ import io.seswar.warrant.policy.NetRule;
 import io.seswar.warrant.policy.Policy;
 import io.seswar.warrant.policy.WriteRule;
 import io.seswar.warrant.identity.Subject;
-import io.seswar.warrant.warrant.OnExpiry;
-import io.seswar.warrant.warrant.Warrant;
-import io.seswar.warrant.warrant.WarrantMode;
-import io.seswar.warrant.warrant.WarrantState;
-import io.seswar.warrant.warrant.WarrantProtoMapper;
 import io.seswar.warrant.proto.WarrantProtos;
 import io.seswar.warrant.policy.PolicyRepository;
 import io.seswar.warrant.identity.SubjectRepository;
-import io.seswar.warrant.warrant.WarrantRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
