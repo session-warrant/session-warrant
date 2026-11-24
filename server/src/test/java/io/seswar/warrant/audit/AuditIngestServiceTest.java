@@ -1,6 +1,7 @@
 package io.seswar.warrant.audit;
 
 import io.seswar.warrant.audit.store.AuditEvent;
+import io.seswar.warrant.audit.store.AuditEventRepository;
 import io.seswar.warrant.audit.store.AuditEventType;
 import io.seswar.warrant.audit.store.EventGap;
 import io.seswar.warrant.audit.store.UnwarrantedSession;
@@ -10,6 +11,7 @@ import io.seswar.warrant.audit.AuditIngestService.Batch;
 import io.seswar.warrant.audit.AuditIngestService.Result;
 import io.seswar.warrant.node.Node;
 import io.seswar.warrant.node.NodeRepository;
+import io.seswar.warrant.warrant.store.WarrantMode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -23,7 +25,10 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -43,6 +48,7 @@ class AuditIngestServiceTest {
     static PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:18");
 
     @Autowired AuditIngestService ingest;
+    @Autowired AuditEventRepository events;
     @Autowired NodeRepository nodes;
     @Autowired JdbcTemplate jdbc;
 
@@ -141,6 +147,48 @@ class AuditIngestServiceTest {
                 .containsExactly(false, true);
         assertThat(jdbc.queryForObject("select reason from ssh_session where warranted", String.class)).isNull();
         assertThat(jdbc.queryForObject("select warrant_id from ssh_session where not warranted", Long.class)).isZero();
+    }
+
+    // 감사 기록은 엔티티가 아니라 JDBC 로 넣는다(AuditIngestService.INSERT_EVENT). 칸을 하나 빠뜨리면 조용히 비어 들어간다.
+    private AuditEvent everyColumnFilled() {
+        return AuditEvent.builder()
+                .occurredAt(T.plusMillis(1234)).nodeId(nodeId).seqEpoch(11).nodeSeq(22).warrantId(33)
+                .kernelSubjectId(44).type(AuditEventType.FILE_WRITE).verdict(Verdict.WOULD_DENY)
+                .mode(WarrantMode.DRYRUN).tagSource(AuditEvent.TagSource.TASK).origin(AuditEvent.Origin.KPROBE)
+                .pid(55L).cgroupId(66L).uid(77).deviceId(88L).inode(99L).resolvedPath("/etc/app/conf")
+                .argvTruncated("cp a b").destination("10.0.0.9:443").hook((short) 5).comm("cp")
+                .build();
+    }
+
+    @Test
+    void 감사_기록의_모든_칸이_넣은_값_그대로_다시_읽힌다() throws IllegalAccessException {
+        AuditEvent sent = everyColumnFilled();
+        for (Field f : AuditEvent.class.getDeclaredFields()) {
+            if (Modifier.isStatic(f.getModifiers()) || Set.of("id", "receivedSeq").contains(f.getName())) {
+                continue;
+            }
+            f.setAccessible(true);
+            assertThat(f.get(sent)).as("AuditEvent.%s 가 비어 있다 — 새 칸이면 위 예시에도 값을 채운다", f.getName()).isNotNull();
+        }
+
+        ingest.ingest(nodeId, new Batch(List.of(sent), List.of(), List.of()));
+
+        assertThat(events.findAll()).singleElement()
+                .usingRecursiveComparison().ignoringFields("id", "receivedSeq").isEqualTo(sent);
+    }
+
+    @Test
+    void 감사_표의_칸이_빠짐없이_저장_문에_들어_있다() {
+        List<String> table = jdbc.queryForList("""
+                select column_name from information_schema.columns
+                where table_schema = current_schema() and table_name = 'audit_event'""", String.class);
+        String sql = AuditIngestService.INSERT_EVENT;
+        List<String> inserted = Arrays.stream(sql.substring(sql.indexOf('(') + 1, sql.indexOf(')')).split(","))
+                .map(String::strip).toList();
+
+        // id 와 received_seq 는 DB 기본값(gen_random_uuid · nextval)이 채운다
+        assertThat(inserted).containsExactlyInAnyOrderElementsOf(
+                table.stream().filter(c -> !Set.of("id", "received_seq").contains(c)).toList());
     }
 
     @Test
