@@ -1,12 +1,18 @@
 package io.seswar.warrant.approval;
 
-import io.seswar.warrant.warrant.LineageType;
-import io.seswar.warrant.warrant.Warrant;
-import io.seswar.warrant.warrant.WarrantLineage;
-import io.seswar.warrant.warrant.WarrantLineageRepository;
-import io.seswar.warrant.warrant.WarrantRepository;
+import io.seswar.warrant.warrant.store.LineageType;
+import io.seswar.warrant.warrant.store.Warrant;
+import io.seswar.warrant.warrant.store.WarrantLineage;
+import io.seswar.warrant.warrant.store.WarrantLineageRepository;
+import io.seswar.warrant.warrant.store.WarrantRepository;
+import io.seswar.warrant.warrant.store.WarrantState;
+import io.seswar.warrant.warrant.store.LineageType;
+import io.seswar.warrant.warrant.store.Warrant;
+import io.seswar.warrant.warrant.store.WarrantLineage;
+import io.seswar.warrant.warrant.store.WarrantLineageRepository;
+import io.seswar.warrant.warrant.store.WarrantRepository;
 import io.seswar.warrant.warrant.WarrantSealer;
-import io.seswar.warrant.warrant.WarrantState;
+import io.seswar.warrant.warrant.store.WarrantState;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;

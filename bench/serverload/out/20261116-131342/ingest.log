@@ -1,0 +1,63 @@
+
+         /\      Grafana   /‾‾/  
+    /\  /  \     |\  __   /  /   
+   /  \/    \    | |/ /  /   ‾‾\ 
+  /          \   |   (  |  (‾)  |
+ / __________ \  |_|\_\  \_____/ 
+
+
+     execution: local
+        script: ingest.js
+        output: -
+
+     scenarios: (100.00%) 1 scenario, 1 max VUs, 2m45s max duration (incl. graceful stop):
+              * nodes: 1 iterations for each of 1 VUs (maxDuration: 2m15s, gracefulStop: 30s)
+
+
+running (0m01.0s), 1/1 VUs, 0 complete and 0 interrupted iterations
+nodes   [   0% ] 1 VUs  0m01.0s/2m15s  0/1 iters, 1 per VU
+
+running (0m02.0s), 1/1 VUs, 0 complete and 0 interrupted iterations
+nodes   [   0% ] 1 VUs  0m02.0s/2m15s  0/1 iters, 1 per VU
+
+running (0m03.0s), 1/1 VUs, 0 complete and 0 interrupted iterations
+nodes   [   0% ] 1 VUs  0m03.0s/2m15s  0/1 iters, 1 per VU
+
+running (0m04.0s), 1/1 VUs, 0 complete and 0 interrupted iterations
+nodes   [   0% ] 1 VUs  0m04.0s/2m15s  0/1 iters, 1 per VU
+
+running (0m05.0s), 1/1 VUs, 0 complete and 0 interrupted iterations
+nodes   [   0% ] 1 VUs  0m05.0s/2m15s  0/1 iters, 1 per VU
+
+running (0m06.0s), 1/1 VUs, 0 complete and 0 interrupted iterations
+nodes   [   0% ] 1 VUs  0m06.0s/2m15s  0/1 iters, 1 per VU
+
+running (0m07.0s), 1/1 VUs, 0 complete and 0 interrupted iterations
+nodes   [   0% ] 1 VUs  0m07.0s/2m15s  0/1 iters, 1 per VU
+
+running (0m08.0s), 1/1 VUs, 0 complete and 0 interrupted iterations
+nodes   [   0% ] 1 VUs  0m08.0s/2m15s  0/1 iters, 1 per VU
+
+running (0m09.0s), 1/1 VUs, 0 complete and 0 interrupted iterations
+nodes   [   0% ] 1 VUs  0m09.0s/2m15s  0/1 iters, 1 per VU
+
+running (0m10.0s), 1/1 VUs, 0 complete and 0 interrupted iterations
+nodes   [   0% ] 1 VUs  0m10.0s/2m15s  0/1 iters, 1 per VU
+
+running (0m11.0s), 1/1 VUs, 0 complete and 0 interrupted iterations
+nodes   [   0% ] 1 VUs  0m11.0s/2m15s  0/1 iters, 1 per VU
+
+running (0m12.0s), 1/1 VUs, 0 complete and 0 interrupted iterations
+nodes   [   0% ] 1 VUs  0m12.0s/2m15s  0/1 iters, 1 per VU
+
+running (0m13.0s), 1/1 VUs, 0 complete and 0 interrupted iterations
+nodes   [   0% ] 1 VUs  0m13.0s/2m15s  0/1 iters, 1 per VU
+
+running (0m14.0s), 1/1 VUs, 0 complete and 0 interrupted iterations
+nodes   [   0% ] 1 VUs  0m14.0s/2m15s  0/1 iters, 1 per VU
+
+running (0m15.0s), 1/1 VUs, 0 complete and 0 interrupted iterations
+nodes   [   0% ] 1 VUs  0m15.0s/2m15s  0/1 iters, 1 per VU
+
+running (0m15.3s), 0/1 VUs, 1 complete and 0 interrupted iterations
+nodes ✓ [ 100% ] 1 VUs  0m15.3s/2m15s  1/1 iters, 1 per VU

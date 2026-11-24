@@ -1,7 +1,13 @@
 package io.seswar.warrant.warrant;
 
-import io.seswar.warrant.warrant.Warrant;
-import io.seswar.warrant.warrant.WarrantRepository;
+import io.seswar.warrant.warrant.store.LineageType;
+import io.seswar.warrant.warrant.store.Warrant;
+import io.seswar.warrant.warrant.store.WarrantLineage;
+import io.seswar.warrant.warrant.store.WarrantLineageRepository;
+import io.seswar.warrant.warrant.store.WarrantRepository;
+import io.seswar.warrant.warrant.store.WarrantState;
+import io.seswar.warrant.warrant.store.Warrant;
+import io.seswar.warrant.warrant.store.WarrantRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;

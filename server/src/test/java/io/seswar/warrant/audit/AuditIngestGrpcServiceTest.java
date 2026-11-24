@@ -1,12 +1,14 @@
 package io.seswar.warrant.audit;
 
+import io.seswar.warrant.audit.api.AuditIngestGrpcService;
+import io.seswar.warrant.audit.store.AuditEvent;
+import io.seswar.warrant.audit.store.Verdict;
 import io.grpc.ManagedChannel;
 import io.grpc.Server;
 import io.grpc.Status;
 import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.stub.StreamObserver;
-import io.seswar.warrant.audit.AuditIngestService;
 import io.seswar.warrant.node.NodeRegistry;
 import io.seswar.warrant.config.ClockConfig;
 import io.seswar.warrant.proto.AgentProtos.AuditAck;
