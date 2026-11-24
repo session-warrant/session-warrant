@@ -8,6 +8,7 @@
 
 - [Overview](#overview)
 - [Purpose](#purpose)
+- [Prior work](#prior-work)
 - [Technical details](#technical-details)
 - [Tech stack](#tech-stack)
 - [Requirements](#requirements)
@@ -94,6 +95,66 @@ Each warrant picks a mode. **Audit** only records denials (`WOULD_DENY`),
 blocks. Audit mode alone answers "how many logins a day arrive without a
 warrant" and produces an organization-wide SSH access report — start in audit
 without a reboot, then turn on enforcement with the collected data as evidence.
+
+---
+
+## Prior work
+
+In one line: **access control used to stop at the door; this binds what root
+does after the door to someone else's approval and a deadline.**
+
+### What already exists
+
+| Family | Examples | What it does | What differs here |
+|---|---|---|---|
+| Gateway SSH access control | Teleport, StrongDM, Boundary | Authentication, approval and recording at connect time. Teleport's Enhanced Session Recording uses BPF to **record** a session's commands and network activity; it does not block (Restricted Sessions, which blocked network only, was removed in v15) | Every syscall after login is decided |
+| Runtime security | Falco, Tetragon | eBPF monitoring and enforcement, scoped by workload (container, binary, pod label) | The unit is a **person's session**, carrying a reason, a deadline and an approver |
+| Command-level privilege management | sudo, BeyondTrust EPM-UL (`pbrun`) | Decides at command launch and logs keystrokes | The kernel decides, so what happens *inside* an allowed command is covered too |
+| eBPF LSM confinement research | BPFBox (CCSW'20), BPFContain (2021), OAMAC (2026) | Confines by process, container or execution origin | Adds people, sessions, deadlines and approval |
+| Cloud IAM analysis | PMapper, Cloudsplaining | Finds escalation paths created by granting two permissions together | The same idea applied to host policy (exec × write): the policy linter |
+
+### Closest work: ssh-probe (Fournier, SSTIC 2021)
+
+It follows SSH sessions through the pid lineage, restricts even root, and
+grants temporary session-, scope- and time-bound access after an OTP.
+**Session-scoped eBPF control was shown there first.** Session Warrant builds
+what that paper listed as limitations and future work, and puts an
+organizational approval model on top.
+
+| | ssh-probe | Session Warrant |
+|---|---|---|
+| Enforcement point | kprobe + `bpf_override_return`: blocking needs `CONFIG_BPF_KPROBE_OVERRIDE`, and arguments are read from user memory at syscall entry | eBPF LSM hooks: decisions on kernel-resolved objects (inodes). This is the KRSI the paper names as future work |
+| Session tracking | pid lineage, one layer | Session cgroup + fork chain, two layers |
+| Widening access | The user enters an OTP and opens it themselves | **Someone else must approve.** The server refuses self-approval; reason, deadline and approver stay in the lineage |
+| Where policy comes from | Local YAML on the node, per user | Signed per warrant by the center and verified on the node; it cannot be widened by editing the node |
+| Delegation (cron, systemd, docker) | Named as a limitation; suggests blocking the docker client and `/etc/crontab` as a stopgap | The same gap turned into rules: the kernel decides the exec allowlist, delegation sockets (`AF_UNIX` to systemd, D-Bus, docker, containerd) and write rules (spool included), and the policy linter rejects a delegation binary combined with write access to its config at registration. This semester runs in audit mode, so the kernel records only; D-Bus succession is Phase 2 ([Known gaps](#known-gaps)) |
+| Root trying to switch it off | Not covered | Self-protection: the kernel blocks killing the agent, unloading BPF, loading modules and more |
+| Logins that bypass the gateway | Only users with a profile | Every session without a warrant is recorded with person, key and source |
+| Performance evidence | No figures | `file_open` cost under 1% under write saturation ([experiments](docs/experiments.md)) |
+
+### What is not claimed as new
+
+- Session-scoped eBPF control itself: ssh-probe came first.
+- Work leaking out of the session through delegation: ssh-probe named it.
+  This project turns the countermeasure into an automatic check and kernel rules.
+- Static analysis of permission combinations: it exists for cloud IAM. It is
+  carried over to host policy.
+
+The comparison is from public documents and papers. No experiment tried to
+bypass ssh-probe itself.
+
+<details>
+<summary>References</summary>
+
+- G. Fournier, "Monitoring and protecting SSH sessions with eBPF", SSTIC 2021: [paper](https://www.sstic.org/media/SSTIC2021/SSTIC-actes/monitoring_and_protecting_ssh_sessions_with_ebpf/SSTIC2021-Article-monitoring_and_protecting_ssh_sessions_with_ebpf-fournier.pdf), [ssh-probe](https://github.com/Gui774ume/ssh-probe)
+- Teleport: [Enhanced Session Recording](https://goteleport.com/docs/enroll-resources/server-access/guides/bpf-session-recording/), [Restricted Sessions (14.x, removed in 15)](https://goteleport.com/docusaurus/ver/14.x/enroll-resources/server-access/guides/restricted-session)
+- Tetragon: [Enforcement](https://tetragon.cilium.io/docs/concepts/enforcement/), [K8s Policy Filtering](https://tetragon.cilium.io/docs/concepts/tracing-policy/k8s-filtering/)
+- W. Findlay et al., [BPFBox (CCSW 2020)](https://people.scs.carleton.ca/~soma/pubs/findlay-ccsw2020.pdf), [BPFContain (arXiv 2102.06972)](https://arxiv.org/abs/2102.06972)
+- [OAMAC (arXiv 2601.14021)](https://arxiv.org/html/2601.14021v1)
+- [BeyondTrust EPM-UL](https://docs.beyondtrust.com/epm-ul/docs/epm-ul-overview)
+- IAM escalation paths: [Unit 42 IAM-Deescalate (PMapper and Cloudsplaining compared)](https://unit42.paloaltonetworks.com/iam-deescalate/), [pathfinding.cloud](https://securitylabs.datadoghq.com/articles/introducing-pathfinding.cloud/)
+
+</details>
 
 ---
 
@@ -264,7 +325,7 @@ All four are recorded in audit mode and committed with skip reasons in
 |---|---|---|
 | Write fd opened before expiry | `file_open` sees only the open | `on_expiry=terminate`, or audit only |
 | UDP without `connect` | `sendto` skips `socket_connect` | `lsm/socket_sendmsg`, turned on by the policy's `inspect_udp` |
-| Delegation to another daemon | PID 1, atd, containerd-shim fork on the caller's behalf | Exec allowlist + socket block + spool block. D-Bus succession in Phase 2 |
+| Delegation to another daemon | PID 1, atd, containerd-shim fork on the caller's behalf | Exec allowlist + socket block + spool block. The policy linter rejects a delegation binary combined with write access to its config. D-Bus succession in Phase 2 |
 | `kubectl exec` | Born in the container cgroup, no session scope | Bind from the API-server audit webhook to the next `runc exec`. Phase 2 |
 
 ### Repository layout

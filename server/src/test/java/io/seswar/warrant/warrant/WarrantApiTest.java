@@ -134,6 +134,36 @@ class WarrantApiTest {
     }
 
     @Test
+    void 위임_바이너리와_그_설정_쓰기를_같이_여는_정책은_400이다() throws Exception {
+        mvc.perform(as(ALICE, post("/api/policies")).contentType(MediaType.APPLICATION_JSON).content("""
+                        {"name": "combo", "execRules": ["/usr/bin/systemctl"],
+                         "writeRules": [{"path": "/etc/systemd/system", "recursive": true, "effect": "ALLOW"}]}"""))
+                .andExpect(status().isBadRequest());
+    }
+
+    // WARN 은 막지 않는다 — 저장되고, 정책 응답과 승인 큐에 같이 내린다.
+    @Test
+    void 경고만_있는_정책은_저장되고_경고가_승인_큐까지_따라간다() throws Exception {
+        String body = postJson(ALICE, "/api/policies", """
+                {"name": "wide", "execRules": ["/bin/bash"],
+                 "netRules": [{"cidr": "0.0.0.0/0", "port": 443, "proto": "TCP"}]}""");
+        String policyId = field(body, "id");
+        mvc.perform(as(ALICE, get("/api/policies")))
+                .andExpect(jsonPath("$[?(@.id == '%s')].warnings[*].code".formatted(policyId))
+                        .value(org.hamcrest.Matchers.containsInAnyOrder("SCOPE_TOO_WIDE", "NET_WIDE_OPEN")));
+
+        String id = field(postJson(ALICE, "/api/warrants", """
+                {"loginAccount": "ec2-user", "reason": "INC-2", "targetHosts": ["node-1"], "policyId": "%s",
+                 "duration": "PT15M", "mode": "DRYRUN"}""".formatted(policyId)), "id");
+        mvc.perform(as(BOB, get("/api/approvals")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.warrant.id == '%s')].policyWarnings[*].severity".formatted(id))
+                        .value(org.hamcrest.Matchers.everyItem(org.hamcrest.Matchers.is("WARN"))))
+                .andExpect(jsonPath("$[?(@.warrant.id == '%s')].policyWarnings[*].code".formatted(id))
+                        .value(org.hamcrest.Matchers.hasSize(2)));
+    }
+
+    @Test
     void 없는_정책으로_신청하면_400이다() throws Exception {
         mvc.perform(as(ALICE, post("/api/warrants")).contentType(MediaType.APPLICATION_JSON).content("""
                         {"loginAccount": "ec2-user", "reason": "r", "targetHosts": ["node-1"], "policyId": "%s"}"""

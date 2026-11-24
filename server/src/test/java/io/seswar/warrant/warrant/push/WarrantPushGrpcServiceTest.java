@@ -59,7 +59,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Testcontainers
 @Import({WarrantPushGrpcService.class, WarrantPushService.class, NodeStreamRegistry.class,
         WarrantIssuanceService.class, WarrantRevocationService.class, WarrantSealer.class,
-        WarrantProtoMapper.class, WarrantSigner.class, WarrantPushGrpcServiceTest.Keys.class})
+        WarrantProtoMapper.class, WarrantSigner.class, io.seswar.warrant.policy.PolicyLinter.class,
+        WarrantPushGrpcServiceTest.Keys.class})
 class WarrantPushGrpcServiceTest {
 
     @Container

@@ -8,6 +8,7 @@
 
 - [프로젝트 개요](#프로젝트-개요)
 - [목적](#목적)
+- [기존 연구와의 차이](#기존-연구와의-차이)
 - [기술 상세](#기술-상세)
 - [기술 스택](#기술-스택)
 - [요구사항](#요구사항)
@@ -86,6 +87,60 @@ Session Warrant  W-4821-3F
 영장마다 모드를 고른다. **감사**는 거부를 기록만 하고(`WOULD_DENY`), **드라이런**은 정책을 얹어 차단 여부를
 미리 보고, **강제**는 실제로 막는다. 감사 모드만으로도 「영장 없이 들어온 접속이 하루 몇 건인가」와
 「조직 전체 SSH 접속 현황」이 나온다 — 재부팅 없이 감사로 시작해, 쌓인 데이터를 근거로 강제를 켠다.
+
+---
+
+## 기존 연구와의 차이
+
+한 줄로: **접속만 통제하던 것을, 접속한 뒤 root 가 하는 일까지 다른 사람의 승인과 기한 안에 묶는다.**
+
+### 이미 있는 것
+
+| 갈래 | 대표 | 하는 일 | 여기서 다른 점 |
+|---|---|---|---|
+| 게이트웨이형 SSH 접근제어 | Teleport · StrongDM · Boundary | 접속 시점의 인증 · 승인 · 세션 기록. Teleport 의 Enhanced Session Recording 은 BPF 로 세션의 명령 · 네트워크를 **기록**한다 (차단은 하지 않는다. 네트워크만 막던 Restricted Sessions 는 v15 에서 제거됐다) | 접속 뒤의 시스템 호출을 하나씩 판정한다 |
+| 런타임 보안 | Falco · Tetragon | eBPF 로 감시 · 차단. 정책 단위는 워크로드(컨테이너 · 바이너리 · pod 레이블) | 정책 단위가 **사람의 세션**이고, 사유 · 기한 · 승인자가 붙는다 |
+| 명령 단위 권한 관리 | sudo · BeyondTrust EPM-UL(`pbrun`) | 명령을 실행할 때 허용 여부를 보고 키 입력을 기록한다 | 커널이 판정하므로 허용된 명령 *안에서* 하는 일까지 본다 |
+| eBPF LSM 격리 연구 | BPFBox(CCSW'20) · BPFContain(2021) · OAMAC(2026) | 프로세스 · 컨테이너 · 실행 출처 단위로 가둔다 | 사람 · 세션 · 기한 · 승인 개념이 있다 |
+| 클라우드 IAM 분석 | PMapper · Cloudsplaining | 권한 둘을 같이 주면 생기는 권한 상승 경로를 찾는다 | 같은 생각을 호스트 정책(실행 × 쓰기)에 적용했다 — 정책 lint |
+
+### 가장 가까운 작업: ssh-probe (Fournier, SSTIC 2021)
+
+SSH 세션을 pid 계보로 따라가며 root 까지 제한하고, OTP 로 세션 · 범위 · 시간을 한정한 임시 권한을 준다.
+**세션 단위 eBPF 통제는 이 작업이 먼저 보였다.** Session Warrant 는 그 논문이 한계와 향후 과제로 남긴 것을
+구현하고, 그 위에 조직의 승인 모델을 얹는다.
+
+| | ssh-probe | Session Warrant |
+|---|---|---|
+| 집행 지점 | kprobe + `bpf_override_return` — 커널 빌드 옵션(`CONFIG_BPF_KPROBE_OVERRIDE`)이 있어야 막을 수 있고, 시스템 호출 입구에서 사용자 메모리의 인자를 본다 | eBPF LSM 훅 — 커널이 확정한 객체(inode)로 판정한다. 논문이 향후 과제로 꼽은 KRSI 가 이것이다 |
+| 세션 추적 | pid 계보 한 겹 | 세션 cgroup + fork 체인 두 겹 |
+| 권한을 넓히는 법 | 본인이 OTP 를 넣어 스스로 연다 | **다른 사람이 승인해야 열린다.** 본인 승인은 서버가 거부하고, 사유 · 기한 · 승인자가 계보로 남는다 |
+| 정책이 오는 곳 | 노드의 로컬 YAML, 사용자별 | 중앙이 영장마다 서명해 내려보내고 노드가 서명을 검증한다. 노드에서 고쳐 넓힐 수 없다 |
+| 위임(cron · systemd · docker) | 한계로 명시. 임시로 docker 클라이언트 · `/etc/crontab` 을 막으라고 권한다 | 같은 구멍을 규칙으로 만든다 — 커널이 실행 허용 목록 · 위임 소켓(`AF_UNIX` 의 systemd · D-Bus · docker · containerd) · 쓰기 규칙(spool 포함)을 판정하고, 정책 등록 때 lint 가 위임 바이너리 + 그 설정 쓰기 조합을 거부한다. 이번 학기는 감사 모드라 커널은 기록만 하고, D-Bus 승계는 Phase 2 다 ([알려진 구멍](#알려진-구멍)) |
+| 통제를 끄려는 root | 다루지 않는다 | 자기보호 — 에이전트 종료 · BPF 내리기 · 모듈 적재 등을 커널이 막는다 |
+| 게이트웨이 우회 접속 | 프로필이 있는 사용자만 다룬다 | 영장 없는 접속을 사람 · 키 · 출발지와 함께 기록한다 |
+| 성능 근거 | 수치 없음 | 쓰기 포화 조건에서 `file_open` 비용 1% 미만 ([실험 기록](docs/experiments.md)) |
+
+### 새로 주장하지 않는 것
+
+- 세션 단위 eBPF 통제 자체 — ssh-probe 가 먼저다.
+- 위임으로 세션 밖으로 새는 문제 — ssh-probe 가 한계로 적었다. 여기서는 그 대응을 자동 검사와 커널 규칙으로 만들었다.
+- 권한 조합의 정적 검사 — 클라우드 IAM 쪽에 이미 있다. 호스트 정책에 옮겨 온 것이다.
+
+위 비교는 공개된 문서와 논문을 읽고 정리한 것이다. ssh-probe 를 직접 우회해 보는 실험은 하지 않았다.
+
+<details>
+<summary>참고 자료</summary>
+
+- G. Fournier, "Monitoring and protecting SSH sessions with eBPF", SSTIC 2021 — [논문](https://www.sstic.org/media/SSTIC2021/SSTIC-actes/monitoring_and_protecting_ssh_sessions_with_ebpf/SSTIC2021-Article-monitoring_and_protecting_ssh_sessions_with_ebpf-fournier.pdf) · [ssh-probe](https://github.com/Gui774ume/ssh-probe)
+- Teleport — [Enhanced Session Recording](https://goteleport.com/docs/enroll-resources/server-access/guides/bpf-session-recording/) · [Restricted Sessions (14.x, 15 에서 제거)](https://goteleport.com/docusaurus/ver/14.x/enroll-resources/server-access/guides/restricted-session)
+- Tetragon — [Enforcement](https://tetragon.cilium.io/docs/concepts/enforcement/) · [K8s Policy Filtering](https://tetragon.cilium.io/docs/concepts/tracing-policy/k8s-filtering/)
+- W. Findlay et al., [BPFBox (CCSW 2020)](https://people.scs.carleton.ca/~soma/pubs/findlay-ccsw2020.pdf) · [BPFContain (arXiv 2102.06972)](https://arxiv.org/abs/2102.06972)
+- [OAMAC (arXiv 2601.14021)](https://arxiv.org/html/2601.14021v1)
+- [BeyondTrust EPM-UL](https://docs.beyondtrust.com/epm-ul/docs/epm-ul-overview)
+- IAM 권한 상승 경로 — [Unit 42 IAM-Deescalate (PMapper · Cloudsplaining 비교)](https://unit42.paloaltonetworks.com/iam-deescalate/) · [pathfinding.cloud](https://securitylabs.datadoghq.com/articles/introducing-pathfinding.cloud/)
+
+</details>
 
 ---
 
@@ -243,7 +298,7 @@ warrantd 자기 디렉터리(`/var/lib/warrantd` · `/run/warrantd` · `/etc/war
 |---|---|---|
 | 만료 전에 열어 둔 쓰기 fd | `file_open` 은 열 때만 본다 | `on_expiry=terminate`, 또는 감사만 |
 | connect 없는 UDP | `sendto` 는 `socket_connect` 를 안 탄다 | `lsm/socket_sendmsg` — 정책의 `inspect_udp` 로 켠다 |
-| 다른 데몬에게 위임 | PID 1 · atd · containerd-shim 이 대신 fork | 실행 허용 목록 + 소켓 차단 + spool 차단. D-Bus 승계는 Phase 2 |
+| 다른 데몬에게 위임 | PID 1 · atd · containerd-shim 이 대신 fork | 실행 허용 목록 + 소켓 차단 + spool 차단. 정책 등록 때 lint 가 위임 바이너리 + 그 설정 쓰기 조합을 거부한다. D-Bus 승계는 Phase 2 |
 | `kubectl exec` | 컨테이너 cgroup 에서 태어나 세션 scope 가 없다 | API 서버 감사 웹훅으로 다음 `runc exec` 에 결속. Phase 2 |
 
 ### 리포지토리 구조

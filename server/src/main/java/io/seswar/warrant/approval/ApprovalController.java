@@ -3,8 +3,9 @@ package io.seswar.warrant.approval;
 import io.seswar.warrant.warrant.api.WarrantViews;
 import io.seswar.warrant.warrant.store.Warrant;
 import io.seswar.warrant.identity.CurrentSubject;
-import io.seswar.warrant.warrant.store.Warrant;
-import io.seswar.warrant.warrant.api.WarrantViews;
+import io.seswar.warrant.policy.PolicyLintFinding;
+import io.seswar.warrant.policy.PolicyLinter;
+import io.seswar.warrant.policy.PolicyRepository;
 import io.seswar.warrant.warrant.push.WarrantPushService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
@@ -31,9 +32,14 @@ public class ApprovalController {
     private final CurrentSubject current;
     private final WarrantViews views;
     private final WarrantPushService push;
+    private final PolicyRepository policies;
+    private final PolicyLinter linter;
 
-    /** 본인 신청도 보이되 approvable=false 로 내린다. */
-    public record QueueItem(WarrantViews.WarrantView warrant, boolean approvable) {
+    /**
+     * 본인 신청도 보이되 approvable=false 로 내린다.
+     * {@code policyWarnings} 는 정책 lint 의 WARN — 막지는 않고 승인자가 보고 판단한다(ERROR 는 신청 때 이미 걸렀다).
+     */
+    public record QueueItem(WarrantViews.WarrantView warrant, boolean approvable, List<PolicyLintFinding> policyWarnings) {
     }
 
     public record Decision(String reason) {
@@ -43,7 +49,8 @@ public class ApprovalController {
     public List<QueueItem> queue(Authentication auth) {
         UUID me = current.require(auth).getId();
         return approvals.queue().stream()
-                .map(w -> new QueueItem(views.of(w), !w.getSubjectId().equals(me)))
+                .map(w -> new QueueItem(views.of(w), !w.getSubjectId().equals(me),
+                        policies.findById(w.getPolicyId()).map(linter::warnings).orElse(List.of())))
                 .toList();
     }
 
