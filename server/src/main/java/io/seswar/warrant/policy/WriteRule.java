@@ -58,12 +58,4 @@ public record WriteRule(@Column(nullable = false) String path,
         public Short convertToDatabaseColumn(Effect e) { return e == null ? null : (short) e.wireValue(); }
         public Effect convertToEntityAttribute(Short s) { return s == null ? null : Effect.fromWire(s); }
     }
-
-    /**
-     * DENY 인데 경로가 파일을 가리키면 우회 가능한 규칙이다.
-     * 정책 lint 에서 거부해야 한다.
-     */
-    public boolean isUnsafeDenyShape() {
-        throw new UnsupportedOperationException("미구현");
-    }
 }
