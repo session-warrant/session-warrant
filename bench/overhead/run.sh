@@ -179,12 +179,9 @@ done
 
 echo
 python3 report.py "$OUT" | tee "$OUT/report.txt"
-# 결과가 root 소유면 git add 에서 걸린다.
+# 결과가 root 소유면 일반 계정으로 읽고 scp 할 수 없다.
 # (set -e 아래에서 [[ ]] && cmd 는 조건이 거짓일 때 스크립트를 죽인다)
 if [[ -n ${SUDO_USER:-} ]]; then chown -R "$SUDO_USER" "$OUT"; fi
 
 echo
-echo "결과: $OUT"
-echo
-echo "맥북으로 가져가기 (out/ 은 커밋 대상이다):"
-echo "  git add $OUT && git commit -m \"S1 실측: $(uname -r)\" && git push"
+echo "결과: $OUT  (커밋하지 않는다 — 판정에 쓰면 PR 본문에 요약)"

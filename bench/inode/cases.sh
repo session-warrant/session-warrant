@@ -203,5 +203,4 @@ echo
 python3 report.py "$OUT" | tee "$OUT/report.txt"
 if [[ -n ${SUDO_USER:-} ]]; then chown -R "$SUDO_USER" "$OUT"; fi
 echo
-echo "결과: $OUT"
-echo "커밋: git add bench/inode/out && git commit -m \"S4 실측: $(uname -r)\""
+echo "결과: $OUT  (커밋하지 않는다 — 판정에 쓰면 PR 본문에 요약)"
