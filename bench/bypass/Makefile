@@ -39,7 +39,7 @@ tagprobe: tagprobe.c
 	$(Q)$(CC) $(HOST_CFLAGS) tagprobe.c -o $@ $(HOST_LDLIBS)
 
 # bats 는 root 로 돌아야 한다 — BPF LSM 부착과 su/sudo 케이스 때문이다.
-# 결과는 out/ 에 커밋한다 — 검증 대상 커널(7.0 · Rocky 9) 결과와 나란히 놓기 위해서다.
+# 결과는 out/ 에 남기고 커밋하지 않는다 — 검증 대상 커널(7.0 · Rocky 9) 결과와 나란히 놓을 때 쓰므로 지우지 않는다.
 test: all
 	@test "$$(id -u)" = 0 || { echo "ERROR: sudo make test"; exit 1; }
 	@mkdir -p out
@@ -52,8 +52,7 @@ test: all
 	   echo "date     $$(date -Is)"; echo; } > $$f;                            \
 	 bats *.bats 2>&1 | tee -a $$f; rc=$$?;                                    \
 	 if [ -n "$$SUDO_USER" ]; then chown -R "$$SUDO_USER" out; fi;             \
-	 echo; echo "결과: $$f";                                                    \
-	 echo "커밋: git add bench/bypass/out && git commit -m \"S2 실측: $$(uname -r)\""; \
+	 echo; echo "결과: $$f  (커밋하지 않는다 — 판정에 쓰면 PR 본문에 요약)";   \
 	 exit $$rc
 
 check:

@@ -30,10 +30,9 @@ bench/overhead/fixtures/
 bench/bypass/tagprobe
 bench/overhead/*.out
 
-# out/ 는 커밋한다 — 측정값은 던져버리는 스파이크 코드가 아니라 산출물이다.
-# 서브 PC 에서 재고 맥북에서 읽는 유일한 통로이기도 하다.
-# 다만 로더 로그는 재현에 필요 없다.
-bench/overhead/out/**/*.log
+# 측정 결과(out/)는 커밋하지 않는다(2026-11-24). 원본은 잰 기계에 남기고,
+# 판정에 쓴 숫자는 조건과 함께 PR 본문에 요약한다 — CLAUDE.md 「명령」.
+bench/*/out/
 
 # ── Java / Gradle ──────────────────────────────────────────────────
 build/

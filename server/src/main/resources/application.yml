@@ -7,7 +7,8 @@ spring:
       enabled: true          # WebFlux 대신 이걸로 간다
 
   datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5433}/warrant   # 로컬은 server/compose.yaml
+    # reWriteBatchedInserts: pgjdbc turns a JDBC batch into multi-row INSERTs instead of one statement per row.
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5433}/warrant?reWriteBatchedInserts=true   # 로컬은 server/compose.yaml
     username: warrant
     password: ${DB_PASSWORD:changeme}
 

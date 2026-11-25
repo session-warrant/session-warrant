@@ -204,7 +204,6 @@ python3 report.py "$OUT" --rows-before "$before" --rows-after "$after" --nodes "
 verdict=${PIPESTATUS[0]}
 
 echo
-echo "결과: $OUT"
-echo "커밋: git add bench/serverload/out && git commit -m \"서버 부하 실측: 노드 $NODES\""
+echo "결과: $OUT  (커밋하지 않는다 — 판정에 쓰면 PR 본문에 요약)"
 [ "$ingest_rc" = 0 ] && [ "$read_rc" = 0 ] || { echo "k6 가 0 이 아닌 코드로 끝났다 — $OUT/*.log" >&2; exit 1; }
 exit "$verdict"

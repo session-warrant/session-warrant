@@ -134,8 +134,7 @@ collect:
 	 : > $(LOG); \
 	 python3 report.py $$d | tee $$d/report.txt; \
 	 if [ -n "$$SUDO_USER" ]; then chown -R "$$SUDO_USER" out; fi; \
-	 echo; echo "결과: $$d"; \
-	 echo "커밋: git add bench/pamtiming/out && git commit -m \"S3 실측: $$(uname -r)\""
+	 echo; echo "결과: $$d  (커밋하지 않는다 — 판정에 쓰면 PR 본문에 요약)"
 
 clean:
 	rm -f $(SO)

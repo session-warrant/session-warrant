@@ -68,7 +68,7 @@ rename · 접속 · 자기보호 기록이 `audit_event` 와 대시보드 감사
 | `server/` | Java 55클래스. **감사 수집 경로가 끝까지 돈다**(2026-10-24) — `AuditIngestGrpcService`(감사 스트림 → 저장 → ack) · `AuditProtoMapper` · `AuditIngestService.ingest`(멱등) · `NodeRegistry`, 엔티티 4개(`Node` · `AuditEvent` · `UnwarrantedSession` · `EventGap`), Flyway V1 ~ V5. 테스트는 Testcontainers. 감사 행에 훅 번호 · 프로세스 이름(`comm`)이 남는다(V3). **영장 세션 `warranted_session`(V5, 2026-11-14)** — 무영장 세션과 합친 뷰 `ssh_session` 이 「조직 전체 SSH 접속 현황」이다. 받은 순번 `received_seq`(V4) — 적재를 advisory lock 으로 직렬화해 순번 순서 = 커밋 순서. `write_aggregates` 는 저장할 테이블이 없어 매퍼가 거부한다(받고 넘기면 ack 되어 노드가 지운다). **영장 신청 → 다른 사람의 승인 → 서명 · push → 회수가 돈다**(2026-11-08, 계보 포함, 자기 승인은 서버가 403) — `POST/GET/DELETE /api/warrants` · `/api/approvals` · `/api/subjects` · `/api/policies` · `GET /api/signing-key`, 대시보드용 읽기 `GET /api/nodes` · `/api/audit/unwarranted` · `/api/audit/gaps` · `/api/audit/events`(커널 판정 기록, 기본 24시간 · `?after=` 받은 순번 뒤 이어 받기) · `/api/audit/stream`(SSE 「새 기록 있음」, 2026-11-09) · `/api/audit/summary`(구간 막대 집계, `date_bin`, 2026-11-11), Ed25519 서명, `WarrantPushGrpcService`(구독 → 활성 집합 → ResyncComplete → 실시간 push). 기간은 승인 시각부터. **로그인은 OIDC(Keycloak)**(2026-11-09) — `oidc` 프로필, compose 의 Keycloak(`127.0.0.1:8180`, realm `warrant`), 콘솔은 코드 흐름 + PKCE → 세션, curl 은 Bearer. Keycloak 그룹이 역할(신청 · 승인 · 감사), 「나」는 `sub`. Keycloak 없이 개발할 때는 `dev` 프로필(설정 파일 계정 · Basic). 패키지는 도메인별(`warrant` · `warrant.push` · `identity` · `policy` · `node` · `audit` · `signing`). 테스트 189개. **정책 lint**(2026-11-24) — ERROR(자기보호 · 위임 바이너리 + 그 설정 쓰기 조합)면 정책 등록 · 영장 신청이 400, WARN(전면 허용 네트워크 · 셸/인터프리터 실행 · 그 자체로 위험한 쓰기 · 쓰기 가능한 곳의 실행 파일)은 정책 응답의 `warnings` · 승인 큐의 `policyWarnings` 로 내린다. 조합 표는 `agent/internal/policy` 의 `comboRules` · `alwaysRisky` 와 짝. 금지 규칙이 파일인지는 서버가 판단하지 않는다(노드가 거부). 연장 · 승인자 자격은 미구현. **노드 신원은 mTLS 인증서**(2026-11-14) — `mtls` 프로필이 gRPC 를 TLS 로 바꾸고 사내 CA(`deploy/pki/pki.sh`) 인증서를 필수로 한다. 신원은 `sha256:<지문>`, NodeHello 의 hostname 이 인증서 CN 과 다르면 거부. 프로필 없이 띄우면 평문 · `"dev:" + hostname`(로컬 개발 전용). 인증서 폐기(CRL)는 미구현 |
 | `deploy/` | `bootstrap.sh` · `enable-bpf-lsm.sh` — 동작. `systemd/` — `warrantd.service`(`Type=notify` · `Before=ssh.service` · `/run/warrantd` 0700) · `install.sh`. BPF 는 warrantd 가 올린다. VM 에서 설치 · 세션 업로드 · 재시작 뒤 pin 유지 · 훅 중복 없음 · **재부팅 순서**(warrantd READY → sshd, 순환 경고 0줄) · BPF 실패해도 ssh 가능 확인(2026-11-01). 유닛에 `PrivateTmp` · `ProtectHome` 을 넣지 않는다 — 정책 경로가 warrantd 전용 tmpfs 의 inode 로 컴파일된다(2026-11-03). `Before=ssh.socket` 은 순서 순환을 만들어 sshd 가 안 뜬 적이 있다 — `deploy/README.md`. `ansible/` 비어 있다 |
 | `bench/overhead/` | S1 하네스 — 6차까지(읽기 감시 R · I · I2 포함). **최악 조건 1% 미만 — S1 통과** |
-| `bench/bypass/` | S2 §04 표 = bats 13케이스 + §18 4구멍(skip). **8 통과 · 0 실패**, 출력 커밋됨. 진짜 세션으로 재확인 남음 |
+| `bench/bypass/` | S2 §04 표 = bats 13케이스 + §18 4구멍(skip). **8 통과 · 0 실패**(출력은 서브 PC 의 `out/`). 진짜 세션으로 재확인 남음 |
 | `bench/pamtiming/` | S3 하네스 — **통과**. sshd 11/11, 태깅 공백 없음 |
 | `bench/inode/` | S4 하네스 — fanotify 감시자 + 변형 카탈로그. **아직 안 돌렸다** |
 | `bench/serverload/` | 중앙 서버 부하 — k6(2026-11-16). gRPC 감사 스트림 · 대시보드 읽기 API, 맥에서 돈다. **노드 1 → 8 로 늘려도 처리량이 ~15,000건/s 에 평평하고 ack 지연만 정비례**(25 → 209ms) — 적재가 받은 순번을 advisory lock 으로 직렬화하는 대가다. 읽기를 겹치면 쓰기가 4배 느려진다(3,720건/s). 처리량은 k6 가 보낸 수가 아니라 **DB 행수 증가분**으로 잰다 — 적재가 멱등이라 epoch 를 새로 안 뽑으면 전건 중복으로 걸러지고도 빨랐다고 보고한다. `server/Dockerfile` + compose `--profile t3micro` 가 **서버를 2 vCPU · 1 GiB(t3.micro)로 묶어** 8081 · 9091 에 띄운다(`bootRun` 과 공존) — 쓰기는 13,440건/s 로 거의 안 떨어지고 읽기를 겹치면 무너진다. 버스트 크레딧 · x86 · 외부 DB 는 흉내 못 낸다. 커널 판정만 보내면 대시보드가 비어 보이므로(세션 테이블을 읽는다) `SESSION_EVERY` 로 영장 · 무영장 세션 기록을 같은 스트림에 섞는다 |
@@ -381,8 +381,11 @@ k6 run -e BASIC=<계정>:<암호> read.js            # 읽기
 make clean-rows CONFIRM=1                      # 가짜 노드(k6-node-*) 행 정리
 ```
 
-측정 결과는 각 `out/` 에 들어가고 **커밋 대상이다.** 서브 PC 에서 재고 맥북에서
-읽는 유일한 통로다. `run.sh`·`make test` 가 끝에 `git add` 명령을 찍어준다.
+측정 결과는 각 `out/` 에 들어가고 **커밋하지 않는다**(2026-11-24, `.gitignore` 의 `bench/*/out/`).
+원본은 잰 기계의 `out/` 에 남긴다. **판정에 쓴 숫자는 PR 본문에 요약한다** — 기계 · 커널 · 서버 실행 방식
+(`bootRun` 은 C1 만이다 — `java -jar` 로 잰다) · 반복 횟수 · 전후 수치 · `out/` 디렉터리 이름. 서브 PC 의
+원본을 맥북에서 봐야 하면 `scp -r <서브PC>:~/SessionWarrant/bench/<하네스>/out/<타임스탬프> .` 로 가져온다.
+문서에 남은 `out/<타임스탬프>` 경로는 그 실행을 한 기계의 로컬 디렉터리를 가리킨다.
 
 ### 서버
 
@@ -484,6 +487,7 @@ bench/    bypass/(§04 우회) · overhead/(훅별 실측) · pamtiming/(PAM 타
 
 ## 작업 규칙
 
+- **답변은 항상 한국어로 한다.** 영어로 답한 것을 알아채거나 지적받으면 그 답을 한국어로 다시 쓴다. 코드 · 명령 · 식별자 · 오류 메시지 원문 · 코드 주석(영어 한두 줄 규칙)은 그대로 둔다 — 설명하는 문장만 한국어다.
 - **BPF 타입 이름에는 예외 없이 접두사를 붙인다** (`warrant_*`). `vmlinux.h` 는 커널의 전체 타입을 통째로 들여오므로 `struct sample` · `event` · `task` · `config` 는 전부 이미 존재한다. 증상은 `error: redefinition of ...` 한 줄 뒤에 따라오는 "no member named" 무더기다 — 첫 줄만 보면 된다.
 - **스파이크 전 구간은 감사 모드다.** LSM 훅은 `return 0` 만 한다. 자기보호 6종을 붙이기 전에 `-EPERM` 을 켜면 verifier를 통과한 버그 하나로 자기 박스에서 잠긴다.
 - **`proto/warrant.proto` 가 단일 진실 원본이다.** `struct warrant` 의 필드, 서버 엔티티, BPF 맵 값이 모두 같은 `.proto` 에서 나와야 한다. 커널 구조체와 서버 엔티티가 어긋나면 디버깅이 지옥이 된다. 단, **확정은 스파이크 뒤에** — 커널이 뭘 필요로 하는지 모르는 상태에서 확정하면 세 계층이 다 그 위에 붙은 뒤에 고치게 된다.
