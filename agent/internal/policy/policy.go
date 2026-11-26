@@ -99,6 +99,25 @@ type Compiled struct {
 	// Warnings 는 막지는 않지만 사람이 봐야 하는 것들이다.
 	// 규칙 하나하나는 멀쩡한데 조합이 구멍인 경우가 여기 걸린다.
 	Warnings []string
+
+	// writeMeta 는 Write 와 나란하다. 같은 inode 가 두 번 들어올 때
+	// 덮어도 되는지 판단하려면 앞엣것이 어디서 왔는지를 알아야 한다.
+	writeMeta []writeMeta
+}
+
+// writeOrigin 은 쓰기 규칙의 출처다. 같은 inode 가 겹쳤을 때 결과가
+// 출처마다 다르다 — 기본값은 덮여도 되고, 자기보호는 안 된다.
+type writeOrigin uint8
+
+const (
+	originDefault     writeOrigin = iota // 바닥에 깔아주는 기본 허용. 정책이 덮어도 된다
+	originSelfProtect                    // 자기보호 금지 (§16). 영장이 못 덮는다
+	originPolicy                         // 영장이 직접 쓴 규칙
+)
+
+type writeMeta struct {
+	path string
+	from writeOrigin
 }
 
 type Source struct {
@@ -208,6 +227,15 @@ var (
 	ErrNoEffect    = errors.New("쓰기 규칙에 effect 가 없다")
 	ErrRelPath     = errors.New("절대 경로여야 한다")
 	ErrExecNotFile = errors.New("실행 허용은 일반 파일이어야 한다")
+
+	// 맵 키가 (policy_id, dev, ino) 라 같은 inode 에 허용과 금지를 같이 주면
+	// 뒤에 들어간 쪽이 앞엣것을 조용히 덮는다. 경로가 둘인데 심볼릭 링크나
+	// 바인드 마운트로 같은 파일이면 사람 눈에는 충돌로 안 보인다 — 그래서 막는다.
+	ErrWriteConflict = errors.New("같은 inode 에 허용과 금지가 같이 있다")
+
+	// 자기보호 금지는 제품이 모든 영장에 강제로 넣는 것이고, 영장 작성자가
+	// 실수로든 고의로든 열 수 없어야 한다 (§16).
+	ErrSelfProtectOverride = errors.New("자기보호 금지는 정책이 덮을 수 없다")
 )
 
 // Compile 은 금지 규칙이 파일 inode 로 컴파일되면 거부한다. 금지는 디렉터리여야 한다.
@@ -258,14 +286,17 @@ func Compile(policyID uint32, spec any) (*Compiled, error) {
 	}
 
 	// 기본값을 먼저 깐다. 정책이 같은 경로를 다시 쓰면 뒤에 들어간 쪽이 이긴다 —
-	// 기본값은 바닥을 깔아주는 것이지 정책을 이기는 것이 아니다.
+	// 기본 **허용**은 바닥을 깔아주는 것이지 정책을 이기는 것이 아니다.
+	//
+	// 기본 **금지**는 다르다. 자기보호라서 정책이 덮으려 하면 컴파일이 깨진다
+	// (§16, ErrSelfProtectOverride). 둘을 같은 함수에 넣되 출처로 가른다.
 	for _, p := range DefaultAllowWrite {
-		if err := c.addWrite(p, true, true, true); err != nil {
+		if err := c.addWrite(p, true, true, true, originDefault); err != nil {
 			return nil, err
 		}
 	}
 	for _, p := range DefaultDenyWrite {
-		if err := c.addWrite(p, false, true, true); err != nil {
+		if err := c.addWrite(p, false, true, true, originSelfProtect); err != nil {
 			return nil, err
 		}
 	}
@@ -273,11 +304,11 @@ func Compile(policyID uint32, spec any) (*Compiled, error) {
 	for _, r := range s.WriteRules {
 		switch r.Effect {
 		case EffectAllow:
-			if err := c.addWrite(r.Path, true, r.Recursive, false); err != nil {
+			if err := c.addWrite(r.Path, true, r.Recursive, false, originPolicy); err != nil {
 				return nil, err
 			}
 		case EffectDeny:
-			if err := c.addWrite(r.Path, false, r.Recursive, false); err != nil {
+			if err := c.addWrite(r.Path, false, r.Recursive, false, originPolicy); err != nil {
 				return nil, err
 			}
 		default:
@@ -421,7 +452,12 @@ func (c *Compiled) addExec(path string, optional bool) error {
 
 // addWrite 의 optional 은 「없으면 건너뛴다」 다. 기본 목록에만 쓴다 —
 // 컨테이너나 개발 기계에는 없는 경로가 있다.
-func (c *Compiled) addWrite(path string, allow, recursive, optional bool) error {
+//
+// from 은 이 규칙이 어디서 왔는지다. 같은 inode 가 두 번 들어오면 셋 중 하나다:
+// 정책이 기본값을 덮는다(설계대로 통과) · 정책이 자기보호를 덮으려 한다(거부) ·
+// 정책 안에서 허용과 금지가 부딪친다(거부). 앞의 두 경우를 구분하려면 출처가
+// 필요하다 — 전부 거부하면 §09 가 의도한 「기본값은 바닥」이 깨진다.
+func (c *Compiled) addWrite(path string, allow, recursive, optional bool, from writeOrigin) error {
 	if !filepath.IsAbs(path) {
 		return fmt.Errorf("%s: %w", path, ErrRelPath)
 	}
@@ -442,9 +478,53 @@ func (c *Compiled) addWrite(path string, allow, recursive, optional bool) error 
 	}
 
 	ref := bpfmap.FileRefFromStat(&st)
+
+	// 경로가 아니라 inode 로 본다. 심볼릭 링크·바인드 마운트·하드 링크면
+	// 경로는 달라도 커널 맵에서는 같은 키다.
+	for i, w := range c.Write {
+		if w.Ref != ref {
+			continue
+		}
+		prev := c.metaAt(i)
+		switch {
+		case prev.from == originSelfProtect && from == originPolicy:
+			return fmt.Errorf("쓰기 규칙 %s 가 자기보호 경로 %s 와 같은 inode 다: %w",
+				path, prev.path, ErrSelfProtectOverride)
+		case prev.from == originDefault && from != originDefault:
+			// 기본값은 바닥이다. 정책이 덮는 것이 설계다.
+			c.Write[i] = WriteEntry{Ref: ref, Allow: allow, Recursive: recursive}
+			c.setMeta(i, writeMeta{path: path, from: from})
+			return nil
+		case w.Allow == allow && w.Recursive == recursive:
+			// 완전히 같은 규칙이다. 경로만 둘일 뿐이라 넣을 것이 없다.
+			return nil
+		default:
+			return fmt.Errorf("쓰기 규칙 %s 가 %s 와 같은 inode 인데 결과가 다르다: %w",
+				path, prev.path, ErrWriteConflict)
+		}
+	}
+
 	c.record(path, ref, KindWrite)
 	c.Write = append(c.Write, WriteEntry{Ref: ref, Allow: allow, Recursive: recursive})
+	c.writeMeta = append(c.writeMeta, writeMeta{path: path, from: from})
 	return nil
+}
+
+// metaAt · setMeta 는 Compiled 를 직접 만든 코드(테스트 등)에서 writeMeta 가
+// 비어 있어도 터지지 않게 한다. 비어 있으면 「영장이 쓴 규칙」으로 본다 —
+// 그쪽이 더 엄격해서, 모르는 출처를 기본값으로 오해해 조용히 덮는 일이 없다.
+func (c *Compiled) metaAt(i int) writeMeta {
+	if i < len(c.writeMeta) {
+		return c.writeMeta[i]
+	}
+	return writeMeta{from: originPolicy}
+}
+
+func (c *Compiled) setMeta(i int, m writeMeta) {
+	for len(c.writeMeta) <= i {
+		c.writeMeta = append(c.writeMeta, writeMeta{from: originPolicy})
+	}
+	c.writeMeta[i] = m
 }
 
 func checkCIDR(cidr string) error {
