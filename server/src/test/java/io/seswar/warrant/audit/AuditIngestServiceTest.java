@@ -7,6 +7,7 @@ import io.seswar.warrant.audit.store.EventGap;
 import io.seswar.warrant.audit.store.UnwarrantedSession;
 import io.seswar.warrant.audit.store.Verdict;
 import io.seswar.warrant.audit.store.WarrantedSession;
+import io.seswar.warrant.audit.store.WriteAggregate;
 import io.seswar.warrant.audit.AuditIngestService.Batch;
 import io.seswar.warrant.audit.AuditIngestService.Result;
 import io.seswar.warrant.node.Node;
@@ -147,6 +148,72 @@ class AuditIngestServiceTest {
                 .containsExactly(false, true);
         assertThat(jdbc.queryForObject("select reason from ssh_session where warranted", String.class)).isNull();
         assertThat(jdbc.queryForObject("select warrant_id from ssh_session where not warranted", Long.class)).isZero();
+    }
+
+    private static final long MINUTE_NS = 60_000_000_000L;
+
+    private Batch writes(WriteAggregate... rows) {
+        return new Batch(List.of(), List.of(), List.of(), List.of(), List.of(rows));
+    }
+
+    private WriteAggregate write(long warrantId, long count) {
+        return new WriteAggregate(nodeId, warrantId, T, MINUTE_NS, count);
+    }
+
+    private long allowed(long warrantId) {
+        return jdbc.queryForObject("select allowed_count from write_aggregate where warrant_id = ?", Long.class, warrantId);
+    }
+
+    @Test
+    void 쓰기_허용_집계가_영장_막대별로_저장된다() {
+        ingest.ingest(nodeId, writes(write(9, 12), write(10, 3)));
+
+        assertThat(count("write_aggregate")).isEqualTo(2);
+        assertThat(allowed(9)).isEqualTo(12);
+        assertThat(jdbc.queryForObject("select bucket_ns from write_aggregate where warrant_id = 9", Long.class))
+                .isEqualTo(MINUTE_NS);
+    }
+
+    @Test
+    void 같은_쓰기_집계가_다시_와도_건수가_부풀지_않는다() {
+        ingest.ingest(nodeId, writes(write(9, 12)));
+        ingest.ingest(nodeId, writes(write(9, 12)));  // 재전송
+
+        assertThat(count("write_aggregate")).isEqualTo(1);
+        assertThat(allowed(9)).isEqualTo(12);
+    }
+
+    @Test
+    void 막대가_닫히기_전_중간값이_와도_큰_값이_남는다() {
+        ingest.ingest(nodeId, writes(write(9, 5)));
+        ingest.ingest(nodeId, writes(write(9, 12)));
+        ingest.ingest(nodeId, writes(write(9, 5)));  // 옛 배치가 늦게 재전송됐다 — 줄어들면 안 된다
+
+        assertThat(allowed(9)).isEqualTo(12);
+    }
+
+    @Test
+    void 한_배치_안에_같은_칸이_두_번_있어도_큰_값_하나로_저장된다() {
+        // pgjdbc 가 다중 행 INSERT 로 묶으면 같은 행을 두 번 고치는 ON CONFLICT 는 PostgreSQL 이 거부한다
+        ingest.ingest(nodeId, writes(write(9, 5), write(9, 12), write(9, 7)));
+
+        assertThat(count("write_aggregate")).isEqualTo(1);
+        assertThat(allowed(9)).isEqualTo(12);
+    }
+
+    @Test
+    void 다른_막대나_다른_노드면_다른_칸이다() {
+        ingest.ingest(nodeId, writes(write(9, 5),
+                new WriteAggregate(nodeId, 9, T.plusSeconds(60), MINUTE_NS, 4)));
+
+        assertThat(count("write_aggregate")).isEqualTo(2);
+    }
+
+    @Test
+    void 남의_노드_쓰기_집계가_섞인_배치는_거부된다() {
+        Batch mixed = writes(new WriteAggregate(UUID.randomUUID(), 9, T, MINUTE_NS, 1));
+        assertThatThrownBy(() -> ingest.ingest(nodeId, mixed)).isInstanceOf(IllegalArgumentException.class);
+        assertThat(count("write_aggregate")).isZero();
     }
 
     // 감사 기록은 엔티티가 아니라 JDBC 로 넣는다(AuditIngestService.INSERT_EVENT). 칸을 하나 빠뜨리면 조용히 비어 들어간다.

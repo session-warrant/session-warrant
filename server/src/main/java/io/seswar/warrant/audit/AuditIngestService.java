@@ -9,6 +9,7 @@ import io.seswar.warrant.audit.store.UnwarrantedSession;
 import io.seswar.warrant.audit.store.UnwarrantedSessionRepository;
 import io.seswar.warrant.audit.store.WarrantedSession;
 import io.seswar.warrant.audit.store.WarrantedSessionRepository;
+import io.seswar.warrant.audit.store.WriteAggregate;
 import io.seswar.warrant.audit.store.AuditEvent;
 import io.seswar.warrant.audit.store.EventGap;
 import io.seswar.warrant.audit.store.UnwarrantedSession;
@@ -31,7 +32,9 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.ToLongFunction;
@@ -64,6 +67,15 @@ public class AuditIngestService {
                 argv_truncated, destination, hook, comm)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""";
 
+    // allowed_count is the bucket's running total, so a resend or a later report of the same bucket keeps the
+    // larger value. Adding them up would let a resend inflate the count.
+    static final String UPSERT_WRITE_AGGREGATE = """
+            INSERT INTO write_aggregate (node_id, warrant_id, bucket_start, bucket_ns, allowed_count)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT (node_id, warrant_id, bucket_start, bucket_ns) DO UPDATE
+                SET allowed_count = EXCLUDED.allowed_count, updated_at = now()
+                WHERE write_aggregate.allowed_count < EXCLUDED.allowed_count""";
+
     private static final VerdictConverter VERDICT = new VerdictConverter();
     private static final TagSourceConverter TAG_SOURCE = new TagSourceConverter();
     private static final OriginConverter ORIGIN = new OriginConverter();
@@ -71,16 +83,22 @@ public class AuditIngestService {
 
 
     public record Batch(List<AuditEvent> events, List<EventGap> gaps, List<UnwarrantedSession> unwarrantedSessions,
-                        List<WarrantedSession> warrantedSessions) {
+                        List<WarrantedSession> warrantedSessions, List<WriteAggregate> writeAggregates) {
         public Batch {
             events = List.copyOf(events);
             gaps = List.copyOf(gaps);
             unwarrantedSessions = List.copyOf(unwarrantedSessions);
             warrantedSessions = List.copyOf(warrantedSessions);
+            writeAggregates = List.copyOf(writeAggregates);
+        }
+
+        public Batch(List<AuditEvent> events, List<EventGap> gaps, List<UnwarrantedSession> unwarrantedSessions,
+                     List<WarrantedSession> warrantedSessions) {
+            this(events, gaps, unwarrantedSessions, warrantedSessions, List.of());
         }
 
         public Batch(List<AuditEvent> events, List<EventGap> gaps, List<UnwarrantedSession> unwarrantedSessions) {
-            this(events, gaps, unwarrantedSessions, List.of());
+            this(events, gaps, unwarrantedSessions, List.of(), List.of());
         }
     }
 
@@ -123,6 +141,7 @@ public class AuditIngestService {
         gaps.saveAllAndFlush(newGaps);
         unwarranted.saveAllAndFlush(newSessions);
         warranted.saveAllAndFlush(newWarranted);
+        upsertWriteAggregates(batch.writeAggregates());
         Result result = new Result(newEvents.size(), newGaps.size(), newSessions.size(), newWarranted.size());
         if (!result.empty()) {
             publisher.publishEvent(result);
@@ -140,12 +159,27 @@ public class AuditIngestService {
     }
 
     /**
-     * 허용된 쓰기는 전건이 아니라 집계로 받는다(§14).
-     * 차단은 언제나 전건 기록이지만, 허용 쓰기까지 다 남기면 ringbuf 가 넘친다.
+     * 허용된 쓰기는 전건이 아니라 집계로 받는다(§14). 차단은 언제나 전건 기록이지만, 허용 쓰기까지 다 남기면 ringbuf 가 넘친다.
+     * 같은 칸(노드 · 영장 · 막대)은 큰 값만 남는다. 한 배치 안의 같은 칸은 미리 하나로 합친다 — pgjdbc 가 배치를
+     * 다중 행 INSERT 하나로 묶으면 PostgreSQL 은 한 문장이 같은 행을 두 번 고치는 ON CONFLICT 를 거부한다.
+     * 화면 알림({@link Result})에는 세지 않는다 — 바뀐 행 수를 묶인 배치에서는 알 수 없다.
      */
-    public void ingestWriteAggregate(UUID nodeId, UUID warrantId, Instant bucket, long count) {
-
-        throw new UnsupportedOperationException("미구현");
+    private void upsertWriteAggregates(List<WriteAggregate> rows) {
+        if (rows.isEmpty()) {
+            return;
+        }
+        Map<WriteAggregate.Key, WriteAggregate> merged = new LinkedHashMap<>();
+        for (WriteAggregate a : rows) {
+            merged.merge(a.key(), a, (x, y) -> x.allowedCount() >= y.allowedCount() ? x : y);
+        }
+        List<WriteAggregate> unique = List.copyOf(merged.values());
+        jdbc.batchUpdate(UPSERT_WRITE_AGGREGATE, unique, unique.size(), (ps, a) -> {
+            ps.setObject(1, a.nodeId());
+            ps.setLong(2, a.warrantId());
+            ps.setObject(3, a.bucketStart().atOffset(ZoneOffset.UTC));
+            ps.setLong(4, a.bucketNs());
+            ps.setLong(5, a.allowedCount());
+        });
     }
 
     // Called by ingest. Plain JDBC instead of saveAll: Hibernate's per-row work was most of INSERT time and a
@@ -208,7 +242,8 @@ public class AuditIngestService {
         boolean ok = batch.events().stream().allMatch(x -> nodeId.equals(x.getNodeId()))
                 && batch.gaps().stream().allMatch(x -> nodeId.equals(x.getNodeId()))
                 && batch.unwarrantedSessions().stream().allMatch(x -> nodeId.equals(x.getNodeId()))
-                && batch.warrantedSessions().stream().allMatch(x -> nodeId.equals(x.getNodeId()));
+                && batch.warrantedSessions().stream().allMatch(x -> nodeId.equals(x.getNodeId()))
+                && batch.writeAggregates().stream().allMatch(x -> nodeId.equals(x.nodeId()));
         if (!ok) {
             throw new IllegalArgumentException("batch contains rows for a node other than " + nodeId);
         }

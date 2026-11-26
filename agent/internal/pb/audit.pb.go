@@ -2036,7 +2036,10 @@ func (x *ShellCommandLineEvent) GetLine() string {
 	return ""
 }
 
-// 허용된 쓰기의 집계
+// 허용된 쓰기의 집계. 차단은 전건 AuditEvent 로, 허용은 영장 · 막대별 건수로만 보낸다(§14).
+// allowed_count 는 그 막대의 누적 건수다 — 증분이 아니다. 서버는 (노드, warrant_id, bucket_start, bucket_ns)
+// 가 같으면 큰 값을 남긴다. 그래서 재전송해도 부풀지 않고, 막대가 닫히기 전에 중간값을 보내도 된다.
+// warrant_id 0 · bucket_ns 0 · bucket_start 0 은 서버가 거부한다(스트림이 끊기고 ack 되지 않는다).
 type WriteAggregate struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	WarrantId         uint64                 `protobuf:"fixed64,1,opt,name=warrant_id,json=warrantId,proto3" json:"warrant_id,omitempty"`

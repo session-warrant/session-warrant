@@ -262,17 +262,43 @@ class AuditProtoMapperTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
-    @Test
-    void 쓰기_허용_횟수가_실려_오면_아직_저장할_곳이_없어_거부된다() {
-        // 받고 넘어가면 ack 되어 노드가 지운다. 저장할 테이블이 생기기 전까지는 끊어서 드러낸다
-        AuditBatch batch = AuditBatch.newBuilder().setSeqEpoch(EPOCH).setLastNodeSeq(1)
-                .addEvents(unwarranted(1))
-                .addWriteAggregates(WriteAggregate.newBuilder()
-                        .setWarrantId(7).setBucketStartUnixNs(T_NS).setBucketNs(60_000_000_000L).setAllowedCount(12))
-                .build();
+    private static AuditBatch withWrites(WriteAggregate.Builder... writes) {
+        AuditBatch.Builder b = AuditBatch.newBuilder().setSeqEpoch(EPOCH).setLastNodeSeq(1).addEvents(unwarranted(1));
+        for (WriteAggregate.Builder w : writes) {
+            b.addWriteAggregates(w);
+        }
+        return b.build();
+    }
 
-        assertThatThrownBy(() -> AuditProtoMapper.toBatch(NODE, batch))
+    private static WriteAggregate.Builder write() {
+        return WriteAggregate.newBuilder()
+                .setWarrantId(7).setBucketStartUnixNs(T_NS).setBucketNs(60_000_000_000L).setAllowedCount(12);
+    }
+
+    @Test
+    void 쓰기_허용_집계는_노드_영장_막대_건수로_바뀐다() {
+        Batch b = AuditProtoMapper.toBatch(NODE, withWrites(write()));
+
+        assertThat(b.writeAggregates()).containsExactly(
+                new io.seswar.warrant.audit.store.WriteAggregate(NODE, 7, T, 60_000_000_000L, 12));
+        assertThat(b.events()).hasSize(1);  // 같은 배치의 이벤트는 그대로
+    }
+
+    @Test
+    void 영장_번호가_없는_쓰기_집계는_거부된다() {
+        assertThatThrownBy(() -> AuditProtoMapper.toBatch(NODE, withWrites(write().setWarrantId(0))))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("write_aggregates");
+                .hasMessageContaining("warrant_id");
+    }
+
+    @Test
+    void 막대_폭이나_시작이_비었거나_건수가_u63을_넘으면_거부된다() {
+        assertThatThrownBy(() -> AuditProtoMapper.toBatch(NODE, withWrites(write().setBucketNs(0))))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("bucket_ns");
+        assertThatThrownBy(() -> AuditProtoMapper.toBatch(NODE, withWrites(write().setBucketStartUnixNs(0))))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("bucket_start");
+        // fixed64 를 Java 가 부호 있는 long 으로 읽는다. 음수로 저장되면 집계가 거꾸로 간다
+        assertThatThrownBy(() -> AuditProtoMapper.toBatch(NODE, withWrites(write().setAllowedCount(-1))))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("18446744073709551615");
     }
 }

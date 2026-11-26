@@ -11,6 +11,7 @@ import io.seswar.warrant.audit.store.SshSessionQuery;
 import io.seswar.warrant.audit.store.UnwarrantedSession;
 import io.seswar.warrant.audit.store.UnwarrantedSessionRepository;
 import io.seswar.warrant.audit.store.Verdict;
+import io.seswar.warrant.audit.store.WriteAggregateQuery;
 import io.seswar.warrant.audit.store.EventGap;
 import io.seswar.warrant.audit.store.UnwarrantedSession;
 import io.seswar.warrant.node.Node;
@@ -54,6 +55,7 @@ public class AuditQueryController {
     private final AuditStream stream;
     private final AuditSummaryQuery summaries;
     private final SshSessionQuery sshSessions;
+    private final WriteAggregateQuery writeAggregates;
 
     static final int MAX_EVENTS = 5000;
     /** 이어 받을 시작점. 다음 요청의 {@code after} 로 그대로 돌려보낸다. */
@@ -208,6 +210,30 @@ public class AuditQueryController {
         return sshSessions.sessions(from, to, nodeIds(node), max).stream()
                 .map(r -> new SessionView(r.observedAt(), host.get(r.nodeId()), r.warranted(), r.warrantId(),
                         r.mode(), r.reason(), r.loginAccount(), r.sshKeyFingerprint(), r.sourceAddress(), r.cgroupId()))
+                .toList();
+    }
+
+    /** 허용된 쓰기 집계 한 칸. {@code allowedCount} 는 그 막대의 누적 건수, {@code bucketNs} 는 막대 폭. */
+    public record WriteView(String node, long warrantId, Instant bucketStart, long bucketNs, long allowedCount) {
+    }
+
+    /**
+     * 허용된 쓰기 집계(§14) — 영장 · 막대별 건수. 차단된 쓰기는 여기가 아니라 {@code /events} 에 전건이 있다.
+     * 기본은 최근 24시간, 막대 시작 최신 순. {@code warrant} 는 커널 영장 번호(영장 응답의 {@code warrantId}).
+     */
+    @GetMapping("/writes")
+    public List<WriteView> writes(@RequestParam(required = false) Instant since,
+                                  @RequestParam(required = false) Instant until,
+                                  @RequestParam(required = false) String node,
+                                  @RequestParam(required = false) Long warrant,
+                                  @RequestParam(defaultValue = "1000") int limit) {
+        int max = Math.min(Math.max(limit, 1), 5000);
+        Instant from = since != null ? since : Instant.now().minus(Duration.ofHours(24));
+        Instant to = until != null ? until : Instant.now().plus(Duration.ofDays(1));
+        Map<UUID, String> host = hostnames();
+        return writeAggregates.rows(from, to, nodeIds(node), warrant, max).stream()
+                .map(a -> new WriteView(host.get(a.nodeId()), a.warrantId(), a.bucketStart(), a.bucketNs(),
+                        a.allowedCount()))
                 .toList();
     }
 
