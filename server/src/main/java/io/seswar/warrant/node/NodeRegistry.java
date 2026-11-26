@@ -66,6 +66,10 @@ public class NodeRegistry {
         }
 
         Node node = found.get();
+        // Last line of defence: the gRPC layer refuses revoked identities before getting here.
+        if (node.isRevoked()) {
+            throw new NodeRevokedException(identity);
+        }
         boolean epochChanged = !Objects.equals(node.getCurrentSeqEpoch(), report.seqEpoch());
         if (epochChanged) {
             log.warn("node {} seq_epoch changed {} -> {} (local store was reset)",

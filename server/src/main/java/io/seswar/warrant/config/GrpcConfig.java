@@ -8,6 +8,7 @@ import io.grpc.ServerCallHandler;
 import io.grpc.ServerInterceptor;
 import io.grpc.Status;
 import io.seswar.warrant.node.NodePeer;
+import io.seswar.warrant.node.NodeRevocationService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -27,7 +28,8 @@ import java.security.cert.X509Certificate;
  * 인증서는 핸드셰이크에서 끊긴다. 여기서는 그 인증서를 {@link NodePeer} 로 호출에 싣고, 노드가 말하는 호스트 이름이
  * 인증서와 같은지는 각 서비스가 본다. 프로필 없이 띄우면 평문이고 노드는 호스트 이름으로 식별된다(로컬 개발 전용).
  *
- * <p>남은 것: 인증서 폐기(CRL), keepalive(지금은 application.yml), 최대 메시지 크기.
+ * <p>인증서 폐기는 CRL 이 아니라 서버의 노드 폐기({@link NodeRevocationService})다 — 폐기된 지문의 호출은 여기서 끊는다.
+ * 남은 것: keepalive(지금은 application.yml), 최대 메시지 크기.
  */
 @Configuration
 public class GrpcConfig {
@@ -46,7 +48,8 @@ public class GrpcConfig {
      */
     @Bean
     @GlobalServerInterceptor
-    ServerInterceptor nodeCertificate(@Value("${warrant.node-tls.required:false}") boolean required) {
+    ServerInterceptor nodeCertificate(@Value("${warrant.node-tls.required:false}") boolean required,
+                                      NodeRevocationService revocations) {
         return new ServerInterceptor() {
             @Override
             public <Q, R> ServerCall.Listener<Q> interceptCall(ServerCall<Q, R> call, Metadata headers, ServerCallHandler<Q, R> next) {
@@ -57,6 +60,11 @@ public class GrpcConfig {
                         return new ServerCall.Listener<>() { };
                     }
                     return next.startCall(call, headers);
+                }
+                // Every RPC, not only the streams: RequestExtension has no hostname of its own to check.
+                if (revocations.isRevoked(peer.identity())) {
+                    call.close(Status.PERMISSION_DENIED.withDescription("node certificate is revoked"), new Metadata());
+                    return new ServerCall.Listener<>() { };
                 }
                 return Contexts.interceptCall(peer.attach(io.grpc.Context.current()), call, headers, next);
             }

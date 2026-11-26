@@ -3,7 +3,9 @@ package io.seswar.warrant.warrant.push;
 import io.grpc.Status;
 import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
+import io.seswar.warrant.node.NodeConnections;
 import io.seswar.warrant.node.NodePeer;
+import io.seswar.warrant.node.NodeRevocationService;
 import io.seswar.warrant.proto.AgentProtos.ExtensionAck;
 import io.seswar.warrant.proto.AgentProtos.ExtensionRequest;
 import io.seswar.warrant.warrant.WarrantExtensionService;
@@ -36,6 +38,8 @@ public class WarrantPushGrpcService extends WarrantPushServiceGrpc.WarrantPushSe
     private final WarrantPushService push;
     private final NodeStreamRegistry streams;
     private final WarrantExtensionService extensions;
+    private final NodeRevocationService revocations;
+    private final NodeConnections connections;
 
     @Override
     public void subscribe(SubscribeRequest req, StreamObserver<PushMessage> out) {
@@ -50,9 +54,27 @@ public class WarrantPushGrpcService extends WarrantPushServiceGrpc.WarrantPushSe
                     .withDescription("certificate is for " + peer.hostname() + ", NodeHello says " + host).asRuntimeException());
             return;
         }
+        String identity = peer == null ? "dev:" + host : peer.identity();
         // Attach before reading the active set, so a warrant issued in between is not missed.
+        // Attach before the revocation check too, so a revocation committing in between still closes this stream.
         streams.attach(host, out);
-        ((ServerCallStreamObserver<PushMessage>) out).setOnCancelHandler(() -> streams.detach(host, out));
+        NodeConnections.Closer closer = why -> {
+            streams.detach(host, out);
+            synchronized (out) {
+                out.onError(Status.PERMISSION_DENIED.withDescription(why).asRuntimeException());
+            }
+        };
+        connections.attach(identity, closer);
+        ((ServerCallStreamObserver<PushMessage>) out).setOnCancelHandler(() -> {
+            streams.detach(host, out);
+            connections.detach(identity, closer);
+        });
+        if (revocations.isRevoked(identity)) {
+            connections.detach(identity, closer);
+            streams.detach(host, out);
+            out.onError(revoked(identity));
+            return;
+        }
 
         List<PushMessage> initial = push.activeSet(host);
         synchronized (out) {
@@ -112,20 +134,27 @@ public class WarrantPushGrpcService extends WarrantPushServiceGrpc.WarrantPushSe
     // Same rule as subscribe and the audit stream: with a certificate the node is that certificate and must use its
     // name; in plaintext (local development) it is its reported hostname. Answers the call with an error and
     // returns null when the caller may not speak for that host.
-    private static String identify(String host, StreamObserver<?> out) {
+    // A revoked identity is refused here too, so plaintext (dev) identities can be revoked and tested.
+    private String identify(String host, StreamObserver<?> out) {
         if (host.isBlank()) {
             out.onError(Status.INVALID_ARGUMENT.withDescription("hostname is empty").asRuntimeException());
             return null;
         }
         NodePeer peer = NodePeer.current();
-        if (peer == null) {
-            return "dev:" + host;
-        }
-        if (!host.equals(peer.hostname())) {
+        if (peer != null && !host.equals(peer.hostname())) {
             out.onError(Status.PERMISSION_DENIED
                     .withDescription("certificate is for " + peer.hostname() + ", request says " + host).asRuntimeException());
             return null;
         }
-        return peer.identity();
+        String identity = peer == null ? "dev:" + host : peer.identity();
+        if (revocations.isRevoked(identity)) {
+            out.onError(revoked(identity));
+            return null;
+        }
+        return identity;
+    }
+
+    private static RuntimeException revoked(String identity) {
+        return Status.PERMISSION_DENIED.withDescription("node identity " + identity + " is revoked").asRuntimeException();
     }
 }
