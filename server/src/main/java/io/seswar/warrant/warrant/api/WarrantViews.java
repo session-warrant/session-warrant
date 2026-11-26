@@ -26,7 +26,8 @@ public class WarrantViews {
     private final WarrantLineageRepository lineage;
     private final SubjectRepository subjects;
 
-    public record LineView(LineageType type, Instant at, String actor, String reason, Long deltaSeconds) {
+    /** basis: 사람 없이 내린 결정(자동 연장 · warrantd 의 요청)의 근거. */
+    public record LineView(LineageType type, Instant at, String actor, String reason, String basis, Long deltaSeconds) {
     }
 
     public record WarrantView(UUID id, long warrantId, String displayId, int revision, WarrantState state,
@@ -50,6 +51,6 @@ public class WarrantViews {
                 w.getTargetHosts().stream().sorted().toList(), w.getPolicyId(), w.getReason(), w.getMode(),
                 w.getOnExpiry(), w.getIssuedAt(), w.getExpiresAt(), w.isRevoked(), duration,
                 lines.stream().map(l -> new LineView(l.getType(), l.getOccurredAt(), who.get(l.getActorId()),
-                        l.getReason(), l.getDeltaSeconds())).toList());
+                        l.getReason(), l.getBasis(), l.getDeltaSeconds())).toList());
     }
 }

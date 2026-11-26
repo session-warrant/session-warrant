@@ -1,11 +1,14 @@
 package io.seswar.warrant.warrant.store;
 
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -30,4 +33,13 @@ public interface WarrantRepository extends JpaRepository<Warrant, UUID> {
     List<Warrant> findByStateOrderByWarrantIdAsc(WarrantState state);
 
     List<Warrant> findAllByOrderByIssuedAtDesc();
+
+    // Called by WarrantExtensionService. The row lock makes two approvals of one extension request, or an
+    // extension racing a revocation, take turns instead of both reading the same open request.
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    Optional<Warrant> findLockedById(UUID id);
+
+    // Called by WarrantExtensionService for a node's request, which names the kernel id.
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    Optional<Warrant> findLockedByWarrantId(long warrantId);
 }

@@ -9,6 +9,7 @@ import io.seswar.warrant.identity.CurrentSubject;
 import io.seswar.warrant.warrant.api.WarrantViews.WarrantView;
 import io.seswar.warrant.warrant.push.WarrantPushService;
 import org.springframework.security.core.Authentication;
+import io.seswar.warrant.warrant.WarrantExtensionService;
 import io.seswar.warrant.warrant.WarrantRevocationService;
 import io.seswar.warrant.warrant.store.OnExpiry;
 import io.seswar.warrant.warrant.store.Warrant;
@@ -52,6 +53,7 @@ public class WarrantController {
 
     private final WarrantIssuanceService issuance;
     private final WarrantRevocationService revocation;
+    private final WarrantExtensionService extensions;
     private final WarrantPushService push;
     private final WarrantRepository warrants;
     private final WarrantViews views;
@@ -76,6 +78,20 @@ public class WarrantController {
                 body.mode() == null ? WarrantMode.OBSERVE : body.mode(),
                 body.onExpiry(), Duration.ZERO));
         return views.of(w);
+    }
+
+    public record ExtensionRequest(@NotNull Duration duration, @NotBlank String reason) {
+    }
+
+    /**
+     * 연장 요청. 영장 주체 본인만. 승인 큐로 가고, 승인되면 만료만 미룬 새 revision 이 push 된다 — 세션은 끊기지 않는다.
+     * 열린 요청이 이미 있거나 누적 상한(원 기간의 3배)을 넘으면 409.
+     */
+    @PostMapping("/{id}/extensions")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public WarrantView requestExtension(@PathVariable UUID id, @Valid @RequestBody ExtensionRequest body,
+                                        Authentication auth) {
+        return views.of(extensions.request(id, body.duration(), current.require(auth).getId(), body.reason()));
     }
 
     @GetMapping

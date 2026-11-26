@@ -71,6 +71,12 @@ public class WarrantLineage {
         return l;
     }
 
+    /** 자동 결정(사람이 없는 줄)의 근거를 붙인다. 저장 전에만 부른다 — 계보는 저장 뒤 고치지 않는다. */
+    public WarrantLineage basedOn(String basis) {
+        this.basis = basis;
+        return this;
+    }
+
     public Duration delta() {
         return deltaSeconds == null ? null : Duration.ofSeconds(deltaSeconds);
     }

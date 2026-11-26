@@ -29,8 +29,8 @@ import java.util.UUID;
  * <b>자기 승인 금지는 여기서 집행한다</b> — 화면의 비활성 버튼은 집행이 아니다.
  * 서버는 알림을 보내지 않는다 — "대기 중인 요청" 경보는 Grafana 가 DB 를 직접 읽어 건다.
  *
- * <p>아직 없는 것: 연장 요청, 승인자 자격(팀 · 상급자), 화면에서 본 요청인지 확인(requestLineageId).
- * 같은 신청을 두 번 승인하면 상태가 이미 ISSUED 라 409 가 된다.
+ * <p>연장 요청의 결정은 WarrantExtensionService 가 한다 — 같은 큐 · 같은 엔드포인트를 ApprovalController 가 나눈다.
+ * 아직 없는 것: 승인자 자격(팀 · 상급자). 같은 신청을 두 번 승인하면 상태가 이미 ISSUED 라 409 가 된다.
  */
 @Service
 @RequiredArgsConstructor
@@ -43,7 +43,7 @@ public class ApprovalService {
 
     @ResponseStatus(HttpStatus.FORBIDDEN)
     public static class SelfApprovalException extends RuntimeException {
-        SelfApprovalException(String displayId) {
+        public SelfApprovalException(String displayId) {
             super("cannot decide your own request " + displayId);
         }
     }

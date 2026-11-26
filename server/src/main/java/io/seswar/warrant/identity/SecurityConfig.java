@@ -61,7 +61,7 @@ public class SecurityConfig {
      */
     private static void rules(AuthorizeHttpRequestsConfigurer<HttpSecurity>.AuthorizationManagerRequestMatcherRegistry auth) {
         auth.requestMatchers("/api/auth/login", "/api/auth/config", "/api/signing-key").permitAll()
-                .requestMatchers(HttpMethod.POST, "/api/warrants").hasRole("REQUESTER")
+                .requestMatchers(HttpMethod.POST, "/api/warrants", "/api/warrants/*/extensions").hasRole("REQUESTER")
                 .requestMatchers("/api/approvals/**").hasRole("APPROVER")
                 .requestMatchers(HttpMethod.DELETE, "/api/warrants/**").hasRole("APPROVER")
                 .requestMatchers(HttpMethod.POST, "/api/policies", "/api/subjects").hasAnyRole("REQUESTER", "APPROVER")

@@ -3,7 +3,8 @@
 Session Warrant 의 컨트롤 플레인. 영장 발급 · 승인 · 서명 · push · 취소 · 감사 조회를 담당한다.
 
 **현재 상태:** 감사 수집 경로와 **영장 신청 → 다른 사람의 승인 → 서명 · push → 회수** 가 돈다(계보 포함).
-연장 · 승인자 자격(팀 · 상급자)은 아직 골격(시그니처와 의사코드 주석)이다.
+**연장**(2026-11-24)도 돈다 — 콘솔 요청 · warrantd 의 gRPC 요청이 같은 승인 큐로 가고, 승인되면 만료만 미룬 새 revision 이 push 된다.
+승인자 자격(팀 · 상급자)은 아직 없다 — 지금은 APPROVER 역할 + 자기 승인 금지뿐이다.
 정책 lint 는 돈다 — ERROR 는 정책 등록(`POST /api/policies`)과 영장 신청에서 400, WARN 은 정책 응답의 `warnings` 와 승인 큐의 `policyWarnings` 로 승인자에게 보인다. 규칙 목록은 `policy/PolicyLinter` 주석.
 설계 원본은 `docs/session-warrant-plan.html`(§ 번호) 과 `docs/session-warrant-tech-stack.html` 이다.
 
@@ -53,21 +54,21 @@ JPQL 의 `select new …` 는 클래스 전체 이름이 문자열에 들어간�
 ## 신청 · 승인 — 콘솔 자체 경로
 
 영장 신청과 승인은 **콘솔(웹)에서 한다.** 외부 메신저 연동은 두지 않는다 (2026-10-16 결정).
-신청 · 승인 · 반려는 동작한다(아래 「영장 발급」). 연장 요청과 `requestLineageId` 확인은 아직 골격이다.
+신청 · 승인 · 반려 · 연장이 동작한다(아래 「영장 발급」 · 「연장」).
 
 | 메서드 · 경로 | 누가 | 하는 일 |
 |---|---|---|
 | `POST /api/warrants` | REQUESTER | 발급 신청. lint ERROR 면 큐에 올리지도 않는다 |
 | `POST /api/warrants/{id}/extensions` | 영장 주체 | 연장 요청. warrantd 의 T-5분 자동 요청(gRPC `RequestExtension`)과 같은 큐로 간다 |
-| `GET /api/approvals?kind=` | APPROVER | 승인 큐 — 발급 대기 + 열린 연장 요청 |
+| `GET /api/approvals?kind=` | APPROVER | 승인 큐 — 발급 대기 + 열린 연장 요청. `kind=ISSUE` · `EXTENSION` 으로 거른다(없으면 둘 다). 연장 칸은 `extension.requestLineageId` 를 싣는다 |
 | `POST /api/approvals/{warrantId}/approve` | APPROVER | 발급 대기면 발급 · 서명 · push, 연장 요청이면 새 revision push |
 | `POST /api/approvals/{warrantId}/reject` | APPROVER | 반려. 사유 필수 |
 
 - **자기 승인 금지는 서버가 집행한다.** 승인자는 본문이 아니라 OIDC 로그인 주체에서 온다.
   요청자 == 승인자면 `ApprovalService` 가 거부하고, 연장 요청은 영장 주체 본인이 승인할 수 없다.
   콘솔의 비활성 버튼은 표시일 뿐이다.
-- **승인은 멱등이다.** 본문의 `requestLineageId` 가 지금 열린 요청과 다르면 409. 이중 클릭이나
-  두 승인자의 동시 클릭이 중복 발급이 되지 않는다.
+- **승인은 멱등이다.** 연장은 본문의 `requestLineageId` 가 지금 열린 요청과 다르면 409(없으면 확인하지 않는다) —
+  이중 클릭이나 두 승인자의 동시 클릭이 두 번 연장하지 않는다. 영장 행을 잠그고 결정한다. 발급은 상태가 이미 ISSUED 라 409.
 - **연장 요청은 계보 한 줄(`EXTENSION_REQUESTED`)이다.** 별도 테이블을 두지 않는다 — 영장당
   열린 요청은 하나뿐이고, 상태가 계보에서 파생된다는 원칙과 맞는다. 발급 반려는 `REJECTED`.
 - **CSRF 보호를 끄지 않는다.** 콘솔은 세션 쿠키로 붙으므로, 끄면 승인자가 연 다른 탭이 승인을 대신 보낼 수 있다.
@@ -90,6 +91,8 @@ POST /api/approvals/{id}/reject {reason}    REJECTED, 계보 REJECTED(승인자 
 DELETE /api/warrants/{id}                   ISSUED 만. revoked=true · revision+1 → 다시 서명 → push, 계보 REVOKED(회수한 사람)
 
 warrantd Subscribe → WarrantPushGrpcService 스트림 등록 → 그 호스트의 ISSUED 영장 전부 → ResyncComplete
+warrantd Heartbeat → 노드 lastSeenAt 갱신 → 그 호스트의 활성 영장 수로 답. 노드는 자기 맵과 다르면 다시 구독한다
+warrantd LookupActiveWarrant → 호스트 · 계정 · 키 지문 셋 다 맞는 활성 영장(캐시가 빈 노드용). 하나라도 비면 빈 응답
 ```
 
 | 메서드 · 경로 | 하는 일 |
@@ -148,6 +151,26 @@ curl -s -u "$ME" -H 'Content-Type: application/json' localhost:8080/api/warrants
 curl -s -u "$OK" -X POST localhost:8080/api/approvals/<id>/approve       # 다른 사람이 승인 → 서명 · push
 curl -s -u "$OK" -X DELETE localhost:8080/api/warrants/<id>
 ```
+
+
+## 연장
+
+```
+POST /api/warrants/{id}/extensions {duration, reason}   영장 주체만(아니면 403). 계보 EXTENSION_REQUESTED → 승인 큐
+warrantd RequestExtension {warrant_id, workload, ns}    인증서의 노드가 대상 호스트여야 한다. 0 이면 원 기간만큼
+    쓰기 규칙 없는 정책 · 자동 2회 · 총량 원 기간 2배 안   → AUTO_APPROVED: 바로 연장 · 서명 · push, 계보 AUTO_EXTENDED(근거)
+    그 밖                                             → PENDING_APPROVAL: 계보 EXTENSION_REQUESTED(근거 = 감지한 작업)
+POST /api/approvals/{id}/approve {requestLineageId}     다른 사람만. expiresAt += 요청 기간 · revision+1 → 다시 서명 → push, 계보 EXTENDED
+POST /api/approvals/{id}/reject {reason}                계보 EXTENSION_DENIED. revision 은 그대로
+```
+
+- **누적 상한은 예외가 없다.** 연장 총량이 원 기간의 3배(`warrant.extension.cumulative-cap-multiplier`)를 넘으면
+  연장이 아니라 새 신청이다 — REST 409, gRPC `CAP_EXCEEDED`. 승인할 때 한 번 더 잰다.
+- **끝났거나 회수된 영장은 연장하지 않는다.** 요청 뒤에 끝나면 승인도 409 이고 큐에서 빠진다.
+- **열린 요청은 영장당 하나.** 계보에서 센다 — 요청 수 > 결정(EXTENDED · EXTENSION_DENIED) 수면 열려 있다.
+  자동 승인은 요청 줄 없이 AUTO_EXTENDED 한 줄이다. 두 번째 요청은 409 · `DUPLICATE`.
+- **원 기간은 계보의 ISSUED(없으면 REQUESTED) 기간이다.** 지금의 expiresAt 은 연장으로 밀려 있다.
+- warrantd 가 T-5분에 요청을 보내는 건 `cmd/warrantd`(C) 의 몫이다. 클라이언트는 `upstream.RequestExtension`.
 
 ## 감사 수집 — 재전송 멱등
 
