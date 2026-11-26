@@ -16,6 +16,8 @@ import java.util.Set;
 /**
  * Keycloak 그룹 → 역할. 토큰의 {@code groups} claim(realm 의 group mapper 가 싣는다)을 읽는다.
  * 감사자는 발급 권한이 없다 — 감사자가 발급할 수 있으면 감사가 아니다.
+ *
+ * <p>그룹은 역할과 별개로 {@code GROUP_<이름>} 권한으로도 남긴다 — 정책별 승인 그룹(V7)이 그걸 본다.
  */
 public class KeycloakGroups {
 
@@ -24,13 +26,20 @@ public class KeycloakGroups {
             "warrant-approvers", "ROLE_APPROVER",
             "warrant-auditors", "ROLE_AUDITOR");
 
+    /** 그룹 권한의 접두사. {@code CurrentSubject.groups} 가 이걸 떼어 그룹 이름으로 되돌린다. */
+    public static final String GROUP_PREFIX = "GROUP_";
+
     public Collection<GrantedAuthority> forClaims(Map<String, Object> claims) {
         Set<GrantedAuthority> out = new HashSet<>();
         if (claims.get("groups") instanceof List<?> groups) {
             for (Object g : groups) {
-                String role = ROLE_OF.get(String.valueOf(g).replaceFirst("^/", ""));
+                String name = String.valueOf(g).replaceFirst("^/", "");
+                String role = ROLE_OF.get(name);
                 if (role != null) {
                     out.add(new SimpleGrantedAuthority(role));
+                }
+                if (!name.isBlank()) {
+                    out.add(new SimpleGrantedAuthority(GROUP_PREFIX + name));
                 }
             }
         }

@@ -30,7 +30,7 @@ public class PolicyController {
 
     // Boxed fields: Jackson 3 rejects a missing primitive, and every field but name may be left out.
     public record CreatePolicy(@NotBlank String name, Boolean inspectUdp, List<String> execRules,
-                               List<WriteRuleBody> writeRules, List<NetRuleBody> netRules) {
+                               List<WriteRuleBody> writeRules, List<NetRuleBody> netRules, String approverGroup) {
     }
 
     /** {@code effect} 는 반드시 적는다 — 빠뜨린 DENY 가 ALLOW 로 읽히면 안 된다. */
@@ -56,7 +56,7 @@ public class PolicyController {
     // Not the domain records: Jackson would call their is*() lint methods as properties.
     public record PolicyView(UUID id, int kernelPolicyId, String name, boolean inspectUdp,
                              List<String> execRules, List<WriteRuleBody> writeRules, List<NetRuleBody> netRules,
-                             List<PolicyLintFinding> warnings) {
+                             String approverGroup, List<PolicyLintFinding> warnings) {
         static PolicyView of(Policy p, List<PolicyLintFinding> warnings) {
             return new PolicyView(p.getId(), p.getKernelPolicyId(), p.getName(), p.isInspectUdp(),
                     p.getExecRules().stream().map(ExecRule::path).sorted().toList(),
@@ -64,7 +64,7 @@ public class PolicyController {
                             .map(r -> new WriteRuleBody(r.path(), r.recursive(), r.effect())).toList(),
                     p.getNetRules().stream().sorted(Comparator.comparing(NetRule::cidr))
                             .map(r -> new NetRuleBody(r.cidr(), r.port(), r.proto())).toList(),
-                    warnings);
+                    p.getApproverGroup(), warnings);
         }
     }
 
@@ -74,7 +74,8 @@ public class PolicyController {
         List<ExecRule> exec = orEmpty(body.execRules()).stream().map(ExecRule::new).toList();
         List<WriteRule> write = orEmpty(body.writeRules()).stream().map(WriteRuleBody::toRule).toList();
         List<NetRule> net = orEmpty(body.netRules()).stream().map(NetRuleBody::toRule).toList();
-        Policy policy = Policy.of(body.name(), Boolean.TRUE.equals(body.inspectUdp()), exec, write, net);
+        Policy policy = Policy.of(body.name(), Boolean.TRUE.equals(body.inspectUdp()), exec, write, net,
+                body.approverGroup());
         // Policies are created only here and never edited, so checking at creation covers every warrant.
         // WarrantIssuanceService.request checks again for rows stored before the linter existed.
         linter.assertNoErrors(policy);

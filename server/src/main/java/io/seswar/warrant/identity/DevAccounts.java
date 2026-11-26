@@ -11,7 +11,11 @@ import java.util.List;
 @ConfigurationProperties("warrant.dev")
 public record DevAccounts(List<Account> accounts) {
 
-    public record Account(String email, String password) {
+    /** {@code groups} 는 Keycloak 그룹 대역 — 정책별 승인 그룹(V7)을 dev 에서도 시험할 수 있게. 역할은 셋 다 받는다. */
+    public record Account(String email, String password, List<String> groups) {
+        public List<String> groups() {
+            return groups == null ? List.of() : groups;
+        }
     }
 
     public List<Account> accounts() {

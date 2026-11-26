@@ -86,15 +86,37 @@ public class Policy {
     @Column(name = "path", nullable = false)
     private Set<String> readWatchPaths = new HashSet<>();
 
+    /**
+     * 이 정책의 영장을 결정할 수 있는 Keycloak 그룹(V7). null 이면 승인 역할이 있는 다른 사람 누구나.
+     * 쓰기가 위험한 정책일수록 그 시스템을 아는 사람으로 좁힌다 — {@code ApproverEligibility} 가 집행한다.
+     */
+    private String approverGroup;
+
     // Called by PolicyController. A policy row is never edited afterwards; changes are a new row.
     public static Policy of(String name, boolean inspectUdp, Collection<ExecRule> exec,
                             Collection<WriteRule> write, Collection<NetRule> net) {
+        return of(name, inspectUdp, exec, write, net, null);
+    }
+
+    /** {@code approverGroup} 은 앞의 {@code /} 와 공백을 떼고 저장한다. 비었으면 null. */
+    public static Policy of(String name, boolean inspectUdp, Collection<ExecRule> exec,
+                            Collection<WriteRule> write, Collection<NetRule> net, String approverGroup) {
         Policy p = new Policy();
+        p.approverGroup = normalizeGroup(approverGroup);
         p.name = name;
         p.inspectUdp = inspectUdp;
         p.execRules = new HashSet<>(exec);
         p.writeRules = new HashSet<>(write);
         p.netRules = new HashSet<>(net);
         return p;
+    }
+
+    // Keycloak sends "/name" when the group mapper uses full paths and "name" otherwise.
+    public static String normalizeGroup(String group) {
+        if (group == null) {
+            return null;
+        }
+        String g = group.strip().replaceFirst("^/", "").strip();
+        return g.isEmpty() ? null : g;
     }
 }

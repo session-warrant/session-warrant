@@ -2,6 +2,7 @@
 # OIDC 가 붙기 전까지 콘솔 로그인 계정을 여기 적는다. 회원가입은 없다. 비밀번호는 BCrypt 해시만 둔다.
 #   해시 만들기: htpasswd -nbBC 10 "" '<비밀번호>' | cut -d: -f2
 # 로그인한 이메일과 principal 이 같은 주체(subject)가 콘솔의 「나」다.
+# 계정마다 groups: [warrant-approvers-db] 처럼 Keycloak 그룹 대역을 줄 수 있다 — 정책별 승인 그룹(approverGroup)을 시험할 때.
 warrant:
   dev:
     accounts:

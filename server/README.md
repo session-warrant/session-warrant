@@ -67,6 +67,12 @@ JPQL 의 `select new …` 는 클래스 전체 이름이 문자열에 들어간�
 - **자기 승인 금지는 서버가 집행한다.** 승인자는 본문이 아니라 OIDC 로그인 주체에서 온다.
   요청자 == 승인자면 `ApprovalService` 가 거부하고, 연장 요청은 영장 주체 본인이 승인할 수 없다.
   콘솔의 비활성 버튼은 표시일 뿐이다.
+- **승인자 자격 = 정책별 승인 그룹**(V7, `approval/ApproverEligibility`). 정책에 `approverGroup`(Keycloak 그룹 이름)을 적으면
+  그 정책의 영장은 **발급 · 연장, 승인 · 반려 모두** 그 그룹에 든 승인자만 결정한다 — 아니면 403. 비워 두면 예전처럼
+  승인 역할이 있는 다른 사람 누구나. 그룹은 로그인(토큰의 `groups` claim)에서 오고 본문에서 받지 않는다.
+  큐에서는 그룹 밖 승인자에게도 보이되 `approvable: false`, 칸마다 `approverGroup` 을 싣는다.
+  조직도(팀 · 상급자)가 아니라 「이 접근을 판단할 줄 아는 사람」으로 고른다 — 상급자 규칙은 두지 않았다.
+  정책 행은 불변이라 신청 뒤에 그룹이 바뀌지 않는다. 앞의 `/` 와 공백은 떼고 저장한다.
 - **승인은 멱등이다.** 연장은 본문의 `requestLineageId` 가 지금 열린 요청과 다르면 409(없으면 확인하지 않는다) —
   이중 클릭이나 두 승인자의 동시 클릭이 두 번 연장하지 않는다. 영장 행을 잠그고 결정한다. 발급은 상태가 이미 ISSUED 라 409.
 - **연장 요청은 계보 한 줄(`EXTENSION_REQUESTED`)이다.** 별도 테이블을 두지 않는다 — 영장당
@@ -98,9 +104,9 @@ warrantd LookupActiveWarrant → 호스트 · 계정 · 키 지문 셋 다 맞�
 | 메서드 · 경로 | 하는 일 |
 |---|---|
 | `POST /api/subjects` · `GET` | 주체(사람) 등록. `sshKeyFingerprints` 가 비면 영장이 어떤 세션에도 안 붙는다 |
-| `POST /api/policies` · `GET` | 정책 등록. 한 행 = 한 버전, 고치지 않는다. lint ERROR 면 400, WARN 은 `warnings` |
+| `POST /api/policies` · `GET` | 정책 등록. 한 행 = 한 버전, 고치지 않는다. lint ERROR 면 400, WARN 은 `warnings`. `approverGroup` 을 적으면 그 그룹만 이 정책의 영장을 결정한다 |
 | `POST /api/warrants` · `GET` · `GET /{id}` | 신청 · 목록 · 단건(계보 포함). `duration` 생략 시 `warrant.default-duration`(30분), `mode` 생략 시 OBSERVE |
-| `GET /api/approvals` | 승인 큐(REQUESTED). 본인 신청은 `approvable: false`, 정책 lint WARN 은 `policyWarnings` |
+| `GET /api/approvals` | 승인 큐(REQUESTED). 본인 신청 · 승인 그룹 밖이면 `approvable: false`, 정책 lint WARN 은 `policyWarnings`, 정책의 승인 그룹은 `approverGroup` |
 | `POST /api/approvals/{id}/approve` · `/reject` | 승인 · 반려(`{"reason": …}` 필수) |
 | `DELETE /api/warrants/{id}` | 회수 |
 | `GET /api/signing-key` | 노드에 심을 공개키 PEM. 헤더 `X-Key-Id` 가 파일 이름 |
@@ -119,11 +125,12 @@ warrantd LookupActiveWarrant → 호스트 · 계정 · 키 지문 셋 다 맞�
     Keycloak 은 `127.0.0.1:8180`, realm `warrant`(`deploy/keycloak/warrant-realm.json`), 클라이언트 `warrant-server`.
     사용자는 git 밖 `server/.cache/dev-accounts.txt`(`<이메일> <비밀번호> <그룹,그룹>`)에서 넣는다. 서버는 기동할 때 Keycloak 에 묻지 않는다.
   - **역할 = Keycloak 그룹** (`groups` claim): `warrant-requesters` 신청 · `warrant-approvers` 승인 · 반려 · 회수 · `warrant-auditors` 조회만.
-    자기 승인 금지는 역할과 별개로 서버가 막는다.
+    자기 승인 금지는 역할과 별개로 서버가 막는다. 모든 그룹은 역할과 따로 `GROUP_<이름>` 권한으로도 남는다 — 정책별 승인 그룹이
+    이걸 본다(예: `warrant-approvers` 와 `warrant-approvers-db` 둘 다 든 사람이 DB 정책을 승인한다). 그룹은 Keycloak 에서 만든다.
   - **「나」= `sub`.** 처음 보는 sub 면 주체를 만들고, 검증된 같은 이메일의 주체가 있으면 거기에 sub 를 잇는다(dev 시절 주체).
   - 로그아웃은 서버 세션과 Keycloak 세션을 둘 다 끝낸다(`GET /api/auth/config` 의 `logoutUrl`).
   - **`dev` 프로필** — Keycloak 없이 개발할 때. `application-dev.yml` 의 계정(이메일 + `{bcrypt}` 해시), 콘솔은 `POST /api/auth/login`,
-    curl 은 `-u <이메일>:<비밀번호>`(Basic). dev 계정은 역할을 전부 가진다. 해시: `htpasswd -nbBC 10 "" '<비밀번호>' | cut -d: -f2`.
+    curl 은 `-u <이메일>:<비밀번호>`(Basic). dev 계정은 역할을 전부 가지고, 계정의 `groups:` 목록이 Keycloak 그룹 대역이다. 해시: `htpasswd -nbBC 10 "" '<비밀번호>' | cut -d: -f2`.
 - 서명 키는 `warrant.signing.key-path`(기본 `.cache/signing.key`). 없으면 만들고 공개키를 `.pub` 로 옆에 둔다.
   **키를 지우면 새 키가 생긴다** — 노드는 그 뒤 push 를 전부 거부한다(`RESYNC SKIPPED`).
 - **노드 신원은 mTLS 클라이언트 인증서다**(`mtls` 프로필, 2026-11-14). `SPRING_PROFILES_ACTIVE=oidc,mtls` 로 띄우면 gRPC(:9090)가 TLS 가 되고

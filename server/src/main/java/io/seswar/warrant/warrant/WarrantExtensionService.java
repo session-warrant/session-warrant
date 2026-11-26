@@ -1,6 +1,8 @@
 package io.seswar.warrant.warrant;
 
 import io.seswar.warrant.approval.ApprovalService.SelfApprovalException;
+import io.seswar.warrant.approval.Approver;
+import io.seswar.warrant.approval.ApproverEligibility;
 import io.seswar.warrant.policy.Policy;
 import io.seswar.warrant.policy.PolicyRepository;
 import io.seswar.warrant.warrant.store.LineageType;
@@ -48,6 +50,7 @@ public class WarrantExtensionService {
     private final WarrantLineageRepository lineage;
     private final PolicyRepository policies;
     private final WarrantSealer sealer;
+    private final ApproverEligibility eligibility;
     private final Clock clock;
 
     // application.yml warrant.extension.* — the defaults here are the same values.
@@ -164,10 +167,11 @@ public class WarrantExtensionService {
      *                         두 승인자의 동시 클릭이 두 번 연장하지 않는다. null 이면 확인하지 않는다
      */
     @Transactional
-    public Warrant approve(UUID warrantId, UUID approverId, UUID requestLineageId) {
+    public Warrant approve(UUID warrantId, Approver approver, UUID requestLineageId) {
         Instant now = clock.instant();
+        UUID approverId = approver.id();
         Warrant w = locked(warrantId);
-        WarrantLineage open = decidable(w, approverId, requestLineageId);
+        WarrantLineage open = decidable(w, approver, requestLineageId);
         History h = history(w);
         Duration by = open.delta();
         // The cap is checked again: other extensions may have landed since the request.
@@ -181,13 +185,13 @@ public class WarrantExtensionService {
     }
 
     @Transactional
-    public Warrant deny(UUID warrantId, UUID approverId, String reason, UUID requestLineageId) {
+    public Warrant deny(UUID warrantId, Approver approver, String reason, UUID requestLineageId) {
         if (reason == null || reason.isBlank()) {
             throw new IllegalArgumentException("a rejection needs a reason");
         }
         Warrant w = locked(warrantId);
-        WarrantLineage open = decidable(w, approverId, requestLineageId);
-        lineage.save(WarrantLineage.of(w.getId(), LineageType.EXTENSION_DENIED, clock.instant(), approverId,
+        WarrantLineage open = decidable(w, approver, requestLineageId);
+        lineage.save(WarrantLineage.of(w.getId(), LineageType.EXTENSION_DENIED, clock.instant(), approver.id(),
                 reason.trim(), open.delta(), null));
         return w;
     }
@@ -222,10 +226,11 @@ public class WarrantExtensionService {
                 .orElseThrow(() -> new IllegalArgumentException("unknown warrant " + warrantId));
     }
 
-    private WarrantLineage decidable(Warrant w, UUID approverId, UUID requestLineageId) {
-        if (w.getSubjectId().equals(approverId)) {
+    private WarrantLineage decidable(Warrant w, Approver approver, UUID requestLineageId) {
+        if (w.getSubjectId().equals(approver.id())) {
             throw new SelfApprovalException(w.getDisplayId());
         }
+        eligibility.require(w, approver);
         w.requireExtendable(clock.instant());
         WarrantLineage open = history(w).open();
         if (open == null) {

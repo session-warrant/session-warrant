@@ -46,6 +46,7 @@ public class ApprovalController {
     private final PolicyRepository policies;
     private final PolicyLinter linter;
     private final SubjectRepository subjects;
+    private final ApproverEligibility eligibility;
 
     public enum Kind { ISSUE, EXTENSION }
 
@@ -54,8 +55,12 @@ public class ApprovalController {
      * {@code policyWarnings} 는 정책 lint 의 WARN — 막지는 않고 승인자가 보고 판단한다(ERROR 는 신청 때 이미 걸렀다).
      * {@code extension} 은 kind=EXTENSION 일 때만.
      */
+    /**
+     * {@code approvable} 은 내가 결정할 수 있는가 — 본인 신청이 아니고, 정책의 {@code approverGroup} 이 있으면 내가 그 그룹이다.
+     * 화면의 비활성 버튼용이고 집행은 서버가 따로 한다.
+     */
     public record QueueItem(Kind kind, WarrantViews.WarrantView warrant, boolean approvable,
-                            List<PolicyLintFinding> policyWarnings, ExtensionView extension) {
+                            List<PolicyLintFinding> policyWarnings, ExtensionView extension, String approverGroup) {
     }
 
     /**
@@ -72,18 +77,16 @@ public class ApprovalController {
 
     @GetMapping
     public List<QueueItem> queue(@RequestParam(required = false) Kind kind, Authentication auth) {
-        UUID me = current.require(auth).getId();
+        Approver me = approver(auth);
         List<QueueItem> out = new ArrayList<>();
         if (kind == null || kind == Kind.ISSUE) {
             for (Warrant w : approvals.queue()) {
-                out.add(new QueueItem(Kind.ISSUE, views.of(w), !w.getSubjectId().equals(me), warnings(w), null));
+                out.add(item(Kind.ISSUE, w, me, null));
             }
         }
         if (kind == null || kind == Kind.EXTENSION) {
             for (WarrantExtensionService.OpenRequest r : extensions.openRequests()) {
-                Warrant w = r.warrant();
-                out.add(new QueueItem(Kind.EXTENSION, views.of(w), !w.getSubjectId().equals(me), warnings(w),
-                        extensionView(r.request())));
+                out.add(item(Kind.EXTENSION, r.warrant(), me, extensionView(r.request())));
             }
         }
         return out;
@@ -92,7 +95,7 @@ public class ApprovalController {
     @PostMapping("/{id}/approve")
     public WarrantViews.WarrantView approve(@PathVariable UUID id, @RequestBody(required = false) Decision body,
                                             Authentication auth) {
-        UUID me = current.require(auth).getId();
+        Approver me = approver(auth);
         Warrant w = extensions.hasOpenRequest(id)
                 ? extensions.approve(id, me, body == null ? null : body.requestLineageId())
                 : approvals.approve(id, me);
@@ -102,10 +105,20 @@ public class ApprovalController {
 
     @PostMapping("/{id}/reject")
     public WarrantViews.WarrantView reject(@PathVariable UUID id, @RequestBody Decision body, Authentication auth) {
-        UUID me = current.require(auth).getId();
+        Approver me = approver(auth);
         return views.of(extensions.hasOpenRequest(id)
                 ? extensions.deny(id, me, body.reason(), body.requestLineageId())
                 : approvals.reject(id, me, body.reason()));
+    }
+
+    // The approver is whoever is logged in, with the groups that login carries — never ids from the body.
+    private Approver approver(Authentication auth) {
+        return new Approver(current.require(auth).getId(), CurrentSubject.groups(auth));
+    }
+
+    private QueueItem item(Kind kind, Warrant w, Approver me, ExtensionView extension) {
+        boolean approvable = !w.getSubjectId().equals(me.id()) && eligibility.eligible(w, me);
+        return new QueueItem(kind, views.of(w), approvable, warnings(w), extension, eligibility.requiredGroup(w));
     }
 
     private List<PolicyLintFinding> warnings(Warrant w) {

@@ -72,7 +72,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @Import({WarrantPushGrpcService.class, WarrantPushService.class, NodeStreamRegistry.class,
         WarrantIssuanceService.class, WarrantRevocationService.class, WarrantSealer.class,
         WarrantProtoMapper.class, WarrantSigner.class, io.seswar.warrant.policy.PolicyLinter.class,
-        io.seswar.warrant.warrant.WarrantExtensionService.class, WarrantPushGrpcServiceTest.Keys.class})
+        io.seswar.warrant.warrant.WarrantExtensionService.class, io.seswar.warrant.approval.ApproverEligibility.class,
+        WarrantPushGrpcServiceTest.Keys.class})
 class WarrantPushGrpcServiceTest {
 
     @Container

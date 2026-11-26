@@ -44,7 +44,8 @@ class ApprovalApiTest {
     @ServiceConnection
     static PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:18");
 
-    static final String REQUESTER = "requester@test", APPROVER = "approver@test", PW = "pw";
+    static final String REQUESTER = "requester@test", APPROVER = "approver@test", DB_APPROVER = "dba@test", PW = "pw";
+    static final String DB_GROUP = "warrant-approvers-db";
 
     @DynamicPropertySource
     static void props(DynamicPropertyRegistry r) throws Exception {
@@ -54,6 +55,9 @@ class ApprovalApiTest {
         r.add("warrant.dev.accounts[0].password", () -> "{noop}" + PW);
         r.add("warrant.dev.accounts[1].email", () -> APPROVER);
         r.add("warrant.dev.accounts[1].password", () -> "{noop}" + PW);
+        r.add("warrant.dev.accounts[2].email", () -> DB_APPROVER);
+        r.add("warrant.dev.accounts[2].password", () -> "{noop}" + PW);
+        r.add("warrant.dev.accounts[2].groups[0]", () -> DB_GROUP);
     }
 
     @Autowired MockMvc mvc;
@@ -66,7 +70,7 @@ class ApprovalApiTest {
 
     @BeforeEach
     void seed() throws Exception {
-        for (String email : List.of(REQUESTER, APPROVER)) {
+        for (String email : List.of(REQUESTER, APPROVER, DB_APPROVER)) {
             if (subjects.findByPrincipal(email).isEmpty()) {
                 subjects.saveAndFlush(Subject.of("oidc|" + email, email, "ec2-user", List.of("SHA256:" + email)));
             }
@@ -84,9 +88,23 @@ class ApprovalApiTest {
     }
 
     String request(String as) throws Exception {
+        return request(as, policyId);
+    }
+
+    // A policy only approvers in DB_GROUP may decide. Sent with a leading slash and spaces, as Keycloak full paths look.
+    String dbPolicy() throws Exception {
+        String p = mvc.perform(post("/api/policies").with(httpBasic(REQUESTER, PW)).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"db\",\"execRules\":[\"/usr/bin/psql\"],\"approverGroup\":\" /%s \"}".formatted(DB_GROUP)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.approverGroup").value(DB_GROUP))
+                .andReturn().getResponse().getContentAsString();
+        return field(p, "id");
+    }
+
+    String request(String as, String policy) throws Exception {
         String body = mvc.perform(post("/api/warrants").with(httpBasic(as, PW)).contentType(MediaType.APPLICATION_JSON).content("""
                         {"loginAccount": "ec2-user", "reason": "INC-7 점검", "targetHosts": ["%s"], "policyId": "%s",
-                         "duration": "PT45M", "mode": "DRYRUN"}""".formatted(host, policyId)))
+                         "duration": "PT45M", "mode": "DRYRUN"}""".formatted(host, policy)))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.state").value("REQUESTED"))
                 .andReturn().getResponse().getContentAsString();
@@ -164,5 +182,52 @@ class ApprovalApiTest {
 
         mvc.perform(post("/api/approvals/" + id + "/approve").with(httpBasic(APPROVER, PW)))
                 .andExpect(status().isConflict());
+    }
+
+    // 승인 역할이 있어도 정책이 정한 그룹 밖이면 결정할 수 없다. 화면에는 보이되 approvable=false.
+    @Test
+    void 정책에_승인_그룹이_있으면_그_그룹의_승인자만_승인한다() throws Exception {
+        String id = request(REQUESTER, dbPolicy());
+
+        mvc.perform(get("/api/approvals").with(httpBasic(APPROVER, PW)))
+                .andExpect(jsonPath("$[?(@.warrant.id == '%s')].approvable".formatted(id)).value(false))
+                .andExpect(jsonPath("$[?(@.warrant.id == '%s')].approverGroup".formatted(id)).value(DB_GROUP));
+        mvc.perform(get("/api/approvals").with(httpBasic(DB_APPROVER, PW)))
+                .andExpect(jsonPath("$[?(@.warrant.id == '%s')].approvable".formatted(id)).value(true));
+
+        mvc.perform(post("/api/approvals/" + id + "/approve").with(httpBasic(APPROVER, PW)))
+                .andExpect(status().isForbidden());
+        assertThat(warrants.findById(UUID.fromString(id)).orElseThrow().getSignedPayload()).isNull();
+
+        mvc.perform(post("/api/approvals/" + id + "/approve").with(httpBasic(DB_APPROVER, PW)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.state").value("ISSUED"));
+    }
+
+    @Test
+    void 승인_그룹_밖의_승인자는_반려도_못_한다() throws Exception {
+        String id = request(REQUESTER, dbPolicy());
+
+        mvc.perform(post("/api/approvals/" + id + "/reject").with(httpBasic(APPROVER, PW))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"범위 밖\"}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/approvals/" + id + "/reject").with(httpBasic(DB_APPROVER, PW))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"범위 밖\"}"))
+                .andExpect(status().isOk());
+    }
+
+    // 그룹이 있어도 본인 신청은 여전히 못 한다 — 두 규칙은 따로 걸린다.
+    @Test
+    void 승인_그룹에_든_사람도_본인_신청은_승인할_수_없다() throws Exception {
+        String id = request(DB_APPROVER, dbPolicy());
+
+        mvc.perform(post("/api/approvals/" + id + "/approve").with(httpBasic(DB_APPROVER, PW)))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void 승인_그룹이_없는_정책은_응답에_null이다() throws Exception {
+        mvc.perform(get("/api/policies").with(httpBasic(REQUESTER, PW)))
+                .andExpect(jsonPath("$[?(@.id == '%s')].approverGroup".formatted(policyId)).value(org.hamcrest.Matchers.contains((Object) null)));
     }
 }
