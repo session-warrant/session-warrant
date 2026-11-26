@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/binary"
+	"log"
 	"sort"
 	"sync"
 
@@ -13,10 +14,10 @@ import (
 )
 
 // AuditQueue 는 서버가 ack 할 때까지 감사 이벤트를 메모리에 들고 있는다.
-// bbolt 쪽 Store 가 생기기 전의 대역이다. 재시작하면 ack 안 된 기록을 잃으므로
-// 프로세스마다 새 seq_epoch 를 뽑는다 — 잃은 구간은 나중에 AGENT_DOWN 으로 남긴다.
+// 혼자 쓰면 재시작 때 ack 안 된 기록을 잃으므로 프로세스마다 새 seq_epoch 를 뽑는다.
+// Store(store.go)가 이 큐를 bbolt 에 비춰 재시작을 넘긴다 — 큐 동작은 둘이 같다.
 //
-// 부르는 쪽: cmd/warrantd binder(Append), upstream.StreamAudit(Next · Ack).
+// 부르는 쪽: cmd/warrantd binder(Append), upstream.StreamAudit(Next · Ack), Store.
 type AuditQueue struct {
 	mu        sync.Mutex
 	epoch     uint64
@@ -26,6 +27,11 @@ type AuditQueue struct {
 	changed   chan struct{} // closed and replaced on every Append
 	maxEvents int
 	maxBatch  int
+
+	// Set by Store only. Before handing out seq >= seqLimit, reserve persists a higher limit, so a crash can never
+	// make a restarted node reuse a seq the server may already hold (it would drop the new event as a duplicate).
+	seqLimit uint64
+	reserve  func(limit uint64) error
 }
 
 // A gap rides in the batch that carries beforeSeq, so it is acked with that batch.
@@ -64,6 +70,14 @@ func (q *AuditQueue) Append(e *pb.AuditEvent) uint64 {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
+	if q.reserve != nil && q.nextSeq >= q.seqLimit {
+		limit := q.nextSeq + seqReserveBlock
+		if err := q.reserve(limit); err != nil {
+			log.Printf("store: reserving node_seq up to %d: %v (a crash now may reuse numbers)", limit, err)
+		} else {
+			q.seqLimit = limit
+		}
+	}
 	e.NodeSeq = q.nextSeq
 	q.nextSeq++
 	q.events = append(q.events, e)
@@ -163,4 +177,25 @@ func (q *AuditQueue) Ack(seqEpoch, nodeSeq uint64) error {
 	}
 	q.gaps = kept
 	return nil
+}
+
+// How many node_seq values one reservation covers. A crash skips the unused rest; the server does not read
+// holes in node_seq as loss (losses come as GapReport).
+const seqReserveBlock = 1 << 16
+
+// snapshot is what Store persists: the oldest seq still held (everything below it is acked or dropped),
+// the events numbered after `after`, and all pending gaps. Events are never mutated after Append, so the
+// pointers are safe to marshal outside the lock.
+func (q *AuditQueue) snapshot(after uint64) (head uint64, fresh []*pb.AuditEvent, gaps []queuedGap) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	head = q.nextSeq
+	if len(q.events) > 0 {
+		head = q.events[0].NodeSeq
+	}
+	i := sort.Search(len(q.events), func(i int) bool { return q.events[i].NodeSeq > after })
+	fresh = append([]*pb.AuditEvent(nil), q.events[i:]...)
+	gaps = append([]queuedGap(nil), q.gaps...)
+	return head, fresh, gaps
 }
