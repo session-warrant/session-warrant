@@ -34,6 +34,7 @@ import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.http.HttpMethod;
+import java.util.stream.Stream;
 
 /**
  * <b>자체 회원가입을 만들지 않는다.</b> 조직 신원 매핑이 제품 핵심이므로
@@ -102,7 +103,11 @@ public class SecurityConfig {
     @Profile("dev")
     UserDetailsService devUsers(DevAccounts accounts) {
         return new InMemoryUserDetailsManager(accounts.accounts().stream()
-                .map(a -> User.withUsername(a.email()).password(a.password()).roles("REQUESTER", "APPROVER", "AUDITOR").build())
+                .map(a -> User.withUsername(a.email()).password(a.password())
+                        .authorities(Stream.concat(
+                                Stream.of("ROLE_REQUESTER", "ROLE_APPROVER", "ROLE_AUDITOR"),
+                                a.groups().stream().map(g -> KeycloakGroups.GROUP_PREFIX + g)).toArray(String[]::new))
+                        .build())
                 .toList());
     }
 

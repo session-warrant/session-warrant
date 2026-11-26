@@ -30,7 +30,7 @@ import java.util.UUID;
  * 서버는 알림을 보내지 않는다 — "대기 중인 요청" 경보는 Grafana 가 DB 를 직접 읽어 건다.
  *
  * <p>연장 요청의 결정은 WarrantExtensionService 가 한다 — 같은 큐 · 같은 엔드포인트를 ApprovalController 가 나눈다.
- * 아직 없는 것: 승인자 자격(팀 · 상급자). 같은 신청을 두 번 승인하면 상태가 이미 ISSUED 라 409 가 된다.
+ * 정책이 승인 그룹을 정해 두었으면 그 그룹에 든 사람만 결정한다({@link ApproverEligibility}). 같은 신청을 두 번 승인하면 상태가 이미 ISSUED 라 409 가 된다.
  */
 @Service
 @RequiredArgsConstructor
@@ -39,6 +39,7 @@ public class ApprovalService {
     private final WarrantRepository warrants;
     private final WarrantLineageRepository lineage;
     private final WarrantSealer sealer;
+    private final ApproverEligibility eligibility;
     private final Clock clock;
 
     @ResponseStatus(HttpStatus.FORBIDDEN)
@@ -55,8 +56,9 @@ public class ApprovalService {
 
     /** 승인 → 서명. push 는 커밋 뒤 호출자가 한다. */
     @Transactional
-    public Warrant approve(UUID warrantId, UUID approverId) {
-        Warrant w = decidable(warrantId, approverId);
+    public Warrant approve(UUID warrantId, Approver approver) {
+        UUID approverId = approver.id();
+        Warrant w = decidable(warrantId, approver);
         Duration requested = lineage.findByWarrantIdOrderByOccurredAtAsc(w.getId()).stream()
                 .filter(l -> l.getType() == LineageType.REQUESTED).findFirst()
                 .map(WarrantLineage::delta)
@@ -69,24 +71,26 @@ public class ApprovalService {
     }
 
     @Transactional
-    public Warrant reject(UUID warrantId, UUID approverId, String reason) {
+    public Warrant reject(UUID warrantId, Approver approver, String reason) {
         if (reason == null || reason.isBlank()) {
             throw new IllegalArgumentException("a rejection needs a reason");
         }
-        Warrant w = decidable(warrantId, approverId);
+        Warrant w = decidable(warrantId, approver);
         w.reject();
-        lineage.save(WarrantLineage.of(w.getId(), LineageType.REJECTED, clock.instant(), approverId, reason.trim(),
+        lineage.save(WarrantLineage.of(w.getId(), LineageType.REJECTED, clock.instant(), approver.id(), reason.trim(),
                 null, null));
         return w;
     }
 
     // The requester is the warrant's subject; nobody decides their own request.
-    private Warrant decidable(UUID warrantId, UUID approverId) {
+    // A policy with an approver group takes only approvers in that group (ApproverEligibility).
+    private Warrant decidable(UUID warrantId, Approver approver) {
         Warrant w = warrants.findById(warrantId)
                 .orElseThrow(() -> new IllegalArgumentException("unknown warrant " + warrantId));
-        if (w.getSubjectId().equals(approverId)) {
+        if (w.getSubjectId().equals(approver.id())) {
             throw new SelfApprovalException(w.getDisplayId());
         }
+        eligibility.require(w, approver);
         if (w.getState() != WarrantState.REQUESTED) {
             throw new IllegalStateException("warrant " + w.getDisplayId() + " is " + w.getState() + ", not REQUESTED");
         }

@@ -2,6 +2,8 @@ package io.seswar.warrant.warrant;
 
 import io.seswar.warrant.approval.ApprovalService;
 import io.seswar.warrant.approval.ApprovalService.SelfApprovalException;
+import io.seswar.warrant.approval.Approver;
+import io.seswar.warrant.approval.ApproverEligibility;
 import io.seswar.warrant.identity.Subject;
 import io.seswar.warrant.identity.SubjectRepository;
 import io.seswar.warrant.policy.ExecRule;
@@ -46,6 +48,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -58,7 +61,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @Testcontainers
 @Import({WarrantExtensionService.class, ApprovalService.class, WarrantIssuanceService.class,
         WarrantRevocationService.class, WarrantSealer.class, WarrantProtoMapper.class, WarrantSigner.class,
-        PolicyLinter.class, WarrantExtensionServiceTest.Config.class})
+        PolicyLinter.class, ApproverEligibility.class, WarrantExtensionServiceTest.Config.class})
 class WarrantExtensionServiceTest {
 
     @Container
@@ -78,6 +81,11 @@ class WarrantExtensionServiceTest {
         @Override public ZoneId getZone() { return ZoneOffset.UTC; }
         @Override public Clock withZone(ZoneId zone) { return this; }
         @Override public Instant instant() { return now; }
+    }
+
+    // An approver with no groups: enough for every policy without an approver group.
+    private static Approver as(Subject s) {
+        return new Approver(s.getId(), Set.of());
     }
 
     @TestConfiguration
@@ -124,7 +132,7 @@ class WarrantExtensionServiceTest {
         Warrant w = issuance.request(new IssueWarrantCommand(alice.getId(), "ec2-user", "INC-1", List.of(host),
                 p.getId(), THIRTY, WarrantMode.DRYRUN, OnExpiry.DEMOTE, Duration.ZERO));
         clock.step(Duration.ofSeconds(1));
-        Warrant approved = approvals.approve(w.getId(), bob.getId());
+        Warrant approved = approvals.approve(w.getId(), as(bob));
         clock.step(Duration.ofSeconds(1));
         return approved;
     }
@@ -152,7 +160,7 @@ class WarrantExtensionServiceTest {
 
         extensions.request(w.getId(), Duration.ofMinutes(15), alice.getId(), "배포 지연");
         clock.step(Duration.ofSeconds(1));
-        Warrant x = extensions.approve(w.getId(), bob.getId(), null);
+        Warrant x = extensions.approve(w.getId(), as(bob), null);
 
         assertThat(x.getExpiresAt()).isEqualTo(before.plus(Duration.ofMinutes(15)));
         assertThat(x.getRevision()).isEqualTo(2);
@@ -184,7 +192,7 @@ class WarrantExtensionServiceTest {
         Warrant w = issued(writes);
         extensions.request(w.getId(), Duration.ofMinutes(15), alice.getId(), "배포 지연");
 
-        assertThatThrownBy(() -> extensions.approve(w.getId(), alice.getId(), null))
+        assertThatThrownBy(() -> extensions.approve(w.getId(), as(alice), null))
                 .isInstanceOf(SelfApprovalException.class);
     }
 
@@ -211,7 +219,7 @@ class WarrantExtensionServiceTest {
         Warrant w = issued(writes);
         extensions.request(w.getId(), Duration.ofMinutes(15), alice.getId(), "배포 지연");
 
-        assertThatThrownBy(() -> extensions.approve(w.getId(), bob.getId(), UUID.randomUUID()))
+        assertThatThrownBy(() -> extensions.approve(w.getId(), as(bob), UUID.randomUUID()))
                 .isInstanceOf(IllegalStateException.class);
         assertThat(reload(w).getRevision()).isEqualTo(1);
     }
@@ -222,9 +230,9 @@ class WarrantExtensionServiceTest {
         extensions.request(w.getId(), Duration.ofMinutes(15), alice.getId(), "배포 지연");
         UUID req = extensions.openRequests().stream().filter(r -> r.warrant().getId().equals(w.getId()))
                 .findFirst().orElseThrow().request().getId();
-        extensions.approve(w.getId(), bob.getId(), req);
+        extensions.approve(w.getId(), as(bob), req);
 
-        assertThatThrownBy(() -> extensions.approve(w.getId(), bob.getId(), req))
+        assertThatThrownBy(() -> extensions.approve(w.getId(), as(bob), req))
                 .isInstanceOf(IllegalStateException.class);
         assertThat(reload(w).getRevision()).isEqualTo(2);
     }
@@ -234,7 +242,7 @@ class WarrantExtensionServiceTest {
         Warrant w = issued(writes);
         extensions.request(w.getId(), Duration.ofMinutes(15), alice.getId(), "배포 지연");
         clock.step(Duration.ofSeconds(1));
-        extensions.deny(w.getId(), bob.getId(), "작업 범위 밖", null);
+        extensions.deny(w.getId(), as(bob), "작업 범위 밖", null);
         clock.step(Duration.ofSeconds(1));
 
         assertThat(reload(w).getRevision()).isEqualTo(1);
@@ -254,7 +262,7 @@ class WarrantExtensionServiceTest {
 
         extensions.request(w.getId(), THIRTY.multipliedBy(2), alice.getId(), "길게");
         clock.step(Duration.ofSeconds(1));
-        extensions.approve(w.getId(), bob.getId(), null);
+        extensions.approve(w.getId(), as(bob), null);
         clock.step(Duration.ofSeconds(1));
 
         assertThatThrownBy(() -> extensions.request(w.getId(), THIRTY.plusSeconds(1), alice.getId(), "더"))
@@ -281,7 +289,7 @@ class WarrantExtensionServiceTest {
         extensions.request(w.getId(), Duration.ofMinutes(15), alice.getId(), "배포 지연");
         clock.step(THIRTY);
 
-        assertThatThrownBy(() -> extensions.approve(w.getId(), bob.getId(), null))
+        assertThatThrownBy(() -> extensions.approve(w.getId(), as(bob), null))
                 .isInstanceOf(IllegalStateException.class);
         assertThat(extensions.openRequests()).noneMatch(r -> r.warrant().getId().equals(w.getId()));
     }
@@ -354,5 +362,27 @@ class WarrantExtensionServiceTest {
     void 모르는_영장_번호는_거부한다() {
         assertThat(extensions.requestAutomatically(Long.MAX_VALUE, null, "x", Duration.ZERO).outcome())
                 .isEqualTo(Outcome.REJECTED);
+    }
+
+    // 연장도 발급과 같은 승인 그룹을 따른다 — 연장이 그룹을 우회하는 뒷문이 되면 안 된다.
+    @Test
+    void 승인_그룹이_있는_정책의_연장은_그_그룹만_결정한다() {
+        Policy db = policies.saveAndFlush(Policy.of("db", false, List.of(new ExecRule("/usr/bin/psql")), List.of(),
+                List.of(), "warrant-approvers-db"));
+        Warrant w = issuance.request(new IssueWarrantCommand(alice.getId(), "ec2-user", "INC-9", List.of(host),
+                db.getId(), THIRTY, WarrantMode.DRYRUN, OnExpiry.DEMOTE, Duration.ZERO));
+        clock.step(Duration.ofSeconds(1));
+        assertThatThrownBy(() -> approvals.approve(w.getId(), as(bob)))
+                .isInstanceOf(ApproverEligibility.NotEligibleApproverException.class);
+        Approver dba = new Approver(bob.getId(), Set.of("warrant-approvers-db"));
+        approvals.approve(w.getId(), dba);
+        clock.step(Duration.ofSeconds(1));
+        extensions.request(w.getId(), Duration.ofMinutes(10), alice.getId(), "마무리");
+
+        assertThatThrownBy(() -> extensions.approve(w.getId(), as(bob), null))
+                .isInstanceOf(ApproverEligibility.NotEligibleApproverException.class);
+        assertThatThrownBy(() -> extensions.deny(w.getId(), as(bob), "아니다", null))
+                .isInstanceOf(ApproverEligibility.NotEligibleApproverException.class);
+        assertThat(extensions.approve(w.getId(), dba, null).getRevision()).isGreaterThan(1);
     }
 }

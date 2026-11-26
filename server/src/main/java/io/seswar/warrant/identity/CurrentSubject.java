@@ -4,6 +4,7 @@ import io.seswar.warrant.warrant.api.WarrantController;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.oauth2.core.oidc.user.OidcUser;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Component;
@@ -13,6 +14,8 @@ import org.springframework.web.server.ResponseStatusException;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 로그인한 사람의 주체. 신청자 · 승인자는 요청 본문이 아니라 여기서 온다 — 본문은 아무 이름이나 적을 수 있다.
@@ -42,6 +45,15 @@ public class CurrentSubject {
         }
         return new Identity((String) claims.get("sub"), (String) claims.get("email"),
                 Boolean.TRUE.equals(claims.get("email_verified")));
+    }
+
+    /** 로그인이 들고 온 그룹 이름 — Keycloak {@code groups} claim 이나 dev 계정 설정({@link KeycloakGroups#GROUP_PREFIX}). */
+    public static Set<String> groups(Authentication auth) {
+        return auth.getAuthorities().stream()
+                .map(GrantedAuthority::getAuthority)
+                .filter(a -> a.startsWith(KeycloakGroups.GROUP_PREFIX))
+                .map(a -> a.substring(KeycloakGroups.GROUP_PREFIX.length()))
+                .collect(Collectors.toUnmodifiableSet());
     }
 
     // Called by WarrantController, ApprovalController and MeController. A login with no subject cannot request or decide.
