@@ -58,6 +58,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
@@ -73,6 +74,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
         WarrantIssuanceService.class, WarrantRevocationService.class, WarrantSealer.class,
         WarrantProtoMapper.class, WarrantSigner.class, io.seswar.warrant.policy.PolicyLinter.class,
         io.seswar.warrant.warrant.WarrantExtensionService.class, io.seswar.warrant.approval.ApproverEligibility.class,
+        io.seswar.warrant.node.NodeRevocationService.class, io.seswar.warrant.node.NodeConnections.class,
         WarrantPushGrpcServiceTest.Keys.class})
 class WarrantPushGrpcServiceTest {
 
@@ -101,6 +103,8 @@ class WarrantPushGrpcServiceTest {
     @Autowired SubjectRepository subjects;
     @Autowired PolicyRepository policies;
     @Autowired NodeRepository nodes;
+    @Autowired io.seswar.warrant.node.NodeRevocationService nodeRevocations;
+    @Autowired io.seswar.warrant.node.NodeConnections connections;
 
     Server server;
     ManagedChannel channel;
@@ -325,5 +329,67 @@ class WarrantPushGrpcServiceTest {
     @Test
     void 모르는_영장의_연장_요청은_거부로_답한다() {
         assertThat(requestExtension(Long.MAX_VALUE).getOutcome()).isEqualTo(ExtensionAck.Outcome.OUTCOME_REJECTED);
+    }
+
+    // ── 노드 폐기 ──────────────────────────────────────────────────────────────
+
+    Node revokedNode() {
+        Node n = nodes.saveAndFlush(Node.builder().clientCertFingerprint("dev:" + host).hostname(host)
+                .attachedHooks(Set.of()).build());
+        nodeRevocations.revoke(n.getId(), alice.getId(), "인증서 유출");
+        return n;
+    }
+
+    // Subscribe that also reports how the stream ended.
+    CompletableFuture<Status> subscribeUntilClosed(String hostname, BlockingQueue<PushMessage> got) {
+        CompletableFuture<Status> closed = new CompletableFuture<>();
+        WarrantPushServiceGrpc.newStub(channel).subscribe(
+                SubscribeRequest.newBuilder().setNode(NodeHello.newBuilder().setHostname(hostname)).build(),
+                new StreamObserver<>() {
+                    public void onNext(PushMessage m) { got.add(m); }
+                    public void onError(Throwable t) { closed.complete(Status.fromThrowable(t)); }
+                    public void onCompleted() { closed.complete(Status.OK); }
+                });
+        return closed;
+    }
+
+    @Test
+    void 폐기된_노드는_영장을_구독하지_못하고_아무것도_받지_않는다() throws Exception {
+        issueFor(host);
+        revokedNode();
+
+        BlockingQueue<PushMessage> got = new LinkedBlockingQueue<>();
+        Status s = subscribeUntilClosed(host, got).get(5, TimeUnit.SECONDS);
+
+        assertThat(s.getCode()).isEqualTo(Status.Code.PERMISSION_DENIED);
+        assertThat(got).isEmpty();
+    }
+
+    @Test
+    void 폐기된_노드의_생존_신호와_영장_조회는_거부된다() {
+        revokedNode();
+
+        assertThatThrownBy(() -> heartbeat(host, 0)).isInstanceOfSatisfying(StatusRuntimeException.class,
+                e -> assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.PERMISSION_DENIED));
+        assertThatThrownBy(() -> WarrantPushServiceGrpc.newBlockingStub(channel).lookupActiveWarrant(
+                LookupRequest.newBuilder().setHostname(host).setLoginAccount("ec2-user").setSshKeyFingerprint("SHA256:x").build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class,
+                        e -> assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.PERMISSION_DENIED));
+    }
+
+    @Test
+    void 폐기하면_열려_있던_구독이_끊기고_더는_push_되지_않는다() throws Exception {
+        Node n = nodes.saveAndFlush(Node.builder().clientCertFingerprint("dev:" + host).hostname(host)
+                .attachedHooks(Set.of()).build());
+        BlockingQueue<PushMessage> got = new LinkedBlockingQueue<>();
+        CompletableFuture<Status> closed = subscribeUntilClosed(host, got);
+        assertThat(next(got).hasResyncComplete()).isTrue();
+
+        nodeRevocations.revoke(n.getId(), alice.getId(), "노드 반납");
+        connections.closeAll("dev:" + host, "node revoked");
+
+        assertThat(closed.get(5, TimeUnit.SECONDS).getCode()).isEqualTo(Status.Code.PERMISSION_DENIED);
+        push.push(issueFor(host));
+        assertThat(got.poll(300, TimeUnit.MILLISECONDS)).isNull();
     }
 }

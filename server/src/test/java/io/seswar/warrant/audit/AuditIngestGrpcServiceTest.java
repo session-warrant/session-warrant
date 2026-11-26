@@ -9,7 +9,9 @@ import io.grpc.Status;
 import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.stub.StreamObserver;
+import io.seswar.warrant.node.NodeConnections;
 import io.seswar.warrant.node.NodeRegistry;
+import io.seswar.warrant.node.NodeRevocationService;
 import io.seswar.warrant.config.ClockConfig;
 import io.seswar.warrant.proto.AgentProtos.AuditAck;
 import io.seswar.warrant.proto.AgentProtos.AuditBatch;
@@ -51,7 +53,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Testcontainers
-@Import({AuditIngestGrpcService.class, AuditIngestService.class, NodeRegistry.class, ClockConfig.class})
+@Import({AuditIngestGrpcService.class, AuditIngestService.class, NodeRegistry.class, ClockConfig.class,
+        NodeRevocationService.class, NodeConnections.class})
 class AuditIngestGrpcServiceTest {
 
     @Container
@@ -63,6 +66,8 @@ class AuditIngestGrpcServiceTest {
 
     @Autowired AuditIngestGrpcService service;
     @Autowired JdbcTemplate jdbc;
+    @Autowired NodeRevocationService revocations;
+    @Autowired NodeConnections connections;
 
     Server server;
     ManagedChannel channel;
@@ -301,5 +306,47 @@ class AuditIngestGrpcServiceTest {
         assertThat(agent.closedWith().getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT);
         assertThat(agent.acks).isEmpty();
         assertThat(nodesNamedHost()).isZero();
+    }
+
+    // ── 노드 폐기 ──────────────────────────────────────────────────────────────
+
+    @Test
+    void 폐기된_노드는_감사_스트림을_열지_못한다() throws Exception {
+        Agent first = connect();
+        first.out.onNext(batch(hello("warrantd 0.1.0"), 7, 1, 1));
+        first.nextAck();
+        first.out.onCompleted();
+        revocations.revoke(nodeId(), null, "인증서 유출");
+
+        Agent again = connect();
+        again.out.onNext(batch(hello("warrantd 0.1.0"), 7, 2, 2));
+
+        assertThat(again.closedWith().getCode()).isEqualTo(Status.Code.PERMISSION_DENIED);
+        assertThat(again.acks).isEmpty();
+        assertThat(rows("audit_event")).isEqualTo(1);  // 폐기 뒤 기록은 저장되지 않는다
+    }
+
+    // 인증서 확인은 연결할 때만 한다. 이미 열린 스트림은 폐기가 직접 끊어야 한다.
+    @Test
+    void 폐기하면_열려_있던_감사_스트림이_끊긴다() throws Exception {
+        Agent agent = connect();
+        agent.out.onNext(batch(hello("warrantd 0.1.0"), 7, 1, 1));
+        agent.nextAck();
+
+        revocations.revoke(nodeId(), null, "노드 반납");
+        assertThat(connections.closeAll("dev:" + host, "node revoked")).isEqualTo(1);
+
+        assertThat(agent.closedWith().getCode()).isEqualTo(Status.Code.PERMISSION_DENIED);
+    }
+
+    @Test
+    void 닫힌_스트림은_폐기할_때_끊을_목록에_남지_않는다() throws Exception {
+        Agent agent = connect();
+        agent.out.onNext(batch(hello("warrantd 0.1.0"), 7, 1, 1));
+        agent.nextAck();
+        agent.out.onCompleted();
+        agent.closedWith();
+
+        assertThat(connections.closeAll("dev:" + host, "node revoked")).isZero();
     }
 }

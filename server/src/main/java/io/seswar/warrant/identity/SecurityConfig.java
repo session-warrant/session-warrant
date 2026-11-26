@@ -58,13 +58,14 @@ public class SecurityConfig {
 
     /**
      * 역할 규칙 — dev · oidc 가 같은 규칙을 쓴다.
-     * REQUESTER 신청 · APPROVER 승인 · 반려 · 회수 · AUDITOR 조회만(발급 권한 없음). 자기 승인 금지는 ApprovalService 가 따로 막는다.
+     * REQUESTER 신청 · APPROVER 승인 · 반려 · 회수 · 노드 폐기 · AUDITOR 조회만(발급 권한 없음). 자기 승인 금지는 ApprovalService 가 따로 막는다.
      */
     private static void rules(AuthorizeHttpRequestsConfigurer<HttpSecurity>.AuthorizationManagerRequestMatcherRegistry auth) {
         auth.requestMatchers("/api/auth/login", "/api/auth/config", "/api/signing-key").permitAll()
                 .requestMatchers(HttpMethod.POST, "/api/warrants", "/api/warrants/*/extensions").hasRole("REQUESTER")
                 .requestMatchers("/api/approvals/**").hasRole("APPROVER")
                 .requestMatchers(HttpMethod.DELETE, "/api/warrants/**").hasRole("APPROVER")
+                .requestMatchers(HttpMethod.POST, "/api/nodes/*/revoke").hasRole("APPROVER")
                 .requestMatchers(HttpMethod.POST, "/api/policies", "/api/subjects").hasAnyRole("REQUESTER", "APPROVER")
                 .anyRequest().authenticated();
     }

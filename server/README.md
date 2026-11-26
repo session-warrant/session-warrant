@@ -111,6 +111,7 @@ warrantd LookupActiveWarrant → 호스트 · 계정 · 키 지문 셋 다 맞�
 | `DELETE /api/warrants/{id}` | 회수 |
 | `GET /api/signing-key` | 노드에 심을 공개키 PEM. 헤더 `X-Key-Id` 가 파일 이름 |
 | `GET /api/audit/sessions?since=&until=&node=&limit=` | **조직 전체 SSH 접속 현황.** 영장 세션 + 무영장 세션(뷰 `ssh_session`), 접속 한 번이 한 행이고 최신 순. 기본 최근 24시간 · 1000건(최대 5000). 영장 세션은 `reason` 이 null, 무영장은 `warrantId` 가 0 이고 `mode` 가 null |
+| `POST /api/nodes/{id}/revoke` | 노드 폐기(APPROVER). `{"reason": …}` 필수, 이미 폐기됐으면 409. 열린 스트림을 끊는다. 「인증서 폐기」 참고 |
 | `GET /api/nodes` · `/api/audit/unwarranted` · `/api/audit/gaps` | 대시보드용 읽기. 감사 스트림으로 들어온 노드 · 무영장 세션 · 유실 구간, 최신 순. 기간 필터 · 페이지는 아직 없다 |
 | `GET /api/audit/events?since=&until=&limit=` | 커널 판정 기록, 최신 순. 기본 최근 24시간 · 1000건(최대 5000). `until` 은 그 시각 전까지. 헤더 `X-Audit-Total` 이 한도 없이 센 건수다. 훅은 proto 이름(`HOOK_FILE_OPEN`) |
 | `…&kind=verdict` · `…&node=<호스트>` | 두 형태 모두에 붙는다. `kind=verdict` 는 LSM 판정만(kprobe 미러 · fork 를 빼서 한도를 판정에 쓴다), `node` 는 호스트 이름 |
@@ -137,6 +138,13 @@ warrantd LookupActiveWarrant → 호스트 · 계정 · 키 지문 셋 다 맞�
   사내 CA(`deploy/pki/pki.sh`)가 서명한 인증서 없이는 붙지 못한다. 신원은 `sha256:<인증서 지문>`, 노드가 말하는 hostname 은 인증서 CN 과
   같아야 한다(다르면 `PERMISSION_DENIED`). `mtls` 없이 띄우면 평문이고 신원은 `dev:<hostname>` — 로컬 개발 전용.
   인증서 경로는 `WARRANT_TLS_DIR`(기본 `../.cache/pki`). 영장의 `targetHosts` 는 그 CN 과 같은 이름으로 맞춘다.
+- **인증서 폐기 = 노드 폐기**(V8, `node/NodeRevocationService`). CRL 을 두지 않는다 — 노드 인증서를 믿는 곳이 이 서버 하나뿐이라,
+  서버가 그 지문을 거부하면 같은 효과다. 발급 스크립트 · TLS 설정은 그대로다.
+  `POST /api/nodes/{id}/revoke`(APPROVER, 사유 필수) 뒤로 그 신원의 **모든 gRPC 호출**이 `PERMISSION_DENIED` 다 —
+  인증서면 `GrpcConfig` 인터셉터가 호출마다, 평문 `dev:` 신원이면 각 gRPC 서비스가 본다. 인증서 확인은 연결할 때만 하므로
+  **이미 열린 감사 스트림 · 영장 구독은 폐기하는 순간 서버가 끊는다**(`NodeConnections`). 되돌리지 않는다 — 다시 붙이려면
+  새 인증서를 발급한다(새 지문 = 새 노드 행). 그 호스트의 영장은 회수하지 않는다(영장은 호스트 이름을 가리킨다).
+  warrantd 는 거부당하면 지금처럼 재연결을 되풀이하며 로그를 남긴다 — 노드 쪽에서 고칠 것은 없다.
 - 계보(`warrant_lineage`)는 append-only — 저장소에 `save` 와 조회만 연다. 상태는 `warrant` 에 비정규화해 둔다.
 - 같은 클래스 안에서 `@Transactional` 메서드를 부르면 프록시를 안 거쳐 트랜잭션이 없다 — 바깥 메서드에도 붙인다
   (`WarrantRevocationService.revoke(id)` 가 그래서 취소를 저장하지 못한 적이 있다).
@@ -219,6 +227,7 @@ warrantd → `AuditIngestGrpcService`(gRPC 스트림) → `AuditIngestService.in
 | `attachedHooks` | 지금 붙어 있는 훅(`NodeHello.attached_hooks`), `TEXT[]`. 훅을 하나씩 붙이는 동안 "이 노드는 `file_open` 을 아직 안 본다"를 알아야 빈 데이터를 "아무 일 없음"으로 오해하지 않는다 |
 | `currentSeqEpoch` | 지금 감사 `seq_epoch`. warrantd 의 bbolt 가 초기화되면 바뀐다 — **바뀐 사실 자체가 조사 대상이다** |
 | `lastSeenAt` | 마지막 하트비트. gRPC 스트림이 살아 있는지와는 별개로 기록한다 |
+| `revokedAt` · `revokedBy` · `revokeReason` | 노드 폐기(V8). `revokedAt` 이 있으면 그 신원으로는 어떤 gRPC 호출도 받지 않는다. 되돌리지 않는다 |
 | `bootedAt` | 노드 부팅 시각. 절대시각 → `bpf_ktime_get_boot_ns` 변환의 기준이지만 **변환은 warrantd 가 한다.** 여기 값은 시계 스큐 진단용 참고 정보일 뿐이다 |
 
 ## 감사 엔티티 (`audit/`)

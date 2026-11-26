@@ -4,8 +4,11 @@ import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.seswar.warrant.audit.AuditProtoMapper;
 import io.seswar.warrant.audit.AuditIngestService;
+import io.seswar.warrant.node.NodeConnections;
 import io.seswar.warrant.node.NodePeer;
 import io.seswar.warrant.node.NodeRegistry;
+import io.seswar.warrant.node.NodeRevocationService;
+import io.seswar.warrant.node.NodeRevokedException;
 import io.seswar.warrant.proto.AgentProtos.AuditAck;
 import io.seswar.warrant.proto.AgentProtos.AuditBatch;
 import io.seswar.warrant.proto.AuditIngestServiceGrpc;
@@ -28,6 +31,8 @@ public class AuditIngestGrpcService extends AuditIngestServiceGrpc.AuditIngestSe
 
     private final AuditIngestService auditIngestService;
     private final NodeRegistry nodeRegistry;
+    private final NodeRevocationService revocations;
+    private final NodeConnections connections;
 
     @Override
     public StreamObserver<AuditBatch> stream(StreamObserver<AuditAck> ack) {
@@ -53,9 +58,11 @@ public class AuditIngestGrpcService extends AuditIngestServiceGrpc.AuditIngestSe
         return peer.identity();
     }
 
+    // Every method that touches `ack` is synchronized: a revocation closes the stream from another thread.
     private final class IngestStream implements StreamObserver<AuditBatch> {
 
         private final StreamObserver<AuditAck> ack;
+        private final NodeConnections.Closer closer = why -> fail(Status.PERMISSION_DENIED, new NodeRevokedException(this.identity));
         private String identity;
         private UUID nodeId;
         private long seqEpoch;
@@ -66,7 +73,7 @@ public class AuditIngestGrpcService extends AuditIngestServiceGrpc.AuditIngestSe
         }
 
         @Override
-        public void onNext(AuditBatch batch) {
+        public synchronized void onNext(AuditBatch batch) {
             if (closed) {
                 return;
             }
@@ -74,7 +81,7 @@ public class AuditIngestGrpcService extends AuditIngestServiceGrpc.AuditIngestSe
                 identify(batch);
                 store(batch);
                 ackThrough(batch);
-            } catch (NodeImpersonation e) {
+            } catch (NodeImpersonation | NodeRevokedException e) {
                 fail(Status.PERMISSION_DENIED, e);
             } catch (IllegalArgumentException e) {
                 fail(Status.INVALID_ARGUMENT, e);
@@ -83,16 +90,24 @@ public class AuditIngestGrpcService extends AuditIngestServiceGrpc.AuditIngestSe
 
         // The stream broke (cancel, network, shutdown). Stored batches are committed; warrantd resends the rest.
         @Override
-        public void onError(Throwable t) {
+        public synchronized void onError(Throwable t) {
             closed = true;
+            release();
             log.debug("audit stream from node {} ended: {}", nodeId, Status.fromThrowable(t));
         }
 
         @Override
-        public void onCompleted() {
+        public synchronized void onCompleted() {
             if(!closed) {
                 closed = true;
+                release();
                 ack.onCompleted();
+            }
+        }
+
+        private void release() {
+            if (identity != null) {
+                connections.detach(identity, closer);
             }
         }
 
@@ -116,6 +131,9 @@ public class AuditIngestGrpcService extends AuditIngestServiceGrpc.AuditIngestSe
                 NodeRegistry.Report report = AuditProtoMapper.toReport(batch.getNode(), epoch);
                 if (first) {
                     identity = identityOf(report.hostname());
+                    // Attach before the check: a revocation that commits in between still finds this stream.
+                    connections.attach(identity, closer);
+                    revocations.requireActive(identity);
                 }
                 nodeId = nodeRegistry.register(identity, report).nodeId();
             }
@@ -135,8 +153,12 @@ public class AuditIngestGrpcService extends AuditIngestServiceGrpc.AuditIngestSe
         }
 
         // ack 없이 스트림을 닫는다. warrantd 는 마지막 ack 다음부터 다시 보낸다
-        private void fail(Status status, Exception cause) {
+        private synchronized void fail(Status status, Exception cause) {
+            if (closed) {
+                return;
+            }
             closed = true;
+            release();
             log.warn("audit stream from node {} rejected: {}", nodeId, cause.getMessage());
             ack.onError(status.withDescription(cause.getMessage()).withCause(cause).asRuntimeException());
         }

@@ -53,6 +53,14 @@ public class Node {
 
     private Instant bootedAt;
 
+    /** 폐기 시각(V8). null 이 아니면 이 신원으로는 어떤 gRPC 호출도 받지 않는다. 되돌리지 않는다. */
+    private Instant revokedAt;
+
+    /** 폐기한 사람(주체 id). */
+    private UUID revokedBy;
+
+    private String revokeReason;
+
     // Called by NodeRegistry.register when a known node reconnects. Overwrites what the node reports about itself.
     // Called by NodeRegistry when a node first connects with a certificate: its identity becomes the certificate.
     void identifyBy(String certificateIdentity) {
@@ -74,5 +82,19 @@ public class Node {
     // Called by NodeRegistry.heartbeat.
     public void touch(Instant now) {
         this.lastSeenAt = now;
+    }
+
+    public boolean isRevoked() {
+        return revokedAt != null;
+    }
+
+    // Called by NodeRevocationService.revoke.
+    void revoke(Instant now, UUID by, String reason) {
+        if (revokedAt != null) {
+            throw new IllegalStateException("node " + hostname + " was already revoked at " + revokedAt);
+        }
+        this.revokedAt = now;
+        this.revokedBy = by;
+        this.revokeReason = reason;
     }
 }

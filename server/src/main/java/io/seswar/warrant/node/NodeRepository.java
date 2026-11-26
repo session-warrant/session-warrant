@@ -12,6 +12,9 @@ public interface NodeRepository extends JpaRepository<Node, UUID> {
     // Called by NodeRegistry when a node connects. The certificate fingerprint is the node's identity.
     Optional<Node> findByClientCertFingerprint(String clientCertFingerprint);
 
+    // Called by NodeRevocationService.isRevoked on every node call.
+    boolean existsByClientCertFingerprintAndRevokedAtIsNotNull(String clientCertFingerprint);
+
     // hostname 은 자기 신고라 여럿일 수 있다. 진단용.
     List<Node> findByHostname(String hostname);
 

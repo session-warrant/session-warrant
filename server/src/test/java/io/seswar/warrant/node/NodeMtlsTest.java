@@ -63,6 +63,8 @@ class NodeMtlsTest {
 
     @LocalGrpcServerPort int port;
     @Autowired NodeRepository nodes;
+    @Autowired NodeRevocationService revocations;
+    @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     final List<ManagedChannel> channels = new ArrayList<>();
 
@@ -167,5 +169,25 @@ class NodeMtlsTest {
     void 다른_CA가_발급한_인증서로는_붙지_못한다() {
         assertThatThrownBy(() -> firstAck(channel("rogue-node-a.pem", "rogue-node-a.key"), "node-a"))
                 .satisfies(t -> assertThat(code(t)).isEqualTo(Status.Code.UNAVAILABLE));
+    }
+
+    // CRL 대신 서버가 지문을 거부한다. 모든 호출이 막혀야 한다 — 호스트 이름을 따로 안 보는 RequestExtension 까지.
+    // 시험 CA 의 키가 없어 새 인증서를 못 만들므로 node-a 를 폐기했다가 끝에 되살린다(다른 시험이 node-a 를 쓴다).
+    @Test
+    void 폐기된_인증서로는_어떤_호출도_못_한다() throws Exception {
+        firstAck(channel("node-a.pem", "node-a.key"), "node-a");
+        Node node = nodes.findByClientCertFingerprint(fingerprint("node-a.pem")).orElseThrow();
+        revocations.revoke(node.getId(), null, "인증서 유출");
+        try {
+            ManagedChannel ch = channel("node-a.pem", "node-a.key");
+            assertThatThrownBy(() -> firstAck(ch, "node-a"))
+                    .satisfies(t -> assertThat(code(t)).isEqualTo(Status.Code.PERMISSION_DENIED));
+            assertThatThrownBy(() -> WarrantPushServiceGrpc.newBlockingStub(ch).withDeadlineAfter(10, TimeUnit.SECONDS)
+                    .requestExtension(io.seswar.warrant.proto.AgentProtos.ExtensionRequest.newBuilder().setWarrantId(1).build()))
+                    .isInstanceOfSatisfying(StatusRuntimeException.class,
+                            e -> assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.PERMISSION_DENIED));
+        } finally {
+            jdbc.update("update node set revoked_at = null, revoked_by = null, revoke_reason = null where id = ?", node.getId());
+        }
     }
 }
