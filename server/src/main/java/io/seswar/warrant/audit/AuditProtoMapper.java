@@ -6,6 +6,7 @@ import io.seswar.warrant.audit.store.EventGap;
 import io.seswar.warrant.audit.store.UnwarrantedSession;
 import io.seswar.warrant.audit.store.Verdict;
 import io.seswar.warrant.audit.store.WarrantedSession;
+import io.seswar.warrant.audit.store.WriteAggregate;
 import io.seswar.warrant.warrant.store.WarrantMode;
 import io.seswar.warrant.node.NodeRegistry;
 import io.seswar.warrant.audit.store.AuditEvent;
@@ -42,11 +43,6 @@ public final class AuditProtoMapper {
 
     /** AuditBatch를 서버에서 사용할 batch로 전환 */
     public static AuditIngestService.Batch toBatch(UUID nodeId, AuditBatch batch) {
-        // No table yet. Ignoring them would ack them and warrantd would delete them.
-        if (batch.getWriteAggregatesCount() > 0) {
-            throw new IllegalArgumentException("write_aggregates are not stored yet ("
-                    + batch.getWriteAggregatesCount() + " in batch)");
-        }
         long epoch = batch.getSeqEpoch();
         List<AuditEvent> events = new ArrayList<>();
         List<UnwarrantedSession> sessions = new ArrayList<>();
@@ -62,7 +58,8 @@ public final class AuditProtoMapper {
             }
         }
         List<EventGap> gaps = batch.getGapsList().stream().map(g -> toGap(nodeId, g)).toList();
-        return new AuditIngestService.Batch(events, gaps, sessions, warranted);
+        List<WriteAggregate> writes = batch.getWriteAggregatesList().stream().map(a -> toWriteAggregate(nodeId, a)).toList();
+        return new AuditIngestService.Batch(events, gaps, sessions, warranted, writes);
     }
 
     /** 첫 배치에 실려온 NodeHello를 노드 등록에 쓸 NodeRegistry.Report로 전환*/
@@ -188,6 +185,23 @@ public final class AuditProtoMapper {
                 requiredInstant(g.getToUnixNs(), "gap to_unix_ns"),
                 g.getDroppedCountKnown() ? g.getDroppedCount() : null,
                 stripPrefix(g.getCause().name(), "CAUSE_"));
+    }
+
+    // An aggregate nobody can attribute, or a bucket with no width, would be a count of nothing.
+    // fixed64 read as signed long: a count or width past 2^63 comes out negative and is refused the same way.
+    private static WriteAggregate toWriteAggregate(UUID nodeId, AuditProtos.WriteAggregate a) {
+        if (a.getWarrantId() == 0) {
+            throw new IllegalArgumentException("write aggregate without warrant_id");
+        }
+        if (a.getBucketNs() <= 0) {
+            throw new IllegalArgumentException("write aggregate bucket_ns is " + Long.toUnsignedString(a.getBucketNs()));
+        }
+        if (a.getAllowedCount() < 0) {
+            throw new IllegalArgumentException("write aggregate allowed_count is " + Long.toUnsignedString(a.getAllowedCount()));
+        }
+        return new WriteAggregate(nodeId, a.getWarrantId(),
+                requiredInstant(a.getBucketStartUnixNs(), "write aggregate bucket_start_unix_ns"),
+                a.getBucketNs(), a.getAllowedCount());
     }
 
     // dev is the kernel's u32 s_dev; Java reads fixed32 as signed int.

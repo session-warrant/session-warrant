@@ -110,6 +110,7 @@ warrantd LookupActiveWarrant → 호스트 · 계정 · 키 지문 셋 다 맞�
 | `…&kind=verdict` · `…&node=<호스트>` | 두 형태 모두에 붙는다. `kind=verdict` 는 LSM 판정만(kprobe 미러 · fork 를 빼서 한도를 판정에 쓴다), `node` 는 호스트 이름 |
 | `GET /api/audit/events?after=<순번>&limit=` | 이어 받기. 서버가 그 순번 뒤에 **받은** 것, 받은 순(발생 시각은 과거일 수 있다). 두 형태 모두 헤더 `X-Audit-Cursor` 가 다음 `after` 다 |
 | `GET /api/audit/summary?from=&to=&bucketSeconds=&origin=&node=` | 「구간 선택」 막대 집계. `[from, to)` 를 막대로 나눠 막대 · 훅 · 판정 · 영장 여부(`warranted`)별 건수. LSM 판정만 센다. 막대 경계는 `origin` + k · bucket(대시보드는 지역 자정을 보낸다). 막대가 5000개를 넘거나 `from ≥ to` 면 400 |
+| `GET /api/audit/writes?since=&until=&node=&warrant=&limit=` | 허용된 쓰기 집계(V6) — 영장 · 막대별 누적 건수, 막대 시작 최신 순. 기본 최근 24시간 · 1000건(최대 5000). `warrant` 는 커널 영장 번호 |
 | `GET /api/audit/stream` | SSE. 처음에 `ready`, 새 행이 저장되면 `audit`(data 는 새 행 수 `{"events","gaps","unwarrantedSessions","warrantedSessions"}` 뿐 — 기록은 위 조회로). 25초마다 빈 주석, 30분이면 끊고 브라우저가 다시 붙는다. 서버 한 대 안에서만 퍼진다 |
 
 - **로그인은 두 가지다. 둘 다 `/api/**` 는 로그인해야 열리고(공개키만 예외), 역할 규칙 · CSRF 가 같다**(`identity/SecurityConfig`).
@@ -180,14 +181,15 @@ warrantd → `AuditIngestGrpcService`(gRPC 스트림) → `AuditIngestService.in
 - **중복 수신을 전제로 한다.** warrantd 는 ack 를 못 받으면 마지막 ack 이후를 다시 보낸다. 보내는 쪽에서
   중복을 막는 대신 받는 쪽이 멱등하게 받는다.
 - **멱등 키.** 감사 이벤트 · 영장 세션 · 무영장 세션은 `(node_id, seq_epoch, node_seq)`, 유실 구간은 구간 자체
-  `(node_id, from_at, to_at, cause)`. 모두 DB UNIQUE 로 걸려 있다(V1 · V2 · V5). `seq_epoch` 가 키에 없으면
+  `(node_id, from_at, to_at, cause)`, 허용된 쓰기 집계는 칸 `(node_id, warrant_id, bucket_start, bucket_ns)` —
+  같은 칸이 다시 오면 큰 건수를 남긴다(V6). 모두 DB UNIQUE · PK 로 걸려 있다(V1 · V2 · V5 · V6). `seq_epoch` 가 키에 없으면
   bbolt 초기화 뒤 1 로 돌아간 `node_seq` 의 새 이벤트가 중복으로 버려진다.
 - **저장 순서.** 이미 있는 키를 배치의 seq 범위로 한 번에 조회해 빼고(같은 배치 안의 중복도 뺀다),
   남은 것만 `saveAllAndFlush`. 조회와 저장 사이에 같은 키가 끼어들면 UNIQUE 가 막고 배치 전체가 롤백된다 —
   ack 가 안 나가니 재전송 때 건너뛴다.
 - **flush 는 `ingest` 안에서 한다.** 커밋 때로 미루면 UNIQUE 위반이 이 메서드 밖에서 터진다.
   ack 를 보내기 전에, `ingest` 가 예외로 끝나야 한다.
-- **네 테이블을 한 트랜잭션으로 묶는다.** 반쯤 저장된 배치가 남으면 그 뒤의 ack 가 거짓이 된다.
+- **다섯 테이블을 한 트랜잭션으로 묶는다.** 반쯤 저장된 배치가 남으면 그 뒤의 ack 가 거짓이 된다.
 - **ack 는 `ingest` 가 정상 반환한 뒤에만.** 저장 전에 ack 하면 서버가 죽었을 때 warrantd 는 이미 지운 기록을
   다시 보낼 수 없다.
 - **배치 안의 행은 전부 그 스트림의 노드 것이어야 한다.** 섞이면 거부한다 — 남의 노드 이름으로 기록된다.
@@ -281,6 +283,22 @@ warrantd binder 가 영장을 찾아 세션 cgroup 에 태그한 순간 올린�
 | `from` · `to` | 빠진 구간. 칼럼 이름은 `from_at` · `to_at` — `from` · `to` 가 SQL 예약어라서 |
 | `droppedCount` | 커널 ringbuf 가 보고한 드롭 수. **모르면 NULL** — 0 과 구분한다 |
 | `cause` | proto `GapReport.Cause`: `RINGBUF_OVERFLOW` · `AGENT_DOWN` · `LOCAL_STORE_FULL` · `CPU_SEQ_SKIP` |
+
+### `WriteAggregate` — 허용된 쓰기 집계 (`write_aggregate`, V6)
+
+차단된 쓰기는 `audit_event` 에 전건이 남는다. **허용된 쓰기는 전건을 남기지 않고 영장 · 막대별 건수만 받는다**(§14) —
+다 남기면 ringbuf 가 넘쳐 정작 차단 기록이 밀린다. JPA 엔티티가 아니라 레코드이고, `AuditIngestService` 가 JDBC upsert 로 쓴다.
+
+| 칸 | 뜻 · 제약 |
+|---|---|
+| `node_id` · `warrant_id` · `bucket_start` · `bucket_ns` | 기본 키 = 칸 하나. `warrant_id` 0 · `bucket_ns` 0 · `bucket_start` 0 이면 매퍼가 거부한다 |
+| `allowed_count` | 그 막대의 **누적** 건수(증분이 아니다). 같은 칸이 다시 오면 **큰 값을 남긴다** — 합산하면 재전송이 부풀리고, 덮어쓰면 늦게 온 옛 배치가 줄인다. 그래서 노드는 막대가 닫히기 전에 중간값을 보내도 된다 |
+| `updated_at` | 마지막으로 건수가 커진 시각 |
+
+- 한 배치 안의 같은 칸은 미리 하나로 합친다. pgjdbc 가 배치를 다중 행 INSERT 하나로 묶으면 PostgreSQL 이 같은 행을 두 번 고치는
+  `ON CONFLICT` 를 거부해 배치 전체가 실패한다.
+- 화면 알림(SSE)에는 세지 않는다. 읽기는 `GET /api/audit/writes`(기본 최근 24시간, `node` · `warrant`=커널 영장 번호로 거른다).
+- **warrantd 는 아직 보내지 않는다.** 노드 쪽에서 막대를 세는 건 A · C 의 몫이다.
 
 ## 더미 감사 데이터 (`dev/dummy-audit.sh`)
 
